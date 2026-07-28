@@ -88,3 +88,25 @@ target/
 
 # Mypy cache
 .mypy_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# Test and lint caches
+.pytest_cache/
+.ruff_cache/
+
+# Additional environment files
+.env.*
+!.env.example
+
+# Windows
+Thumbs.db
+
+# Downloaded and processed SEC data
+data/raw/
+data/processed/
+
+# Generated project artifacts
+artifacts/
