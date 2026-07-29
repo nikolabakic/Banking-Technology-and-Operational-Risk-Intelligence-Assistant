@@ -1,0 +1,51 @@
+version: 1
+banks:
+  - ticker: JPM
+    cik: "0000019617"
+    legal_name: JPMorgan Chase & Co.
+    enabled: true
+
+  - ticker: BAC
+    cik: "0000070858"
+    legal_name: Bank of America Corporation
+    enabled: true
+
+  - ticker: C
+    cik: "0000831001"
+    legal_name: Citigroup Inc.
+    enabled: true
+
+  - ticker: WFC
+    cik: "0000072971"
+    legal_name: Wells Fargo & Company
+    enabled: true
+
+  - ticker: USB
+    cik: "0000036104"
+    legal_name: U.S. Bancorp
+    enabled: true
+
+  - ticker: PNC
+    cik: "0000713676"
+    legal_name: The PNC Financial Services Group, Inc.
+    enabled: true
+
+  - ticker: TFC
+    cik: "0000092230"
+    legal_name: Truist Financial Corporation
+    enabled: true
+
+  - ticker: GS
+    cik: "0000886982"
+    legal_name: The Goldman Sachs Group, Inc.
+    enabled: true
+
+  - ticker: ALLY
+    cik: "0000040729"
+    legal_name: Ally Financial Inc.
+    enabled: true
+
+  - ticker: LOB
+    cik: "0001462120"
+    legal_name: Live Oak Bancshares, Inc.
+    enabled: true
