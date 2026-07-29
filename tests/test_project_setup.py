@@ -50,7 +50,6 @@ def test_settings_load_valid_values(valid_settings_data: dict[str, object]) -> N
 
     assert settings.sec_user_agent == "BankScopeRAG test@example.com"
     assert settings.sec_requests_per_second == 5
-    assert settings.sec_max_concurrency == 3
     assert settings.sec_timeout_seconds == 30
     assert settings.log_level == "INFO"
     assert settings.openai_api_key is None
@@ -186,7 +185,6 @@ def test_smoke_test_runs_without_network(tmp_path: Path) -> None:
             "LOG_LEVEL": "INFO",
             "SEC_USER_AGENT": "BankScopeRAG smoke@example.com",
             "SEC_REQUESTS_PER_SECOND": "4",
-            "SEC_MAX_CONCURRENCY": "3",
             "SEC_TIMEOUT_SECONDS": "30",
             "BANK_REGISTRY_PATH": str(tmp_path / "banks.yaml"),
             "RAW_DATA_DIR": str(raw_data_dir),

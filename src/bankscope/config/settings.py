@@ -20,7 +20,6 @@ class ApplicationSettings(BaseSettings):
 
     sec_user_agent: str
     sec_requests_per_second: float = Field(default=4, gt=0, le=10)
-    sec_max_concurrency: int = Field(default=3, ge=1)
     sec_timeout_seconds: float = Field(default=30, gt=0)
 
     bank_registry_path: Path = Path("config/banks.yaml")
