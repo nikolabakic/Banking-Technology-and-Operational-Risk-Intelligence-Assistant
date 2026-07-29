@@ -92,7 +92,11 @@ def test_settings_hide_openai_api_key(
     assert "**********" in repr(settings)
 
 
-def test_get_settings_returns_cached_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_settings_returns_cached_instance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SEC_USER_AGENT", "BankScopeRAG cache@example.com")
     get_settings.cache_clear()
 
