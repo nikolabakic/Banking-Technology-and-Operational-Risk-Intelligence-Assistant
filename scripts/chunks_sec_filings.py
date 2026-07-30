@@ -249,6 +249,9 @@ def chunk_filing(
         text_group.clear()
 
     for record in records:
+        if bool(record.get("is_navigation")):
+            flush_text_group()
+            continue
         if record["element_type"] == "table":
             flush_text_group()
             order_index = int(record["order_index"])

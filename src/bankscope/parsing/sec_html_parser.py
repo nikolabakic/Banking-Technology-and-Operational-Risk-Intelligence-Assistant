@@ -39,6 +39,18 @@ BULLET_PATTERN = re.compile(r"(^|\n)\s*(?:[\u2022\u25aa\u25e6\u2023-])\s+")
 SENTENCE_END_PATTERN = re.compile(r"[.!?](?:\s|$)")
 WORD_PATTERN = re.compile(r"\b[\w'-]+\b")
 
+NAVIGATION_TITLES = (
+    "table of contents",
+    "form 10-k cross-reference index",
+)
+
+NAVIGATION_ITEM_PATTERN = re.compile(
+    r"\bitem\s+\d{1,2}[a-c]?\b",
+    re.IGNORECASE,
+)
+
+NAVIGATION_PAGE_END_PATTERN = re.compile(r"(?:\||\s)\d{1,3}\s*$")
+
 
 def detect_sec_item(
     elements: list[dict[str, object]],
@@ -119,6 +131,35 @@ def classify_table_element(text: str) -> str:
     return "table"
 
 
+def is_navigation_element(tag: Tag, text: str) -> bool:
+    plain_text = normalize_text(text.replace("|", " "))
+    lowercase_text = plain_text.casefold()
+
+    if any(lowercase_text.startswith(title) for title in NAVIGATION_TITLES):
+        return True
+
+    rows = [normalize_text(row) for row in text.splitlines() if row.strip()]
+
+    item_rows = sum(bool(NAVIGATION_ITEM_PATTERN.search(row)) for row in rows)
+    page_rows = sum(bool(NAVIGATION_PAGE_END_PATTERN.search(row)) for row in rows)
+
+    if len(rows) >= 3 and item_rows >= 2 and page_rows >= 3:
+        return True
+
+    link_texts = [
+        normalize_text(link.get_text(" ", strip=True))
+        for link in tag.find_all("a")
+        if normalize_text(link.get_text(" ", strip=True))
+    ]
+
+    plain_char_count = len("".join(plain_text.split()))
+    linked_char_count = sum(len("".join(link_text.split())) for link_text in link_texts)
+
+    link_ratio = linked_char_count / plain_char_count if plain_char_count else 0.0
+
+    return len(link_texts) >= 3 and len(plain_text) <= 800 and link_ratio >= 0.5
+
+
 def parse_filing_html(path: Path) -> list[dict[str, object]]:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", XMLParsedAsHTMLWarning)
@@ -157,6 +198,7 @@ def parse_filing_html(path: Path) -> list[dict[str, object]]:
                 "order_index": len(elements),
                 "element_type": element_type,
                 "text": text,
+                "is_navigation": is_navigation_element(tag, text),
             }
         )
 
