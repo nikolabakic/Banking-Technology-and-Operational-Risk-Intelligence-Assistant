@@ -6,7 +6,8 @@ from pathlib import Path
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 from bs4.element import Tag
 
-CONTENT_TAGS = ("div", "p", "li", "table")
+HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+CONTENT_TAGS = ("div", "p", "li", "table", *HEADING_TAGS)
 
 SEC_ITEM_PATTERN = re.compile(
     r"^item\s+(\d{1,2}[a-c]?)"
@@ -131,7 +132,24 @@ def classify_table_element(text: str) -> str:
     return "table"
 
 
+def is_heading_element(tag: Tag, text: str) -> bool:
+    if tag.name in HEADING_TAGS:
+        return True
+
+    if (
+        len(text) > TABLE_TITLE_MAX_CHARS
+        or len(WORD_PATTERN.findall(text)) > 15
+        or text.endswith((".", "!", "?", ";"))
+    ):
+        return False
+
+    letters = [character for character in text if character.isalpha()]
+
+    return len(letters) >= 4 and all(character.isupper() for character in letters)
+
+
 def is_navigation_element(tag: Tag, text: str) -> bool:
+
     plain_text = normalize_text(text.replace("|", " "))
     lowercase_text = plain_text.casefold()
 
@@ -193,24 +211,39 @@ def parse_filing_html(path: Path) -> list[dict[str, object]]:
         if not text:
             continue
 
+        navigation = is_navigation_element(tag, text)
+
+        if element_type == "paragraph" and not navigation and is_heading_element(tag, text):
+            element_type = "heading"
+
         elements.append(
             {
                 "order_index": len(elements),
                 "element_type": element_type,
                 "text": text,
-                "is_navigation": is_navigation_element(tag, text),
+                "is_navigation": navigation,
             }
         )
 
     current_sec_item: str | None = None
+    current_section_title: str | None = None
 
     for index, element in enumerate(elements):
+        if bool(element["is_navigation"]):
+            element["sec_item"] = current_sec_item
+            element["section_title"] = None
+            continue
+
         detected_item = detect_sec_item(elements, index)
 
         if detected_item is not None:
             current_sec_item = detected_item
             element["element_type"] = "heading"
 
+        if element["element_type"] == "heading":
+            current_section_title = normalize_text(str(element["text"]).replace("|", " "))
+
         element["sec_item"] = current_sec_item
+        element["section_title"] = current_section_title
 
     return elements
