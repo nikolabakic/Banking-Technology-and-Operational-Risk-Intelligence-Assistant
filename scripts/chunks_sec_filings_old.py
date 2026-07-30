@@ -1,6 +1,5 @@
 import hashlib
 import json
-import re
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -11,49 +10,12 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase
 TOKENIZER_NAME = "Qwen/Qwen3-Embedding-0.6B"
 
 INPUT_DIR = Path("data/processed/elements")
-OUTPUT_PATH = Path("data/processed/chunks/sec_10k_chunks.jsonl")
+OUTPUT_PATH = Path("data/processed/chunks/sec_10k_chunks_old.jsonl")
 
 TARGET_TOKENS = 600
 MAX_TOKENS = 700
 OVERLAP_TOKENS = 80
 MIN_TEXT_TOKENS = 80
-
-TABLE_HEADER_MAX_ROWS = 3
-TABLE_DESCRIPTION_MAX_CHARS = 400
-
-DATA_CELL_PATTERN = re.compile(
-    r"^\s*(?:"
-    r"\(?\$?\s*[+-]?\d[\d,]*(?:\.\d+)?%?\s*\)?"
-    r"(?:\s*\([a-z0-9]+\))?"
-    r"|[-–—]"
-    r"|n/?a"
-    r"|n\.?m\.?"
-    r")\s*$",
-    re.IGNORECASE,
-)
-
-YEAR_CELL_PATTERN = re.compile(
-    r"^(?:19|20)\d{2}(?:\s*\([a-z0-9]+\))?$",
-    re.IGNORECASE,
-)
-
-TABLE_INTRO_PATTERN = re.compile(
-    r"\b(?:following|below|table|summari(?:zes|zed)|shows?|"
-    r"sets?\s+forth|presents?|reflects?|details?)\b",
-    re.IGNORECASE,
-)
-
-TABLE_UNIT_PATTERN = re.compile(
-    r"\b(?:(?:amounts?|dollars)\s+in|in)\s+"
-    r"(?:thousands|millions|billions)"
-    r"(?:\s+of\s+(?:u\.s\.\s+)?dollars)?\b",
-    re.IGNORECASE,
-)
-
-IGNORED_SECTION_TITLES = (
-    "forward looking statements",
-    "table of contents",
-)
 
 Record = dict[str, Any]
 
@@ -168,156 +130,42 @@ def split_text_elements(
     return chunks
 
 
-def looks_like_data_row(row: str) -> bool:
-    cells = [cell.strip() for cell in row.split(" | ")]
-    value_cells = [cell for cell in cells[1:] if cell]
-
-    return any(
-        DATA_CELL_PATTERN.fullmatch(cell) and not YEAR_CELL_PATTERN.fullmatch(cell)
-        for cell in value_cells
-    )
-
-
-def detect_table_header_rows(rows: list[str]) -> list[str]:
-    header_rows: list[str] = []
-
-    for row in rows[:TABLE_HEADER_MAX_ROWS]:
-        if looks_like_data_row(row):
-            break
-
-        header_rows.append(row)
-
-    return header_rows
-
-
-def find_table_description(
-    records: list[Record],
-    table_index: int,
-) -> str | None:
-    table = records[table_index]
-
-    for candidate in reversed(records[max(0, table_index - 3) : table_index]):
-        if bool(candidate.get("is_navigation")) or candidate["element_type"] == "table":
-            break
-
-        if candidate.get("sec_item") != table.get("sec_item") or candidate.get(
-            "section_title"
-        ) != table.get("section_title"):
-            break
-
-        if candidate["element_type"] not in {"paragraph", "list"}:
-            continue
-
-        text = " ".join(str(candidate["text"]).split())
-
-        if len(text) <= TABLE_DESCRIPTION_MAX_CHARS and TABLE_INTRO_PATTERN.search(text):
-            return text
-
-    return None
-
-
-def extract_table_unit(
-    table_header: str | None,
-    description: str | None,
-) -> str | None:
-    for text in (table_header, description):
-        if not text:
-            continue
-
-        match = TABLE_UNIT_PATTERN.search(text)
-
-        if match:
-            return " ".join(match.group(0).split())
-
-    return None
-
-
-def useful_section_title(value: object) -> str | None:
-    title = " ".join(str(value or "").split())
-    normalized_title = re.sub(
-        r"[^a-z0-9]+",
-        " ",
-        title.casefold(),
-    ).strip()
-
-    if not title or any(
-        normalized_title.startswith(ignored_title) for ignored_title in IGNORED_SECTION_TITLES
-    ):
-        return None
-
-    return title
-
-
-def build_table_context(
-    record: Record,
-    table_header: str | None,
-    description: str | None,
-) -> str | None:
-    context_parts: list[str] = []
-    section_title = useful_section_title(record.get("section_title"))
-    table_unit = extract_table_unit(
-        table_header,
-        description,
-    )
-
-    if section_title:
-        context_parts.append(f"Section: {section_title}")
-
-    if description and description != section_title:
-        context_parts.append(f"Description: {description}")
-
-    if table_unit:
-        context_parts.append(f"Unit: {table_unit}")
-
-    return "\n".join(context_parts) or None
-
-
 def split_table(
     element: Record,
     tokenizer: PreTrainedTokenizerBase,
-) -> tuple[list[str], str | None]:
+) -> list[str]:
     rows = [row.strip() for row in str(element["text"]).splitlines() if row.strip()]
 
     if not rows:
-        return [], None
+        return []
 
-    header_rows = detect_table_header_rows(rows)
-    header_text = "\n".join(header_rows) or None
     full_text = "\n".join(rows)
 
     if len(encode(tokenizer, full_text)) <= MAX_TOKENS:
-        return [full_text], header_text
+        return [full_text]
 
-    header_ids = encode(tokenizer, f"{header_text}\n") if header_text else []
+    header = rows[0]
+    header_ids = encode(tokenizer, f"{header}\n")
 
     if len(header_ids) >= MAX_TOKENS:
         table_ids = encode(tokenizer, full_text)
 
-        return (
-            [
-                tokenizer.decode(
-                    table_ids[start : start + MAX_TOKENS],
-                    skip_special_tokens=True,
-                ).strip()
-                for start in range(
-                    0,
-                    len(table_ids),
-                    MAX_TOKENS,
-                )
-            ],
-            header_text,
-        )
+        return [
+            tokenizer.decode(
+                table_ids[start : start + MAX_TOKENS],
+                skip_special_tokens=True,
+            ).strip()
+            for start in range(0, len(table_ids), MAX_TOKENS)
+        ]
 
     parts: list[str] = []
-    current_rows = header_rows.copy()
-    header_row_count = len(header_rows)
-    data_rows = rows[header_row_count:]
+    current_rows = [header]
 
     def save_current() -> None:
-        if len(current_rows) > header_row_count:
+        if len(current_rows) > 1:
             parts.append("\n".join(current_rows))
 
-    for row in data_rows:
+    for row in rows[1:]:
         candidate = "\n".join([*current_rows, row])
 
         if len(encode(tokenizer, candidate)) <= MAX_TOKENS:
@@ -330,24 +178,20 @@ def split_table(
         available_tokens = MAX_TOKENS - len(header_ids)
 
         if len(row_ids) > available_tokens:
-            for start in range(
-                0,
-                len(row_ids),
-                available_tokens,
-            ):
+            for start in range(0, len(row_ids), available_tokens):
                 row_part = tokenizer.decode(
                     row_ids[start : start + available_tokens],
                     skip_special_tokens=True,
                 ).strip()
 
-                parts.append("\n".join([*header_rows, row_part]))
+                parts.append(f"{header}\n{row_part}")
 
-            current_rows = header_rows.copy()
+            current_rows = [header]
         else:
-            current_rows = [*header_rows, row]
+            current_rows = [header, row]
 
     save_current()
-    return parts, header_text
+    return parts
 
 
 def create_chunk(
@@ -357,10 +201,8 @@ def create_chunk(
     order_start: int,
     order_end: int,
     tokenizer: PreTrainedTokenizerBase,
-    table_header: str | None = None,
-    table_context: str | None = None,
 ) -> Record:
-    chunk = {
+    return {
         "ticker": source["ticker"],
         "cik": source["cik"],
         "accession_number": source["accession_number"],
@@ -368,21 +210,12 @@ def create_chunk(
         "report_date": source["report_date"],
         "source_url": source["source_url"],
         "sec_item": source.get("sec_item"),
-        "section_title": source.get("section_title"),
         "element_type": element_type,
         "order_start": order_start,
         "order_end": order_end,
         "token_count": len(encode(tokenizer, text)),
         "text": text,
     }
-
-    if table_header:
-        chunk["table_header"] = table_header
-
-    if table_context:
-        chunk["table_context"] = table_context
-
-    return chunk
 
 
 def chunk_filing(
@@ -415,30 +248,15 @@ def chunk_filing(
 
         text_group.clear()
 
-    for record_index, record in enumerate(records):
+    for record in records:
         if bool(record.get("is_navigation")):
             flush_text_group()
             continue
-
         if record["element_type"] == "table":
             flush_text_group()
-
             order_index = int(record["order_index"])
-            table_parts, table_header = split_table(
-                record,
-                tokenizer,
-            )
-            description = find_table_description(
-                records,
-                record_index,
-            )
-            table_context = build_table_context(
-                record,
-                table_header,
-                description,
-            )
 
-            for text in table_parts:
+            for text in split_table(record, tokenizer):
                 chunks.append(
                     create_chunk(
                         source=record,
@@ -447,24 +265,13 @@ def chunk_filing(
                         order_start=order_index,
                         order_end=order_index,
                         tokenizer=tokenizer,
-                        table_header=table_header,
-                        table_context=table_context,
                     )
                 )
 
             continue
 
-        if text_group:
-            previous = text_group[-1]
-
-            if (
-                record.get("sec_item"),
-                record.get("section_title"),
-            ) != (
-                previous.get("sec_item"),
-                previous.get("section_title"),
-            ):
-                flush_text_group()
+        if text_group and record.get("sec_item") != text_group[-1].get("sec_item"):
+            flush_text_group()
 
         text_group.append(record)
 
@@ -486,15 +293,9 @@ def load_jsonl(path: Path) -> list[Record]:
     ]
 
 
-def print_summary(
-    ticker: str,
-    chunks: list[Record],
-) -> None:
+def print_summary(ticker: str, chunks: list[Record]) -> None:
     token_counts = sorted(int(chunk["token_count"]) for chunk in chunks)
-    p95_index = max(
-        0,
-        int(0.95 * len(token_counts)) - 1,
-    )
+    p95_index = max(0, int(0.95 * len(token_counts)) - 1)
     table_count = sum(chunk["element_type"] == "table" for chunk in chunks)
 
     print(
@@ -525,10 +326,7 @@ def main() -> None:
         if not chunks:
             raise ValueError(f"{path}: nisu napravljeni chunkovi")
 
-        print_summary(
-            str(records[0]["ticker"]),
-            chunks,
-        )
+        print_summary(str(records[0]["ticker"]), chunks)
         all_chunks.extend(chunks)
 
     if not all_chunks:
@@ -537,10 +335,7 @@ def main() -> None:
     if any(not chunk["text"] or int(chunk["token_count"]) > MAX_TOKENS for chunk in all_chunks):
         raise ValueError("Pronađen je prazan ili predugačak chunk")
 
-    OUTPUT_PATH.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(
         "\n".join(json.dumps(chunk, ensure_ascii=False) for chunk in all_chunks) + "\n",
         encoding="utf-8",
