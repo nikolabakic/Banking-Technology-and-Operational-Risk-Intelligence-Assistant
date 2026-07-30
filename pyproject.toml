@@ -15,6 +15,8 @@ dependencies = [
     "lxml>=6.1,<7.0",
     "transformers>=4.51,<6.0",
     "langchain-text-splitters>=1.1,<2.0",
+    "numpy>=2.0,<3.0",
+    "sentence-transformers>=5.0,<6.0",
 ]
 
 [project.optional-dependencies]
