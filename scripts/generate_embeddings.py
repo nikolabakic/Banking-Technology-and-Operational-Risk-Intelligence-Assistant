@@ -8,7 +8,6 @@ from typing import Any
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from transformers.convert_slow_tokenizers_checkpoints_to_fast import args
 
 MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 EMBEDDING_DIMENSION = 1024
