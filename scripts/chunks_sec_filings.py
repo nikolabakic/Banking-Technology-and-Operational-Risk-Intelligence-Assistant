@@ -58,6 +58,21 @@ IGNORED_SECTION_TITLES = (
 Record = dict[str, Any]
 
 
+def create_table_id(
+    source: Record,
+    order_index: int,
+) -> str:
+    identity = "\0".join(
+        [
+            str(source["accession_number"]),
+            str(source["source_url"]),
+            str(order_index),
+        ]
+    )
+
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 def encode(
     tokenizer: PreTrainedTokenizerBase,
     text: str,
@@ -359,6 +374,9 @@ def create_chunk(
     tokenizer: PreTrainedTokenizerBase,
     table_header: str | None = None,
     table_context: str | None = None,
+    table_id: str | None = None,
+    table_part_index: int | None = None,
+    table_part_count: int | None = None,
 ) -> Record:
     chunk = {
         "ticker": source["ticker"],
@@ -375,6 +393,11 @@ def create_chunk(
         "token_count": len(encode(tokenizer, text)),
         "text": text,
     }
+
+    if table_id is not None:
+        chunk["table_id"] = table_id
+        chunk["table_part_index"] = table_part_index
+        chunk["table_part_count"] = table_part_count
 
     if table_header:
         chunk["table_header"] = table_header
@@ -438,7 +461,12 @@ def chunk_filing(
                 description,
             )
 
-            for text in table_parts:
+            table_id = create_table_id(
+                record,
+                order_index,
+            )
+            table_part_count = len(table_parts)
+            for table_part_index, text in enumerate(table_parts):
                 chunks.append(
                     create_chunk(
                         source=record,
@@ -449,6 +477,9 @@ def chunk_filing(
                         tokenizer=tokenizer,
                         table_header=table_header,
                         table_context=table_context,
+                        table_id=table_id,
+                        table_part_index=table_part_index,
+                        table_part_count=table_part_count,
                     )
                 )
 
@@ -546,7 +577,12 @@ def main() -> None:
         encoding="utf-8",
     )
 
+    logical_table_count = len(
+        {str(chunk["table_id"]) for chunk in all_chunks if chunk["element_type"] == "table"}
+    )
+
     print(f"Ukupno: {len(all_chunks)} chunkova -> {OUTPUT_PATH}")
+    print(f"Logičkih tabela: {logical_table_count}")
 
 
 if __name__ == "__main__":
