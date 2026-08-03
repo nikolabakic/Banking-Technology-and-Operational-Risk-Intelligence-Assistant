@@ -381,6 +381,116 @@ def load_existing_proxy_ids(output_path: Path) -> set[str]:
     return proxy_ids
 
 
+def load_table_proxies(output_path: Path) -> list[dict[str, object]]:
+    proxies: list[dict[str, object]] = []
+
+    with output_path.open(encoding="utf-8") as output_file:
+        for line_number, line in enumerate(output_file, start=1):
+            if not line.strip():
+                continue
+
+            record = json.loads(line)
+
+            if not isinstance(record, dict):
+                raise ValueError(
+                    f"Expected JSON object on line {line_number}"
+                )
+
+            proxies.append(record)
+
+    return proxies
+
+
+def validate_table_proxies(
+    table_chunks: list[dict[str, object]],
+    proxies: list[dict[str, object]],
+) -> None:
+    source_ids = [
+        normalize_label(chunk.get("chunk_id"))
+        for chunk in table_chunks
+    ]
+    proxy_ids = [
+        normalize_label(proxy.get("proxy_id"))
+        for proxy in proxies
+    ]
+    target_ids = [
+        normalize_label(proxy.get("target_chunk_id"))
+        for proxy in proxies
+    ]
+
+    if any(not source_id for source_id in source_ids):
+        raise ValueError("Every table chunk must have a chunk_id")
+
+    if len(set(source_ids)) != len(source_ids):
+        raise ValueError("Table chunk IDs must be unique")
+
+    if len(table_chunks) != len(proxies):
+        raise ValueError(
+            "Expected one proxy per table chunk: "
+            f"chunks={len(table_chunks)}, proxies={len(proxies)}"
+        )
+
+    if any(not proxy_id for proxy_id in proxy_ids):
+        raise ValueError("Every table proxy must have a proxy_id")
+
+    if len(set(proxy_ids)) != len(proxy_ids):
+        raise ValueError("Proxy IDs must be unique")
+
+    if len(set(target_ids)) != len(target_ids):
+        raise ValueError("Target chunk IDs must be unique")
+
+    source_id_set = set(source_ids)
+    target_id_set = set(target_ids)
+
+    if target_id_set != source_id_set:
+        missing = sorted(source_id_set - target_id_set)[:5]
+        extra = sorted(target_id_set - source_id_set)[:5]
+        raise ValueError(
+            f"Proxy targets do not match table chunks: missing={missing}, extra={extra}"
+        )
+
+    source_by_id = dict(zip(source_ids, table_chunks, strict=True))
+    metadata_fields = (
+        "ticker",
+        "report_date",
+        "table_id",
+        "table_part_index",
+        "table_part_count",
+    )
+
+    for proxy in proxies:
+        proxy_id = normalize_label(proxy.get("proxy_id"))
+        target_id = normalize_label(proxy.get("target_chunk_id"))
+        proxy_text = str(proxy.get("proxy_text") or "")
+        proxy_version = normalize_label(proxy.get("proxy_version"))
+
+        if proxy_version != PROXY_VERSION:
+            raise ValueError(
+                f"Unexpected proxy version for {target_id}: {proxy_version}"
+            )
+
+        expected_proxy_id = hashlib.sha256(
+            f"{PROXY_VERSION}\0{target_id}".encode()
+        ).hexdigest()
+
+        if proxy_id != expected_proxy_id:
+            raise ValueError(f"Invalid proxy_id for target {target_id}")
+
+        if not proxy_text.strip():
+            raise ValueError(f"Empty proxy_text for target {target_id}")
+
+        if "SEC item: None" in proxy_text or "Section: None" in proxy_text:
+            raise ValueError(f"Invalid None label in proxy_text for target {target_id}")
+
+        source_chunk = source_by_id[target_id]
+
+        for field in metadata_fields:
+            if proxy.get(field) != source_chunk.get(field):
+                raise ValueError(
+                    f"Metadata mismatch for {target_id}, field={field}"
+                )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate deterministic table proxies."
@@ -472,6 +582,11 @@ def main() -> None:
 
     if failed:
         raise SystemExit(1)
+
+    if args.limit is None:
+        proxies = load_table_proxies(args.output)
+        validate_table_proxies(table_chunks, proxies)
+        print(f"Validated proxies: {len(proxies)}")
 
 
 if __name__ == "__main__":
