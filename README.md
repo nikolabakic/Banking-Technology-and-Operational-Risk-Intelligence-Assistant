@@ -1,27 +1,47 @@
 # BankScope RAG Assistant
 
-BankScope is a Retrieval-Augmented Generation assistant for exploring the latest SEC 10-K filings of publicly listed U.S. banks.
+BankScope is a Retrieval-Augmented Generation assistant for exploring SEC 10-K
+filings of ten publicly listed U.S. banks. The project is developed as a
+student and internship project, with emphasis on a clear, reproducible
+pipeline rather than production-scale infrastructure.
 
-The project is being implemented incrementally, starting with a validated 10-bank development corpus. SEC data acquisition, document processing, retrieval, citations, conversation history, and evaluation will be added in later phases.
+## Current status
+
+Completed:
+
+- registry and acquisition of the latest 10-K filings for ten banks;
+- SEC HTML inspection and parsing;
+- structure-aware text and table chunking;
+- deterministic semantic proxy generation for tables;
+- structural validation of the generated table proxies.
+
+Last validated corpus:
+
+| Record type | Count |
+|---|---:|
+| Text chunks | 3,890 |
+| Table chunks | 3,220 |
+| All chunks | 7,110 |
+| Table proxies | 3,220 |
+
+The next phase is embeddings. The embedding model, supporting libraries and
+vector storage are intentionally not selected in advance. Each new phase
+starts with a short comparison of current suitable tools, followed by a
+project-specific decision and a small verified baseline.
 
 ## Development setup
 
 Requirements:
 
-- Python 3.13.14
+- Python 3.13
 - Git
 - VS Code
 
-Create and activate the virtual environment:
+Create and activate the virtual environment in PowerShell:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-Install the project and development dependencies:
-
-```powershell
 python -m pip install -e ".[dev]"
 ```
 
@@ -31,18 +51,42 @@ Create the local environment file:
 Copy-Item .env.example .env
 ```
 
-Fill in the required values locally. Never commit `.env` or secret credentials.
+Set `SEC_USER_AGENT` to an application name and contact email. Never commit
+`.env` or credentials.
 
-## Validation
+## Data pipeline
 
-Run the project setup checks:
+Run commands from the repository root:
 
 ```powershell
-python scripts/run_smoke_test.py
+python scripts/download_sec_filings.py
+python scripts/inspect_sec_filings.py
+python scripts/parse_sec_filings.py
+python scripts/chunk_sec_filings.py
+python scripts/generate_table_proxies.py --overwrite
+```
+
+Generated data is stored under `data/raw/` and `data/processed/`. These files
+are local pipeline artifacts and are not committed.
+
+Superseded scripts, notebooks, and other development artifacts are preserved
+under `sandbox/` for mentor review. They are not part of the active pipeline.
+
+Run code checks with:
+
+```powershell
 python -m pytest
 python -m ruff check .
 ```
 
-## Current status
+## Known corpus limitation
 
-Project skeleton, application settings, structured logging, and initial tests are complete. SEC data acquisition and RAG functionality have not been implemented yet.
+The primary USB and WFC filings point to separate Annual Report attachments,
+so their current local corpus is substantially smaller than the other eight
+banks. They remain useful for available-content retrieval, but should not be
+used to conclude that information is absent from the complete Annual Report.
+The downloader will be revisited only if evaluation shows that this limitation
+blocks the project.
+
+See [data pipeline](docs/data_pipeline.md) for the current processing design
+and [roadmap](docs/roadmap.md) for phase status and decision gates.
