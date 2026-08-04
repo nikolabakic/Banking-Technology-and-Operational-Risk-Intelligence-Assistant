@@ -18,6 +18,11 @@ from bankscope.evaluation.retrieval_metrics import (
 from bankscope.retrieval.hybrid_retriever import (
     HybridRetriever,
 )
+from bankscope.retrieval.reranker import (
+    RERANKER_MODEL_NAME,
+    load_reranker,
+    rerank_candidates,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,7 +37,7 @@ VALID_STATUSES = {
     "ambiguous",
     "unsupported",
 }
-METHODS = ("dense", "bm25", "hybrid")
+METHODS = ("dense", "bm25", "hybrid", "reranked")
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -114,8 +119,11 @@ def make_result_preview(
     document = " ".join(str(result["document"]).split())
 
     score = result.get(
-        "rrf_score",
-        result.get("score"),
+        "reranker_score",
+        result.get(
+            "rrf_score",
+            result.get("score"),
+        ),
     )
 
     return {
@@ -124,6 +132,8 @@ def make_result_preview(
         "record_id": result["record_id"],
         "ticker": result["ticker"],
         "record_type": result["record_type"],
+        "reranker_score": result.get("reranker_score"),
+        "rrf_score": result.get("rrf_score"),
         "score": score,
         "dense_rank": result.get("dense_rank"),
         "bm25_rank": result.get("bm25_rank"),
@@ -141,6 +151,8 @@ def retrieve_with_method(
     limit: int,
     candidate_k: int,
     rrf_k: int,
+    reranker: Any | None,
+    reranker_batch_size: int,
 ) -> list[dict[str, Any]]:
     if method == "dense":
         return retriever.search_dense(
@@ -164,6 +176,29 @@ def retrieve_with_method(
             candidate_k=candidate_k,
             rrf_k=rrf_k,
             ticker=ticker,
+        )
+
+    if method == "reranked":
+        if reranker is None:
+            raise ValueError("Reranker must be loaded for the reranked method.")
+
+        candidates = retriever.get_hybrid_candidates(
+            query,
+            query_vector,
+            candidate_k=candidate_k,
+            rrf_pool_size=20,
+            per_method_limit=5,
+            max_candidates=30,
+            rrf_k=rrf_k,
+            ticker=ticker,
+        )
+
+        return rerank_candidates(
+            reranker,
+            query,
+            candidates,
+            limit=limit,
+            batch_size=reranker_batch_size,
         )
 
     raise ValueError(f"Unknown retrieval method: {method}.")
@@ -258,7 +293,7 @@ def write_jsonl(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=("Evaluate dense, BM25 and hybrid retrieval against BankScope qrels.")
+        description=("Evaluate dense, BM25, hybrid and reranked retrieval against BankScope qrels.")
     )
     parser.add_argument(
         "--queries",
@@ -275,6 +310,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=60,
     )
+    parser.add_argument(
+        "--reranker-batch-size",
+        type=int,
+        default=4,
+    )
+    parser.add_argument("--reranker-device", help="Device such as cuda, cuda:0, cpu.")
     return parser.parse_args()
 
 
@@ -287,6 +328,9 @@ def main() -> None:
 
     if args.rrf_k <= 0:
         raise ValueError("rrf-k must be positive.")
+
+    if args.reranker_batch_size <= 0:
+        raise ValueError("reranker-batch-size must be positive.")
 
     records = load_jsonl(RECORDS_PATH)
     queries = load_jsonl(args.queries)
@@ -327,6 +371,14 @@ def main() -> None:
         dtype=np.float32,
     )
 
+    del model
+
+    print("\nLoading reranker...")
+
+    reranker = load_reranker(
+        device=args.reranker_device,
+    )
+
     evaluation_rows: list[dict[str, Any]] = []
 
     for query_record, query_vector in zip(
@@ -351,6 +403,8 @@ def main() -> None:
                 limit=retrieval_limit,
                 candidate_k=args.candidate_k,
                 rrf_k=args.rrf_k,
+                reranker=reranker,
+                reranker_batch_size=args.reranker_batch_size,
             )
 
             retrieved_ids = [str(result["target_chunk_id"]) for result in results]
@@ -407,6 +461,8 @@ def main() -> None:
         "overall": overall_summary,
         "by_question_type": by_question_type,
         "per_query": evaluation_rows,
+        "reranker_batch_size": args.reranker_batch_size,
+        "reranker_model_name": RERANKER_MODEL_NAME,
     }
 
     top1_misses = [row for row in evaluation_rows if int(row["metrics"]["hit_at_1"]) == 0]

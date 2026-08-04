@@ -275,6 +275,41 @@ class HybridRetriever:
             rrf_k=rrf_k,
         )
 
+    def get_hybrid_candidates(
+        self,
+        query: str,
+        query_vector: np.ndarray,
+        *,
+        candidate_k: int = 30,
+        rrf_pool_size: int = 20,
+        per_method_limit: int = 5,
+        max_candidates: int = 30,
+        rrf_k: int = 60,
+        ticker: str | None = None,
+        record_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        dense_results = self.search_dense(
+            query_vector,
+            limit=candidate_k,
+            ticker=ticker,
+            record_type=record_type,
+        )
+        bm25_results = self.search_bm25(
+            query,
+            limit=candidate_k,
+            ticker=ticker,
+            record_type=record_type,
+        )
+
+        return build_hybrid_candidate_pool(
+            dense_results,
+            bm25_results,
+            rrf_pool_size=rrf_pool_size,
+            per_method_limit=per_method_limit,
+            max_candidates=max_candidates,
+            rrf_k=rrf_k,
+        )
+
 
 def reciprocal_rank_fusion(
     dense_results: list[dict[str, Any]],
@@ -293,6 +328,7 @@ def reciprocal_rank_fusion(
             entry = fused.setdefault(
                 target_chunk_id,
                 {
+                    "record_index": result["record_index"],
                     "record_id": result["record_id"],
                     "target_chunk_id": target_chunk_id,
                     "record_type": result["record_type"],
@@ -337,3 +373,57 @@ def reciprocal_rank_fusion(
         fused.values(),
         key=sort_key,
     )[:limit]
+
+
+def build_hybrid_candidate_pool(
+    dense_results: list[dict[str, Any]],
+    bm25_results: list[dict[str, Any]],
+    *,
+    rrf_pool_size: int = 20,
+    per_method_limit: int = 5,
+    max_candidates: int = 30,
+    rrf_k: int = 60,
+) -> list[dict[str, Any]]:
+    if rrf_pool_size <= 0:
+        raise ValueError("rrf_pool_size must be positive.")
+
+    if per_method_limit < 0:
+        raise ValueError("per_method_limit cannot be negative.")
+
+    if max_candidates <= 0:
+        raise ValueError("max_candidates must be positive.")
+
+    fused_results = reciprocal_rank_fusion(
+        dense_results,
+        bm25_results,
+        limit=len(dense_results) + len(bm25_results),
+        rrf_k=rrf_k,
+    )
+
+    fused_by_target_id = {str(result["target_chunk_id"]): result for result in fused_results}
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+
+    def add_result(result: dict[str, Any]) -> None:
+        target_chunk_id = str(result["target_chunk_id"])
+
+        if target_chunk_id in selected_ids:
+            return
+
+        if len(selected) >= max_candidates:
+            return
+
+        selected.append(result)
+        selected_ids.add(target_chunk_id)
+
+    for result in fused_results[:rrf_pool_size]:
+        add_result(result)
+
+    # Preserve strong lexical candidates before dense-only candidates.
+    for ranking in (bm25_results, dense_results):
+        for result in ranking[:per_method_limit]:
+            target_chunk_id = str(result["target_chunk_id"])
+            add_result(fused_by_target_id[target_chunk_id])
+
+    return selected
