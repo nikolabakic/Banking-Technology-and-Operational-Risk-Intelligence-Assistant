@@ -426,4 +426,10 @@ def build_hybrid_candidate_pool(
             target_chunk_id = str(result["target_chunk_id"])
             add_result(fused_by_target_id[target_chunk_id])
 
+    # Fill the remaining slots from the fused ranking. The earlier steps reserve
+    # room for strong method-specific candidates, but overlaps between rankings
+    # must not silently shrink a requested pool of 30 to 20 or 21 candidates.
+    for result in fused_results:
+        add_result(result)
+
     return selected

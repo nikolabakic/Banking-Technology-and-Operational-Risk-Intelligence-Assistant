@@ -49,3 +49,19 @@ def test_candidate_pool_preserves_method_specific_results() -> None:
         "bm25_only",
         "dense_only",
     ]
+
+
+def test_candidate_pool_fills_requested_size_after_overlaps() -> None:
+    dense_results = [make_result(f"shared_{index}", "dense", index) for index in range(1, 31)]
+    bm25_results = [make_result(f"shared_{index}", "bm25", index) for index in range(1, 31)]
+
+    candidates = build_hybrid_candidate_pool(
+        dense_results,
+        bm25_results,
+        rrf_pool_size=20,
+        per_method_limit=5,
+        max_candidates=30,
+    )
+
+    assert len(candidates) == 30
+    assert len({result["target_chunk_id"] for result in candidates}) == 30
