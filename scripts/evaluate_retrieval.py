@@ -6,6 +6,7 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from statistics import fmean
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -103,6 +104,35 @@ def validate_queries(
                 f"{sorted(unknown_ids)}."
             )
 
+        primary_target_id = query.get("primary_target_chunk_id")
+
+        if (
+            status == "answerable"
+            and primary_target_id is not None
+            and str(primary_target_id) not in relevant_ids
+        ):
+            raise ValueError(f"Primary target ID for {query_id} is not present in its qrels.")
+
+        evidence_groups = query.get("required_evidence_groups", [])
+
+        if evidence_groups:
+            if status != "answerable":
+                raise ValueError(f"Only answerable query {query_id} may define evidence groups.")
+
+            for group_index, group in enumerate(evidence_groups, start=1):
+                group_ids = [
+                    str(target_chunk_id) for target_chunk_id in group.get("target_chunk_ids", [])
+                ]
+
+                if not group_ids:
+                    raise ValueError(f"Evidence group {group_index} for {query_id} is empty.")
+
+                if not set(group_ids).issubset(relevant_ids):
+                    raise ValueError(
+                        f"Evidence group {group_index} for {query_id} "
+                        "contains IDs outside its qrels."
+                    )
+
         if status == "answerable":
             answerable_queries.append(query)
 
@@ -110,6 +140,37 @@ def validate_queries(
         raise ValueError("There are no answerable queries to evaluate.")
 
     return answerable_queries
+
+
+def classify_question_family(question_type: str) -> str:
+    if question_type == "narrative_risk":
+        return "narrative"
+
+    if question_type == "cross_bank_coverage":
+        return "cross_bank"
+
+    return "table"
+
+
+def evidence_group_coverage_at_k(
+    retrieved_ids: Sequence[str],
+    evidence_groups: Sequence[dict[str, Any]],
+    *,
+    k: int,
+) -> float | None:
+    if not evidence_groups:
+        return None
+
+    top_ids = set(retrieved_ids[:k])
+    covered_groups = 0
+
+    for group in evidence_groups:
+        group_ids = {str(value) for value in group["target_chunk_ids"]}
+
+        if top_ids & group_ids:
+            covered_groups += 1
+
+    return covered_groups / len(evidence_groups)
 
 
 def make_result_preview(
@@ -148,28 +209,29 @@ def retrieve_with_method(
     query: str,
     query_vector: np.ndarray,
     ticker: str | None,
+    relevant_ids: Sequence[str],
     limit: int,
     candidate_k: int,
     rrf_k: int,
     reranker: Any | None,
     reranker_batch_size: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    retrieval_started = perf_counter()
+
     if method == "dense":
-        return retriever.search_dense(
+        results = retriever.search_dense(
             query_vector,
             limit=limit,
             ticker=ticker,
         )
-
-    if method == "bm25":
-        return retriever.search_bm25(
+    elif method == "bm25":
+        results = retriever.search_bm25(
             query,
             limit=limit,
             ticker=ticker,
         )
-
-    if method == "hybrid":
-        return retriever.search_hybrid(
+    elif method == "hybrid":
+        results = retriever.search_hybrid(
             query,
             query_vector,
             limit=limit,
@@ -177,8 +239,7 @@ def retrieve_with_method(
             rrf_k=rrf_k,
             ticker=ticker,
         )
-
-    if method == "reranked":
+    elif method == "reranked":
         if reranker is None:
             raise ValueError("Reranker must be loaded for the reranked method.")
 
@@ -192,16 +253,42 @@ def retrieve_with_method(
             rrf_k=rrf_k,
             ticker=ticker,
         )
+        retrieval_seconds = perf_counter() - retrieval_started
+        candidate_ids = [str(candidate["target_chunk_id"]) for candidate in candidates]
+        candidate_metrics = evaluate_ranking(
+            candidate_ids,
+            relevant_ids,
+            k_values=(30,),
+            reciprocal_rank_limit=30,
+        )
 
-        return rerank_candidates(
+        reranking_started = perf_counter()
+        results = rerank_candidates(
             reranker,
             query,
             candidates,
             limit=limit,
             batch_size=reranker_batch_size,
         )
+        reranking_seconds = perf_counter() - reranking_started
 
-    raise ValueError(f"Unknown retrieval method: {method}.")
+        return results, {
+            "retrieval_seconds": retrieval_seconds,
+            "reranking_seconds": reranking_seconds,
+            "candidate_count": len(candidates),
+            "candidate_recall_at_30": candidate_metrics["recall_at_30"],
+            "candidate_hit_at_30": candidate_metrics["hit_at_30"],
+        }
+    else:
+        raise ValueError(f"Unknown retrieval method: {method}.")
+
+    return results, {
+        "retrieval_seconds": perf_counter() - retrieval_started,
+        "reranking_seconds": 0.0,
+        "candidate_count": None,
+        "candidate_recall_at_30": None,
+        "candidate_hit_at_30": None,
+    }
 
 
 def summarize_rows(
@@ -230,6 +317,51 @@ def summarize_rows(
         method_summary["mrr_at_10"] = fmean(
             float(row["metrics"]["reciprocal_rank_at_10"]) for row in method_rows
         )
+        method_summary["mean_retrieval_seconds"] = fmean(
+            float(row["diagnostics"]["retrieval_seconds"]) for row in method_rows
+        )
+        method_summary["mean_reranking_seconds"] = fmean(
+            float(row["diagnostics"]["reranking_seconds"]) for row in method_rows
+        )
+
+        ticker_rows = [
+            row for row in method_rows if row["diagnostics"]["ticker_filter_accuracy"] is not None
+        ]
+
+        if ticker_rows:
+            method_summary["ticker_filter_accuracy"] = fmean(
+                float(row["diagnostics"]["ticker_filter_accuracy"]) for row in ticker_rows
+            )
+
+        candidate_rows = [
+            row for row in method_rows if row["diagnostics"]["candidate_recall_at_30"] is not None
+        ]
+
+        if candidate_rows:
+            method_summary["candidate_hit_rate_at_30"] = fmean(
+                int(row["diagnostics"]["candidate_hit_at_30"]) for row in candidate_rows
+            )
+            method_summary["mean_candidate_recall_at_30"] = fmean(
+                float(row["diagnostics"]["candidate_recall_at_30"]) for row in candidate_rows
+            )
+
+        group_rows = [
+            row
+            for row in method_rows
+            if row["metrics"].get("evidence_group_coverage_at_10") is not None
+        ]
+
+        if group_rows:
+            method_summary["cross_bank_query_count"] = len(group_rows)
+
+            for k in DEFAULT_K_VALUES:
+                coverage_values = [
+                    float(row["metrics"][f"evidence_group_coverage_at_{k}"]) for row in group_rows
+                ]
+                method_summary[f"mean_evidence_group_coverage_at_{k}"] = fmean(coverage_values)
+                method_summary[f"complete_evidence_group_hits_at_{k}"] = sum(
+                    value == 1.0 for value in coverage_values
+                )
 
         summary[method] = method_summary
 
@@ -394,12 +526,13 @@ def main() -> None:
         ]
 
         for method in METHODS:
-            results = retrieve_with_method(
+            results, diagnostics = retrieve_with_method(
                 retriever,
                 method=method,
                 query=query_text,
                 query_vector=query_vector,
                 ticker=ticker,
+                relevant_ids=relevant_ids,
                 limit=retrieval_limit,
                 candidate_k=args.candidate_k,
                 rrf_k=args.rrf_k,
@@ -414,15 +547,35 @@ def main() -> None:
                 relevant_ids,
             )
 
+            evidence_groups = query_record.get("required_evidence_groups", [])
+
+            for k in DEFAULT_K_VALUES:
+                metrics[f"evidence_group_coverage_at_{k}"] = evidence_group_coverage_at_k(
+                    retrieved_ids,
+                    evidence_groups,
+                    k=k,
+                )
+
+            diagnostics["duplicate_target_count"] = len(retrieved_ids) - len(set(retrieved_ids))
+            diagnostics["ticker_filter_accuracy"] = (
+                None
+                if ticker is None or not results
+                else float(
+                    all(str(result["ticker"]).upper() == ticker.upper() for result in results)
+                )
+            )
+
             evaluation_rows.append(
                 {
                     "query_id": query_record["query_id"],
                     "query": query_text,
                     "ticker": ticker,
                     "question_type": query_record["question_type"],
+                    "question_family": classify_question_family(str(query_record["question_type"])),
                     "method": method,
                     "relevant_target_chunk_ids": (relevant_ids),
                     "metrics": metrics,
+                    "diagnostics": diagnostics,
                     "retrieved": [
                         make_result_preview(
                             result,
@@ -446,6 +599,14 @@ def main() -> None:
         for question_type in question_types
     }
 
+    question_families = sorted({str(row["question_family"]) for row in evaluation_rows})
+    by_question_family = {
+        question_family: summarize_rows(
+            [row for row in evaluation_rows if row["question_family"] == question_family]
+        )
+        for question_family in question_families
+    }
+
     skipped_statuses = Counter(
         str(query["status"]) for query in queries if query["status"] != "answerable"
     )
@@ -456,10 +617,21 @@ def main() -> None:
         "query_file": str(args.queries),
         "answerable_query_count": len(answerable_queries),
         "skipped_queries_by_status": dict(skipped_statuses),
+        "skipped_queries": [
+            {
+                "query_id": query["query_id"],
+                "status": query["status"],
+                "query": query["query"],
+                "annotation_notes": query.get("annotation_notes"),
+            }
+            for query in queries
+            if query["status"] != "answerable"
+        ],
         "candidate_k": args.candidate_k,
         "rrf_k": args.rrf_k,
         "overall": overall_summary,
         "by_question_type": by_question_type,
+        "by_question_family": by_question_family,
         "per_query": evaluation_rows,
         "reranker_batch_size": args.reranker_batch_size,
         "reranker_model_name": RERANKER_MODEL_NAME,
@@ -474,6 +646,7 @@ def main() -> None:
     )
 
     print(f"\nAnswerable queries evaluated: {len(answerable_queries)}")
+    print(f"Skipped by status: {dict(skipped_statuses)}")
     print_summary(overall_summary)
     print(f"\nFull results: {RESULTS_PATH}")
     print(f"Top-1 misses: {TOP1_MISSES_PATH}")
