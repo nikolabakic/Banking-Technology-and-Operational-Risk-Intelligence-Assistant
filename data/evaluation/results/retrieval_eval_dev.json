@@ -1,0 +1,988 @@
+{
+  "model_name": "Qwen/Qwen3-Embedding-0.6B",
+  "record_count": 7110,
+  "query_file": "C:\\Users\\nikola.bakic\\OneDrive - Sixsentix AG\\Documents\\Repositories\\Banking-Technology-and-Operational-Risk-Intelligence-Assistant\\data\\evaluation\\retrieval_queries_dev.jsonl",
+  "answerable_query_count": 2,
+  "skipped_queries_by_status": {},
+  "candidate_k": 30,
+  "rrf_k": 60,
+  "overall": {
+    "dense": {
+      "query_count": 2,
+      "hits_at_1": 0,
+      "hit_rate_at_1": 0.0,
+      "mean_recall_at_1": 0.0,
+      "hits_at_3": 1,
+      "hit_rate_at_3": 0.5,
+      "mean_recall_at_3": 0.1,
+      "hits_at_5": 1,
+      "hit_rate_at_5": 0.5,
+      "mean_recall_at_5": 0.2,
+      "hits_at_10": 2,
+      "hit_rate_at_10": 1.0,
+      "mean_recall_at_10": 0.9,
+      "mrr_at_10": 0.3125
+    },
+    "bm25": {
+      "query_count": 2,
+      "hits_at_1": 1,
+      "hit_rate_at_1": 0.5,
+      "mean_recall_at_1": 0.1,
+      "hits_at_3": 1,
+      "hit_rate_at_3": 0.5,
+      "mean_recall_at_3": 0.1,
+      "hits_at_5": 1,
+      "hit_rate_at_5": 0.5,
+      "mean_recall_at_5": 0.1,
+      "hits_at_10": 1,
+      "hit_rate_at_10": 0.5,
+      "mean_recall_at_10": 0.3,
+      "mrr_at_10": 0.5
+    },
+    "hybrid": {
+      "query_count": 2,
+      "hits_at_1": 0,
+      "hit_rate_at_1": 0.0,
+      "mean_recall_at_1": 0.0,
+      "hits_at_3": 2,
+      "hit_rate_at_3": 1.0,
+      "mean_recall_at_3": 0.35,
+      "hits_at_5": 2,
+      "hit_rate_at_5": 1.0,
+      "mean_recall_at_5": 0.45,
+      "hits_at_10": 2,
+      "hit_rate_at_10": 1.0,
+      "mean_recall_at_10": 0.55,
+      "mrr_at_10": 0.5
+    }
+  },
+  "by_question_type": {
+    "narrative_definition": {
+      "dense": {
+        "query_count": 1,
+        "hits_at_1": 0,
+        "hit_rate_at_1": 0.0,
+        "mean_recall_at_1": 0.0,
+        "hits_at_3": 0,
+        "hit_rate_at_3": 0.0,
+        "mean_recall_at_3": 0.0,
+        "hits_at_5": 0,
+        "hit_rate_at_5": 0.0,
+        "mean_recall_at_5": 0.0,
+        "hits_at_10": 1,
+        "hit_rate_at_10": 1.0,
+        "mean_recall_at_10": 1.0,
+        "mrr_at_10": 0.125
+      },
+      "bm25": {
+        "query_count": 1,
+        "hits_at_1": 0,
+        "hit_rate_at_1": 0.0,
+        "mean_recall_at_1": 0.0,
+        "hits_at_3": 0,
+        "hit_rate_at_3": 0.0,
+        "mean_recall_at_3": 0.0,
+        "hits_at_5": 0,
+        "hit_rate_at_5": 0.0,
+        "mean_recall_at_5": 0.0,
+        "hits_at_10": 0,
+        "hit_rate_at_10": 0.0,
+        "mean_recall_at_10": 0.0,
+        "mrr_at_10": 0.0
+      },
+      "hybrid": {
+        "query_count": 1,
+        "hits_at_1": 0,
+        "hit_rate_at_1": 0.0,
+        "mean_recall_at_1": 0.0,
+        "hits_at_3": 1,
+        "hit_rate_at_3": 1.0,
+        "mean_recall_at_3": 0.5,
+        "hits_at_5": 1,
+        "hit_rate_at_5": 1.0,
+        "mean_recall_at_5": 0.5,
+        "hits_at_10": 1,
+        "hit_rate_at_10": 1.0,
+        "mean_recall_at_10": 0.5,
+        "mrr_at_10": 0.5
+      }
+    },
+    "table_exact_value": {
+      "dense": {
+        "query_count": 1,
+        "hits_at_1": 0,
+        "hit_rate_at_1": 0.0,
+        "mean_recall_at_1": 0.0,
+        "hits_at_3": 1,
+        "hit_rate_at_3": 1.0,
+        "mean_recall_at_3": 0.2,
+        "hits_at_5": 1,
+        "hit_rate_at_5": 1.0,
+        "mean_recall_at_5": 0.4,
+        "hits_at_10": 1,
+        "hit_rate_at_10": 1.0,
+        "mean_recall_at_10": 0.8,
+        "mrr_at_10": 0.5
+      },
+      "bm25": {
+        "query_count": 1,
+        "hits_at_1": 1,
+        "hit_rate_at_1": 1.0,
+        "mean_recall_at_1": 0.2,
+        "hits_at_3": 1,
+        "hit_rate_at_3": 1.0,
+        "mean_recall_at_3": 0.2,
+        "hits_at_5": 1,
+        "hit_rate_at_5": 1.0,
+        "mean_recall_at_5": 0.2,
+        "hits_at_10": 1,
+        "hit_rate_at_10": 1.0,
+        "mean_recall_at_10": 0.6,
+        "mrr_at_10": 1.0
+      },
+      "hybrid": {
+        "query_count": 1,
+        "hits_at_1": 0,
+        "hit_rate_at_1": 0.0,
+        "mean_recall_at_1": 0.0,
+        "hits_at_3": 1,
+        "hit_rate_at_3": 1.0,
+        "mean_recall_at_3": 0.2,
+        "hits_at_5": 1,
+        "hit_rate_at_5": 1.0,
+        "mean_recall_at_5": 0.4,
+        "hits_at_10": 1,
+        "hit_rate_at_10": 1.0,
+        "mean_recall_at_10": 0.6,
+        "mrr_at_10": 0.5
+      }
+    }
+  },
+  "per_query": [
+    {
+      "query_id": "dev_jpm_standardized_cet1_ratio_2025",
+      "query": "What was JPMorgan Chase & Co.'s Standardized CET1 capital ratio on December 31, 2025?",
+      "ticker": "JPM",
+      "question_type": "table_exact_value",
+      "method": "dense",
+      "relevant_target_chunk_ids": [
+        "5afa4022f4b0a8902e589a8f4b095d949e8995f22454ce1f4ab374cb072e0054",
+        "a23caa9bb077e76d30d90987c508234d9fa95a27fb8b84b856ad80c897791e4d",
+        "c88c97cf870b99efc7a33c19fcd993fe7c7bc5a933581d5de0b7a7f2f1e7403a",
+        "ef31371dace5b50ec9bdd02e2ad75165d61272ac0f1dd938987a7e243680accf",
+        "d717a052ca679068b7de12ac2562141c43d63519cac0ef066445d78872f31403"
+      ],
+      "metrics": {
+        "relevant_count": 5,
+        "first_relevant_rank": 2,
+        "hit_at_1": 0,
+        "recall_at_1": 0.0,
+        "hit_at_3": 1,
+        "recall_at_3": 0.2,
+        "hit_at_5": 1,
+        "recall_at_5": 0.4,
+        "hit_at_10": 1,
+        "recall_at_10": 0.8,
+        "reciprocal_rank_at_10": 0.5
+      },
+      "retrieved": [
+        {
+          "rank": 1,
+          "target_chunk_id": "653d8ffbdc0646ee96d37ea57afb761f7d4ac1a01711e4b7bfefb0be0b9cabc3",
+          "record_id": "table::424e28319ce861eb0c62c04cf4a4ec6849fac523b887cc14ee9c9470cee737f2",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.7808499336242676,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "December 31, 2024 (in millions, except ratios) | Standardized | | Advanced | JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | | JPMorgan Chase & Co. | | JPMorgan Chase Bank, N.A. | Risk-based capital metrics: (a) | | | | | | | CET1 capital | $ | 275,513 | | $ | 275,732 | | | $ | 275,513 | | | $ | 275,732 | | Tier 1 capital | 294,881 | | 275,737 | | | 294,881 | | | 275,737 | | Total capital | 325,589 | | 296,041 | | | 311,898 | | (d) | 282,328 | | (d) Risk-weighted assets | 1,757,460 | | 1,718,"
+        },
+        {
+          "rank": 2,
+          "target_chunk_id": "d717a052ca679068b7de12ac2562141c43d63519cac0ef066445d78872f31403",
+          "record_id": "table::bb7a196266c37406c5f8b46c17d8465d2087248d8539c1d79fdb2f84ca882951",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.7589894533157349,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "December 31, 2025 (in millions, except ratios) | Standardized | | Advanced | JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | | JPMorgan Chase & Co. | | JPMorgan Chase Bank, N.A. | Risk-based capital metrics: (a) | | | | | | | CET1 capital | $ | 288,469 | | $ | 294,804 | | | $ | 288,469 | | | $ | 294,804 | | Tier 1 capital | 307,630 | | 294,807 | | | 307,630 | | | 294,807 | | Total capital | 343,843 | | 317,684 | | | 328,962 | | (d) | 302,732 | | (d) Risk-weighted assets (b) | 1,981,692 | | 1,"
+        },
+        {
+          "rank": 3,
+          "target_chunk_id": "f926d9111356c83193de755873a5246f4b2e3bfff5979e4f7d75a2b7b3f91174",
+          "record_id": "text::f926d9111356c83193de755873a5246f4b2e3bfff5979e4f7d75a2b7b3f91174",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.7542345523834229,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Note: The table above is as defined by the regulations issued by the Federal Reserve, OCC and FDIC and to which the Firm and JPMorgan Chase Bank, N.A. are subject. (a) Represents the regulatory capital ratio requirements applicable to the Firm. The CET1, Tier 1 and Total capital ratio requirements each include a respective minimum requirement plus a GSIB surcharge of 4.5 % as calculated under Method 2; plus a 2.5 % SCB for Standardized ratios and a fixed 2.5 % capital conservation buffer for Adv"
+        },
+        {
+          "rank": 4,
+          "target_chunk_id": "ef31371dace5b50ec9bdd02e2ad75165d61272ac0f1dd938987a7e243680accf",
+          "record_id": "table::2490bb0dfccd5d470168e8d012d2b9c549923d13876cb43274b11042cff5c7c9",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.7364873886108398,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "| Standardized | | Advanced (in millions, except ratios) | December 31, 2025 | | December 31, 2024 | | Capital ratio requirements (d) | | December 31, 2025 | | December 31, 2024 | | Capital ratio requirements (d) Risk-based capital metrics: (a) | | | | | | | | | | | CET1 capital | $ | 288,469 | | | $ | 275,513 | | | | | $ | 288,469 | | | $ | 275,513 | | | Tier 1 capital | 307,630 | | | 294,881 | | | | | 307,630 | | | 294,881 | | | Total capital | 343,843 | | | 325,589 | | | | | 328,962 | | (e) |"
+        },
+        {
+          "rank": 5,
+          "target_chunk_id": "e74a3fcf67ff3c0bce8ade640d5a5f5a8511381b8981eb3d650476a3d3094b2f",
+          "record_id": "table::2625c0c22365d15f9b861a9671a1491d6d4db6aca841d876b7e39d349530e0a2",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.7351263761520386,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "| Standardized capital ratio requirements | Advanced capital ratio requirements | Well-capitalized ratios | BHC (a)(b) | IDI (c) | BHC (a)(b) | IDI (c) | BHC (d) | IDI (e) Risk-based capital ratios | | | | CET1 capital | 11.5 | % | 7.0 | % | 11.5 | % | 7.0 | % | NA | 6.5 | % Tier 1 capital | 13.0 | | 8.5 | | 13.0 | | 8.5 | | 6.0 | % | 8.0 | Total capital | 15.0 | | 10.5 | | 15.0 | | 10.5 | | 10.0 | | 10.0 |"
+        },
+        {
+          "rank": 6,
+          "target_chunk_id": "a23caa9bb077e76d30d90987c508234d9fa95a27fb8b84b856ad80c897791e4d",
+          "record_id": "table::4b38c88acf776302056433e9df29328081f1f6a118883156901eb830eb4e335c",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.7200601100921631,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Financial performance of JPMorganChase | Year ended December 31, (in millions, except per share data and ratios) | | | 2025 | 2024 | Change Selected income statement data | | | Noninterest revenue | $ | 87,004 | | $ | 84,973 | | 2% Net interest income | 95,443 | | 92,583 | | 3 Total net revenue | 182,447 | | 177,556 | | 3 Total noninterest expense | 95,640 | | 91,797 | | 4 Pre-provision profit | 86,807 | | 85,759 | | 1 Provision for credit losses | 14,212 | | 10,678 | | 33 Net income | 57,048 | "
+        },
+        {
+          "rank": 7,
+          "target_chunk_id": "5afa4022f4b0a8902e589a8f4b095d949e8995f22454ce1f4ab374cb072e0054",
+          "record_id": "table::8f4ee5cffc77f7197d3f9dc7dc187b7df3feeb63770c26a2e5b5d93cf1c18fa1",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.7176397442817688,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "As of or for the year ended December 31, (in millions, except per share, ratio, employee data and where otherwise noted) | | | | | | | 2025 | | 2024 | | 2023 Selected income statement data | | | | | | Tangible book value per share (“TBVPS”) (a) | | 107.56 | | | 97.30 | | | 86.08 | Cash dividends declared per share | | 5.80 | | | 4.80 | | | 4.10 | Selected ratios and metrics | | | | | | Return on common equity (“ROE”) | | 17 | | % | 18 | | % | 17 | % Return on tangible common equity (“ROTCE”) (a)"
+        },
+        {
+          "rank": 8,
+          "target_chunk_id": "92c2bf32fddabc874fb198401faf4f17fef0274e8dc48a217a590802804b5568",
+          "record_id": "table::877620679ef88616e92afd1d0e9fc9fcd04e7bec5d5327b3a1be6000c0863c46",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.7175068855285645,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Year ended December 31, (in millions) | 2025 Standardized/Advanced CET1 capital at December 31, 2024 | $ | 275,513 | Net income applicable to common equity | 55,949 | Dividends declared on common stock | (16,060) | Net purchase of treasury stock | (30,573) | Changes in additional paid-in capital | 203 | Changes related to AOCI applicable to capital: | Unrealized gains/(losses) on investment securities | 3,569 | Translation adjustments, net of hedges (a) | 1,339 | Fair value hedges | 64 | Defined"
+        },
+        {
+          "rank": 9,
+          "target_chunk_id": "4c3d99e0f1e1973071daf9bfe5e036217b72eae4e9cb36ae98adc1437247e14f",
+          "record_id": "text::4c3d99e0f1e1973071daf9bfe5e036217b72eae4e9cb36ae98adc1437247e14f",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.7073720693588257,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "(a) As of January 1, 2025, the benefit from the CECL capital transition provision had been fully phased out. For the year ended December 31, 2024, CET1 capital reflected a $720 million benefit. Refer to Note 27 for additional information. (b) Includes approximately $23 billion under the Standardized approach and approximately $110 billion under the Advanced approach related to the Apple Card transaction. Advanced RWA is expected to reduce to approximately $30 billion once the necessary modeling "
+        },
+        {
+          "rank": 10,
+          "target_chunk_id": "ac3acbed397924e444f2572b749bcd14ce67f07ca3eee965f85bd7b42f88532e",
+          "record_id": "text::ac3acbed397924e444f2572b749bcd14ce67f07ca3eee965f85bd7b42f88532e",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.7010948657989502,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Notes to consolidated financial statements CECL Regulatory Capital Transition Beginning January 1, 2022, the $ 2.9 billion CECL capital benefit, provided by the Federal Reserve in response to the COVID-19 pandemic, was phased out at 25% per year over a three-year period and fully phased out as of January 1, 2025. As of December 31, 2024, the Firm’s CET1 capital reflected the remaining benefit of $ 720 million associated with the CECL capital transition provisions. Similarly, as of January 1, 202"
+        }
+      ]
+    },
+    {
+      "query_id": "dev_jpm_standardized_cet1_ratio_2025",
+      "query": "What was JPMorgan Chase & Co.'s Standardized CET1 capital ratio on December 31, 2025?",
+      "ticker": "JPM",
+      "question_type": "table_exact_value",
+      "method": "bm25",
+      "relevant_target_chunk_ids": [
+        "5afa4022f4b0a8902e589a8f4b095d949e8995f22454ce1f4ab374cb072e0054",
+        "a23caa9bb077e76d30d90987c508234d9fa95a27fb8b84b856ad80c897791e4d",
+        "c88c97cf870b99efc7a33c19fcd993fe7c7bc5a933581d5de0b7a7f2f1e7403a",
+        "ef31371dace5b50ec9bdd02e2ad75165d61272ac0f1dd938987a7e243680accf",
+        "d717a052ca679068b7de12ac2562141c43d63519cac0ef066445d78872f31403"
+      ],
+      "metrics": {
+        "relevant_count": 5,
+        "first_relevant_rank": 1,
+        "hit_at_1": 1,
+        "recall_at_1": 0.2,
+        "hit_at_3": 1,
+        "recall_at_3": 0.2,
+        "hit_at_5": 1,
+        "recall_at_5": 0.2,
+        "hit_at_10": 1,
+        "recall_at_10": 0.6,
+        "reciprocal_rank_at_10": 1.0
+      },
+      "retrieved": [
+        {
+          "rank": 1,
+          "target_chunk_id": "d717a052ca679068b7de12ac2562141c43d63519cac0ef066445d78872f31403",
+          "record_id": "table::bb7a196266c37406c5f8b46c17d8465d2087248d8539c1d79fdb2f84ca882951",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 17.05118179321289,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "December 31, 2025 (in millions, except ratios) | Standardized | | Advanced | JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | | JPMorgan Chase & Co. | | JPMorgan Chase Bank, N.A. | Risk-based capital metrics: (a) | | | | | | | CET1 capital | $ | 288,469 | | $ | 294,804 | | | $ | 288,469 | | | $ | 294,804 | | Tier 1 capital | 307,630 | | 294,807 | | | 307,630 | | | 294,807 | | Total capital | 343,843 | | 317,684 | | | 328,962 | | (d) | 302,732 | | (d) Risk-weighted assets (b) | 1,981,692 | | 1,"
+        },
+        {
+          "rank": 2,
+          "target_chunk_id": "653d8ffbdc0646ee96d37ea57afb761f7d4ac1a01711e4b7bfefb0be0b9cabc3",
+          "record_id": "table::424e28319ce861eb0c62c04cf4a4ec6849fac523b887cc14ee9c9470cee737f2",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 16.917713165283203,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "December 31, 2024 (in millions, except ratios) | Standardized | | Advanced | JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | | JPMorgan Chase & Co. | | JPMorgan Chase Bank, N.A. | Risk-based capital metrics: (a) | | | | | | | CET1 capital | $ | 275,513 | | $ | 275,732 | | | $ | 275,513 | | | $ | 275,732 | | Tier 1 capital | 294,881 | | 275,737 | | | 294,881 | | | 275,737 | | Total capital | 325,589 | | 296,041 | | | 311,898 | | (d) | 282,328 | | (d) Risk-weighted assets | 1,757,460 | | 1,718,"
+        },
+        {
+          "rank": 3,
+          "target_chunk_id": "ac3acbed397924e444f2572b749bcd14ce67f07ca3eee965f85bd7b42f88532e",
+          "record_id": "text::ac3acbed397924e444f2572b749bcd14ce67f07ca3eee965f85bd7b42f88532e",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 14.117238998413086,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Notes to consolidated financial statements CECL Regulatory Capital Transition Beginning January 1, 2022, the $ 2.9 billion CECL capital benefit, provided by the Federal Reserve in response to the COVID-19 pandemic, was phased out at 25% per year over a three-year period and fully phased out as of January 1, 2025. As of December 31, 2024, the Firm’s CET1 capital reflected the remaining benefit of $ 720 million associated with the CECL capital transition provisions. Similarly, as of January 1, 202"
+        },
+        {
+          "rank": 4,
+          "target_chunk_id": "f926d9111356c83193de755873a5246f4b2e3bfff5979e4f7d75a2b7b3f91174",
+          "record_id": "text::f926d9111356c83193de755873a5246f4b2e3bfff5979e4f7d75a2b7b3f91174",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 13.939891815185547,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Note: The table above is as defined by the regulations issued by the Federal Reserve, OCC and FDIC and to which the Firm and JPMorgan Chase Bank, N.A. are subject. (a) Represents the regulatory capital ratio requirements applicable to the Firm. The CET1, Tier 1 and Total capital ratio requirements each include a respective minimum requirement plus a GSIB surcharge of 4.5 % as calculated under Method 2; plus a 2.5 % SCB for Standardized ratios and a fixed 2.5 % capital conservation buffer for Adv"
+        },
+        {
+          "rank": 5,
+          "target_chunk_id": "f3fc0e4572a412398cf0f75fc1fe92fa2cf351d9c58f1f71ce6892bc79f841f8",
+          "record_id": "text::f3fc0e4572a412398cf0f75fc1fe92fa2cf351d9c58f1f71ce6892bc79f841f8",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 13.021299362182617,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Note 27 – Regulatory capital The Federal Reserve establishes capital requirements, including well-capitalized standards, for the Firm as a consolidated financial holding company. The OCC establishes similar minimum capital requirements and standards for the Firm’s principal IDI subsidiary, JPMorgan Chase Bank, N.A. The capital rules under Basel III establish minimum capital ratios and overall capital adequacy standards for large and internationally active U.S. bank holding companies and banks, i"
+        },
+        {
+          "rank": 6,
+          "target_chunk_id": "5afa4022f4b0a8902e589a8f4b095d949e8995f22454ce1f4ab374cb072e0054",
+          "record_id": "table::8f4ee5cffc77f7197d3f9dc7dc187b7df3feeb63770c26a2e5b5d93cf1c18fa1",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 12.152965545654297,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "As of or for the year ended December 31, (in millions, except per share, ratio, employee data and where otherwise noted) | | | | | | | 2025 | | 2024 | | 2023 Selected income statement data | | | | | | Tangible book value per share (“TBVPS”) (a) | | 107.56 | | | 97.30 | | | 86.08 | Cash dividends declared per share | | 5.80 | | | 4.80 | | | 4.10 | Selected ratios and metrics | | | | | | Return on common equity (“ROE”) | | 17 | | % | 18 | | % | 17 | % Return on tangible common equity (“ROTCE”) (a)"
+        },
+        {
+          "rank": 7,
+          "target_chunk_id": "e4565ae03b7c93dc80a6d374742c2a7a065585a3967fdf3d7c4bea27ca59a7d1",
+          "record_id": "table::a695292fcfc474e7d28b2c94d60bf5708e0003742687a32693f714251e84e8e5",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 11.466509819030762,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Three months ended (in millions, except ratios) | December 31, 2025 | | December 31, 2024 JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | | JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. Leverage-based capital metrics: (a) | | | | | Adjusted average assets (b) | $ | 4,472,394 | | $ | 3,766,709 | | | $ | 4,070,499 | | $ | 3,491,283 | Tier 1 leverage ratio | 6.9 | % | 7.8 | % | | 7.2 | % | 7.9 | % Total leverage exposure | $ | 5,302,001 | | $ | 4,571,728 | | | $ | 4,837,568 | | $ | 4,246,516 "
+        },
+        {
+          "rank": 8,
+          "target_chunk_id": "ef31371dace5b50ec9bdd02e2ad75165d61272ac0f1dd938987a7e243680accf",
+          "record_id": "table::2490bb0dfccd5d470168e8d012d2b9c549923d13876cb43274b11042cff5c7c9",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 10.983851432800293,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "| Standardized | | Advanced (in millions, except ratios) | December 31, 2025 | | December 31, 2024 | | Capital ratio requirements (d) | | December 31, 2025 | | December 31, 2024 | | Capital ratio requirements (d) Risk-based capital metrics: (a) | | | | | | | | | | | CET1 capital | $ | 288,469 | | | $ | 275,513 | | | | | $ | 288,469 | | | $ | 275,513 | | | Tier 1 capital | 307,630 | | | 294,881 | | | | | 307,630 | | | 294,881 | | | Total capital | 343,843 | | | 325,589 | | | | | 328,962 | | (e) |"
+        },
+        {
+          "rank": 9,
+          "target_chunk_id": "92c2bf32fddabc874fb198401faf4f17fef0274e8dc48a217a590802804b5568",
+          "record_id": "table::877620679ef88616e92afd1d0e9fc9fcd04e7bec5d5327b3a1be6000c0863c46",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 10.411484718322754,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Year ended December 31, (in millions) | 2025 Standardized/Advanced CET1 capital at December 31, 2024 | $ | 275,513 | Net income applicable to common equity | 55,949 | Dividends declared on common stock | (16,060) | Net purchase of treasury stock | (30,573) | Changes in additional paid-in capital | 203 | Changes related to AOCI applicable to capital: | Unrealized gains/(losses) on investment securities | 3,569 | Translation adjustments, net of hedges (a) | 1,339 | Fair value hedges | 64 | Defined"
+        },
+        {
+          "rank": 10,
+          "target_chunk_id": "b7a54a0489180914b0213ad7058a7cc9a8ea4696dcf59df025f50cddaee0c178",
+          "record_id": "table::57901b900bca233f6405d454a40c964ea58d7de6decdf9a8f69dab3e2f0abe90",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 9.87767219543457,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "10.1 | | Deferred Compensation Plan for Non-Employee Directors of JPMorgan Chase & Co., as amended and restated July 2001 and as of December 31, 2004 (incorporated by reference to Exhibit 10.1 to the Annual Report on Form 10-K of JPMorgan Chase & Co. (File No. 1-5805) for the year ended December 31, 2007). (a) 10.2 | | 2005 Deferred Compensation Plan for Non-Employee Directors of JPMorgan Chase & Co., a s amended and restated effective January 1, 2025 (a)(b) 10.3 | | 2005 Deferred Compensation P"
+        }
+      ]
+    },
+    {
+      "query_id": "dev_jpm_standardized_cet1_ratio_2025",
+      "query": "What was JPMorgan Chase & Co.'s Standardized CET1 capital ratio on December 31, 2025?",
+      "ticker": "JPM",
+      "question_type": "table_exact_value",
+      "method": "hybrid",
+      "relevant_target_chunk_ids": [
+        "5afa4022f4b0a8902e589a8f4b095d949e8995f22454ce1f4ab374cb072e0054",
+        "a23caa9bb077e76d30d90987c508234d9fa95a27fb8b84b856ad80c897791e4d",
+        "c88c97cf870b99efc7a33c19fcd993fe7c7bc5a933581d5de0b7a7f2f1e7403a",
+        "ef31371dace5b50ec9bdd02e2ad75165d61272ac0f1dd938987a7e243680accf",
+        "d717a052ca679068b7de12ac2562141c43d63519cac0ef066445d78872f31403"
+      ],
+      "metrics": {
+        "relevant_count": 5,
+        "first_relevant_rank": 2,
+        "hit_at_1": 0,
+        "recall_at_1": 0.0,
+        "hit_at_3": 1,
+        "recall_at_3": 0.2,
+        "hit_at_5": 1,
+        "recall_at_5": 0.4,
+        "hit_at_10": 1,
+        "recall_at_10": 0.6,
+        "reciprocal_rank_at_10": 0.5
+      },
+      "retrieved": [
+        {
+          "rank": 1,
+          "target_chunk_id": "653d8ffbdc0646ee96d37ea57afb761f7d4ac1a01711e4b7bfefb0be0b9cabc3",
+          "record_id": "table::424e28319ce861eb0c62c04cf4a4ec6849fac523b887cc14ee9c9470cee737f2",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.03252247488101534,
+          "dense_rank": 1,
+          "bm25_rank": 2,
+          "preview": "December 31, 2024 (in millions, except ratios) | Standardized | | Advanced | JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | | JPMorgan Chase & Co. | | JPMorgan Chase Bank, N.A. | Risk-based capital metrics: (a) | | | | | | | CET1 capital | $ | 275,513 | | $ | 275,732 | | | $ | 275,513 | | | $ | 275,732 | | Tier 1 capital | 294,881 | | 275,737 | | | 294,881 | | | 275,737 | | Total capital | 325,589 | | 296,041 | | | 311,898 | | (d) | 282,328 | | (d) Risk-weighted assets | 1,757,460 | | 1,718,"
+        },
+        {
+          "rank": 2,
+          "target_chunk_id": "d717a052ca679068b7de12ac2562141c43d63519cac0ef066445d78872f31403",
+          "record_id": "table::bb7a196266c37406c5f8b46c17d8465d2087248d8539c1d79fdb2f84ca882951",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.03252247488101534,
+          "dense_rank": 2,
+          "bm25_rank": 1,
+          "preview": "December 31, 2025 (in millions, except ratios) | Standardized | | Advanced | JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | | JPMorgan Chase & Co. | | JPMorgan Chase Bank, N.A. | Risk-based capital metrics: (a) | | | | | | | CET1 capital | $ | 288,469 | | $ | 294,804 | | | $ | 288,469 | | | $ | 294,804 | | Tier 1 capital | 307,630 | | 294,807 | | | 307,630 | | | 294,807 | | Total capital | 343,843 | | 317,684 | | | 328,962 | | (d) | 302,732 | | (d) Risk-weighted assets (b) | 1,981,692 | | 1,"
+        },
+        {
+          "rank": 3,
+          "target_chunk_id": "f926d9111356c83193de755873a5246f4b2e3bfff5979e4f7d75a2b7b3f91174",
+          "record_id": "text::f926d9111356c83193de755873a5246f4b2e3bfff5979e4f7d75a2b7b3f91174",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.03149801587301587,
+          "dense_rank": 3,
+          "bm25_rank": 4,
+          "preview": "Note: The table above is as defined by the regulations issued by the Federal Reserve, OCC and FDIC and to which the Firm and JPMorgan Chase Bank, N.A. are subject. (a) Represents the regulatory capital ratio requirements applicable to the Firm. The CET1, Tier 1 and Total capital ratio requirements each include a respective minimum requirement plus a GSIB surcharge of 4.5 % as calculated under Method 2; plus a 2.5 % SCB for Standardized ratios and a fixed 2.5 % capital conservation buffer for Adv"
+        },
+        {
+          "rank": 4,
+          "target_chunk_id": "ef31371dace5b50ec9bdd02e2ad75165d61272ac0f1dd938987a7e243680accf",
+          "record_id": "table::2490bb0dfccd5d470168e8d012d2b9c549923d13876cb43274b11042cff5c7c9",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.030330882352941176,
+          "dense_rank": 4,
+          "bm25_rank": 8,
+          "preview": "| Standardized | | Advanced (in millions, except ratios) | December 31, 2025 | | December 31, 2024 | | Capital ratio requirements (d) | | December 31, 2025 | | December 31, 2024 | | Capital ratio requirements (d) Risk-based capital metrics: (a) | | | | | | | | | | | CET1 capital | $ | 288,469 | | | $ | 275,513 | | | | | $ | 288,469 | | | $ | 275,513 | | | Tier 1 capital | 307,630 | | | 294,881 | | | | | 307,630 | | | 294,881 | | | Total capital | 343,843 | | | 325,589 | | | | | 328,962 | | (e) |"
+        },
+        {
+          "rank": 5,
+          "target_chunk_id": "ac3acbed397924e444f2572b749bcd14ce67f07ca3eee965f85bd7b42f88532e",
+          "record_id": "text::ac3acbed397924e444f2572b749bcd14ce67f07ca3eee965f85bd7b42f88532e",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.030158730158730156,
+          "dense_rank": 10,
+          "bm25_rank": 3,
+          "preview": "Notes to consolidated financial statements CECL Regulatory Capital Transition Beginning January 1, 2022, the $ 2.9 billion CECL capital benefit, provided by the Federal Reserve in response to the COVID-19 pandemic, was phased out at 25% per year over a three-year period and fully phased out as of January 1, 2025. As of December 31, 2024, the Firm’s CET1 capital reflected the remaining benefit of $ 720 million associated with the CECL capital transition provisions. Similarly, as of January 1, 202"
+        },
+        {
+          "rank": 6,
+          "target_chunk_id": "5afa4022f4b0a8902e589a8f4b095d949e8995f22454ce1f4ab374cb072e0054",
+          "record_id": "table::8f4ee5cffc77f7197d3f9dc7dc187b7df3feeb63770c26a2e5b5d93cf1c18fa1",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.03007688828584351,
+          "dense_rank": 7,
+          "bm25_rank": 6,
+          "preview": "As of or for the year ended December 31, (in millions, except per share, ratio, employee data and where otherwise noted) | | | | | | | 2025 | | 2024 | | 2023 Selected income statement data | | | | | | Tangible book value per share (“TBVPS”) (a) | | 107.56 | | | 97.30 | | | 86.08 | Cash dividends declared per share | | 5.80 | | | 4.80 | | | 4.10 | Selected ratios and metrics | | | | | | Return on common equity (“ROE”) | | 17 | | % | 18 | | % | 17 | % Return on tangible common equity (“ROTCE”) (a)"
+        },
+        {
+          "rank": 7,
+          "target_chunk_id": "92c2bf32fddabc874fb198401faf4f17fef0274e8dc48a217a590802804b5568",
+          "record_id": "table::877620679ef88616e92afd1d0e9fc9fcd04e7bec5d5327b3a1be6000c0863c46",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.02919863597612958,
+          "dense_rank": 8,
+          "bm25_rank": 9,
+          "preview": "Year ended December 31, (in millions) | 2025 Standardized/Advanced CET1 capital at December 31, 2024 | $ | 275,513 | Net income applicable to common equity | 55,949 | Dividends declared on common stock | (16,060) | Net purchase of treasury stock | (30,573) | Changes in additional paid-in capital | 203 | Changes related to AOCI applicable to capital: | Unrealized gains/(losses) on investment securities | 3,569 | Translation adjustments, net of hedges (a) | 1,339 | Fair value hedges | 64 | Defined"
+        },
+        {
+          "rank": 8,
+          "target_chunk_id": "e74a3fcf67ff3c0bce8ade640d5a5f5a8511381b8981eb3d650476a3d3094b2f",
+          "record_id": "table::2625c0c22365d15f9b861a9671a1491d6d4db6aca841d876b7e39d349530e0a2",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.02854251012145749,
+          "dense_rank": 5,
+          "bm25_rank": 16,
+          "preview": "| Standardized capital ratio requirements | Advanced capital ratio requirements | Well-capitalized ratios | BHC (a)(b) | IDI (c) | BHC (a)(b) | IDI (c) | BHC (d) | IDI (e) Risk-based capital ratios | | | | CET1 capital | 11.5 | % | 7.0 | % | 11.5 | % | 7.0 | % | NA | 6.5 | % Tier 1 capital | 13.0 | | 8.5 | | 13.0 | | 8.5 | | 6.0 | % | 8.0 | Total capital | 15.0 | | 10.5 | | 15.0 | | 10.5 | | 10.0 | | 10.0 |"
+        },
+        {
+          "rank": 9,
+          "target_chunk_id": "4c3d99e0f1e1973071daf9bfe5e036217b72eae4e9cb36ae98adc1437247e14f",
+          "record_id": "text::4c3d99e0f1e1973071daf9bfe5e036217b72eae4e9cb36ae98adc1437247e14f",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.02819138376017471,
+          "dense_rank": 9,
+          "bm25_rank": 13,
+          "preview": "(a) As of January 1, 2025, the benefit from the CECL capital transition provision had been fully phased out. For the year ended December 31, 2024, CET1 capital reflected a $720 million benefit. Refer to Note 27 for additional information. (b) Includes approximately $23 billion under the Standardized approach and approximately $110 billion under the Advanced approach related to the Apple Card transaction. Advanced RWA is expected to reduce to approximately $30 billion once the necessary modeling "
+        },
+        {
+          "rank": 10,
+          "target_chunk_id": "e4565ae03b7c93dc80a6d374742c2a7a065585a3967fdf3d7c4bea27ca59a7d1",
+          "record_id": "table::a695292fcfc474e7d28b2c94d60bf5708e0003742687a32693f714251e84e8e5",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 0.027912386121341344,
+          "dense_rank": 17,
+          "bm25_rank": 7,
+          "preview": "Three months ended (in millions, except ratios) | December 31, 2025 | | December 31, 2024 JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | | JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. Leverage-based capital metrics: (a) | | | | | Adjusted average assets (b) | $ | 4,472,394 | | $ | 3,766,709 | | | $ | 4,070,499 | | $ | 3,491,283 | Tier 1 leverage ratio | 6.9 | % | 7.8 | % | | 7.2 | % | 7.9 | % Total leverage exposure | $ | 5,302,001 | | $ | 4,571,728 | | | $ | 4,837,568 | | $ | 4,246,516 "
+        }
+      ]
+    },
+    {
+      "query_id": "dev_jpm_operational_risk_causes_2025",
+      "query": "What causes operational risk according to JPMorgan Chase?",
+      "ticker": "JPM",
+      "question_type": "narrative_definition",
+      "method": "dense",
+      "relevant_target_chunk_ids": [
+        "2a21170462fac2308db25855e4fe9a73c7e64cf51e69c276d800efc70ad6333b",
+        "a6d5f3cf521d504377063a41e849c992daa219cc17eddb7ad8c12e57d365a059"
+      ],
+      "metrics": {
+        "relevant_count": 2,
+        "first_relevant_rank": 8,
+        "hit_at_1": 0,
+        "recall_at_1": 0.0,
+        "hit_at_3": 0,
+        "recall_at_3": 0.0,
+        "hit_at_5": 0,
+        "recall_at_5": 0.0,
+        "hit_at_10": 1,
+        "recall_at_10": 1.0,
+        "reciprocal_rank_at_10": 0.125
+      },
+      "retrieved": [
+        {
+          "rank": 1,
+          "target_chunk_id": "8f106940a9c6145cab20451d0dfc5a2b259b3dc95035700121a856261cb1062c",
+          "record_id": "text::8f106940a9c6145cab20451d0dfc5a2b259b3dc95035700121a856261cb1062c",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.756827712059021,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "• errors made by JPMorganChase or another market participant, whether inadvertent or malicious, which could cause widespread system disruption • weaknesses or shortcomings in operational systems that may not be detected in a timely manner • isolated or seemingly insignificant errors in operational systems that could compound, or migrate to other systems, becoming larger issues • failures in synchronization or encryption software, or degraded performance of microprocessors, which could cause disr"
+        },
+        {
+          "rank": 2,
+          "target_chunk_id": "182ef0aea03dc7bb61324967e719443381a549784d8234ba7d989cb5cb56ccdf",
+          "record_id": "text::182ef0aea03dc7bb61324967e719443381a549784d8234ba7d989cb5cb56ccdf",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.7517150640487671,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "• Operational risks, including risks associated with JPMorganChase’s dependence on its operational systems and its employees, as well as the systems and employees of acquired businesses and external parties; the harm that could be caused by a successful cyber attack affecting JPMorganChase or by other extraordinary events; the adverse effects of failing to identify and address operational risks associated with the introduction of or changes to products, services and delivery platforms or technol"
+        },
+        {
+          "rank": 3,
+          "target_chunk_id": "402f0f0f6843bf9cd268d0d1516a77a5b0bfd969e5afddbaab08bdde9ab87816",
+          "record_id": "text::402f0f0f6843bf9cd268d0d1516a77a5b0bfd969e5afddbaab08bdde9ab87816",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.7054632902145386,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "value of the instrument. Any of these factors could cause a decline in the value of financial instruments that JPMorganChase owns or in which it makes markets, which could have an adverse effect on its results of operations. Furthermore, JPMorganChase’s hedging and other risk management strategies may not always be effective, and it could incur significant losses, if extreme market events were to occur. Credit JPMorganChase could be negatively affected by adverse changes in the financial conditi"
+        },
+        {
+          "rank": 4,
+          "target_chunk_id": "7baf47111d4fb6a53e4461f18cf6d93770d16c60e8e54f4ac336447505d71d2e",
+          "record_id": "text::7baf47111d4fb6a53e4461f18cf6d93770d16c60e8e54f4ac336447505d71d2e",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.6920919418334961,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Part I • actions by banking regulators, as well as changes in applicable law or how applicable law is implemented by banking regulators • changes in the composition of JPMorganChase’s balance sheet or developments that could increase RWA, such as increased market risk, customer delinquencies, client credit rating downgrades or other factors, and • increases in estimated stress losses as determined by the Federal Reserve under CCAR, which could increase JPMorganChase’s SCB. Although more likely i"
+        },
+        {
+          "rank": 5,
+          "target_chunk_id": "2bd3ce5200113fadd5fe9b6517c623c96d44e0334f690bb988b57bf7b709318c",
+          "record_id": "text::2bd3ce5200113fadd5fe9b6517c623c96d44e0334f690bb988b57bf7b709318c",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.6879075765609741,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "• the introduction of a new product or service, including platforms for the delivery or distribution of products or services • the acquisition or integration of, or investment in, a new business, product or portfolio, including the development of any related technological capabilities • the adoption of a new technology, or • changes to existing products, services, delivery platforms, businesses and technologies. Any significant failure by JPMorganChase to identify the operational risks associate"
+        },
+        {
+          "rank": 6,
+          "target_chunk_id": "07dd574d2143e30c76baeecdcc95bb07cedd0445d1141e04af61febb415c0d17",
+          "record_id": "text::07dd574d2143e30c76baeecdcc95bb07cedd0445d1141e04af61febb415c0d17",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.684889554977417,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "JPMorganChase’s operations, results and reputation could be harmed by occurrences of extraordinary events beyond its control. JPMorganChase’s business and operations could be seriously disrupted, and its reputation could be harmed, by events or contributing factors that are wholly or partially beyond its control, including material instances of: • cyber attacks • security breaches of its physical premises, including threats to health and safety • utility or telecommunications failures, internet "
+        },
+        {
+          "rank": 7,
+          "target_chunk_id": "bb5849a93346079c80657d456bae84ebc362d25455705e4b8fee080db67dbe27",
+          "record_id": "text::bb5849a93346079c80657d456bae84ebc362d25455705e4b8fee080db67dbe27",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.6835221648216248,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "JPMorganChase’s interconnectivity with clients, customers and other external parties continues to expand, which increases the risk of failure or cyber attacks with respect to the systems of those parties. Any systems failure, security breach, or human error or misconduct that affects clients, customers or external parties could require JPMorganChase to take steps to protect the integrity of its own operational systems or to safeguard confidential information, including restricting the access of "
+        },
+        {
+          "rank": 8,
+          "target_chunk_id": "a6d5f3cf521d504377063a41e849c992daa219cc17eddb7ad8c12e57d365a059",
+          "record_id": "text::a6d5f3cf521d504377063a41e849c992daa219cc17eddb7ad8c12e57d365a059",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.6816830635070801,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "OPERATIONAL RISK MANAGEMENT Operational risk is the risk of an adverse outcome resulting from inadequate or failed internal processes or systems; human factors; or external events impacting the Firm’s processes or systems. Operational risk includes compliance, conduct, legal, and estimations and model risk. Operational risk is inherent in the Firm’s activities and can manifest itself in various ways, including fraudulent acts, business disruptions (including those caused by extraordinary events "
+        },
+        {
+          "rank": 9,
+          "target_chunk_id": "2a21170462fac2308db25855e4fe9a73c7e64cf51e69c276d800efc70ad6333b",
+          "record_id": "text::2a21170462fac2308db25855e4fe9a73c7e64cf51e69c276d800efc70ad6333b",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.6809138059616089,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "FIRMWIDE RISK MANAGEMENT Risk is an inherent part of JPMorganChase’s business activities. When the Firm extends a consumer or wholesale loan, advises customers and clients on their investment decisions, makes markets in securities, or offers other products or services, the Firm takes on some degree of risk. The Firm’s overall objective is to manage its business, and the associated risks, in a manner that balances serving the interests of its clients, customers and investors, and protecting the s"
+        },
+        {
+          "rank": 10,
+          "target_chunk_id": "851f9ef9866c7d4772a175165bd21b57714fad646d2d819b87a84025b40ae606",
+          "record_id": "text::851f9ef9866c7d4772a175165bd21b57714fad646d2d819b87a84025b40ae606",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.6764839887619019,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Part I Enhanced regulatory and other standards for the oversight of JPMorganChase’s vendors and other service providers could result in higher costs and other potential exposures. JPMorganChase must comply with enhanced regulatory and other standards when doing business with vendors and other service providers, including those relating to the outsourcing of functions as well as the performance of significant banking and other functions by subsidiaries. JPMorganChase’s failure to appropriately as"
+        }
+      ]
+    },
+    {
+      "query_id": "dev_jpm_operational_risk_causes_2025",
+      "query": "What causes operational risk according to JPMorgan Chase?",
+      "ticker": "JPM",
+      "question_type": "narrative_definition",
+      "method": "bm25",
+      "relevant_target_chunk_ids": [
+        "2a21170462fac2308db25855e4fe9a73c7e64cf51e69c276d800efc70ad6333b",
+        "a6d5f3cf521d504377063a41e849c992daa219cc17eddb7ad8c12e57d365a059"
+      ],
+      "metrics": {
+        "relevant_count": 2,
+        "first_relevant_rank": null,
+        "hit_at_1": 0,
+        "recall_at_1": 0.0,
+        "hit_at_3": 0,
+        "recall_at_3": 0.0,
+        "hit_at_5": 0,
+        "recall_at_5": 0.0,
+        "hit_at_10": 0,
+        "recall_at_10": 0.0,
+        "reciprocal_rank_at_10": 0.0
+      },
+      "retrieved": [
+        {
+          "rank": 1,
+          "target_chunk_id": "f334a5bd335e6e7257153c70c9eb9e4dbdb6f228f3e174fdf9e96a9dc2c4b019",
+          "record_id": "text::f334a5bd335e6e7257153c70c9eb9e4dbdb6f228f3e174fdf9e96a9dc2c4b019",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 5.913645267486572,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "long-term debt issuances, and its intermediate holding company, JPMorgan Chase Holdings LLC (the “IHC”), provides funding to support the ongoing operations of the Parent Company and its subsidiaries. The Firm manages liquidity at the Parent Company, the IHC, and operating subsidiaries at levels sufficient to comply with liquidity risk tolerances and minimum liquidity requirements, and to manage through periods of stress when access to normal funding sources may be disrupted. Contingency funding "
+        },
+        {
+          "rank": 2,
+          "target_chunk_id": "f0a0318f25e2c796f4f9f60baa6e600f8bc55558a8e3ab6ddf55a7c9dab34f30",
+          "record_id": "text::f0a0318f25e2c796f4f9f60baa6e600f8bc55558a8e3ab6ddf55a7c9dab34f30",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 5.4898176193237305,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "be rescinded. The proposed rulemaking has not yet been finalized. The Firm’s banking entities in the EU and the U.K. are subject to supervisory expectations published by the ECB and the PRA, respectively, addressing bank strategy, governance and risk management in the areas of climate change, operational resilience, reliance on IT systems and third-party services, and resilience from macro-financial and geopolitical shocks. Restrictions on transactions with affiliates. JPMorgan Chase Bank, N.A. "
+        },
+        {
+          "rank": 3,
+          "target_chunk_id": "b7a54a0489180914b0213ad7058a7cc9a8ea4696dcf59df025f50cddaee0c178",
+          "record_id": "table::57901b900bca233f6405d454a40c964ea58d7de6decdf9a8f69dab3e2f0abe90",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 5.452086448669434,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "10.1 | | Deferred Compensation Plan for Non-Employee Directors of JPMorgan Chase & Co., as amended and restated July 2001 and as of December 31, 2004 (incorporated by reference to Exhibit 10.1 to the Annual Report on Form 10-K of JPMorgan Chase & Co. (File No. 1-5805) for the year ended December 31, 2007). (a) 10.2 | | 2005 Deferred Compensation Plan for Non-Employee Directors of JPMorgan Chase & Co., a s amended and restated effective January 1, 2025 (a)(b) 10.3 | | 2005 Deferred Compensation P"
+        },
+        {
+          "rank": 4,
+          "target_chunk_id": "a050f95505980512da1f68c02c4507b1269808422d90ae725763024c6e890fae",
+          "record_id": "table::b83df83614f42c9ba6c6dee6443be3a75ae23e969691940b13fbf1748bc91c86",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 5.448254585266113,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "4.2(a) | | Subordinated Indenture, dated as of March 14, 2014, between JPMorgan Chase & Co. and U.S. Bank Trust National Association, as Trustee (incorporated by reference to Exhibit 4.1 to the Current Report on Form 8-K of JPMorgan Chase & Co. (File No.1-5805) filed March 14, 2014). 4.2(b) | | First Supplemental Indenture, dated as of January 13, 2017, between JPMorgan Chase & Co. and U.S. Bank Trust National Association, as Trustee, to the Subordinated Indenture, dated as of March 14, 2014 (in"
+        },
+        {
+          "rank": 5,
+          "target_chunk_id": "0d8b1a95a1f1e3e738a42e179535ec9aac8610bc1fac4562c4b86169aff615db",
+          "record_id": "table::7f969836d49419a79b2178bffa2f90b6e404e07f994dd7477415ae2bc05b8610",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 5.302168369293213,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "4.2(a) | | Subordinated Indenture, dated as of March 14, 2014, between JPMorgan Chase & Co. and U.S. Bank Trust National Association, as Trustee (incorporated by reference to Exhibit 4.1 to the Current Report on Form 8-K of JPMorgan Chase & Co. (File No.1-5805) filed March 14, 2014). 4.2(b) | | First Supplemental Indenture, dated as of January 13, 2017, between JPMorgan Chase & Co. and U.S. Bank Trust National Association, as Trustee, to the Subordinated Indenture, dated as of March 14, 2014 (in"
+        },
+        {
+          "rank": 6,
+          "target_chunk_id": "6db091f3c1b4c2237dc6baa826b3a2d8293316c44ddb5e0620513a0a94a294cd",
+          "record_id": "table::308cccc9f1811f381c01af3738082f949410233080c063fa54aba143d67eb33a",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 5.237757205963135,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "3.7 | | Certificate of Designations for 4.55% Non-Cumulative Preferred Stock, Series JJ (incorporated by reference to Exhibit 3.1 to the Current Report on Form 8-K of JPMorgan Chase & Co. (File No. 1-5805) filed March 17, 2021). 3.8 | | Certificate of Designations for 3.65% Fixed-Rate Reset Non-Cumulative Preferred Stock, Series KK (incorporated by reference to Exhibit 3.1 to the Current Report on Form 8-K of JPMorgan Chase & Co. (File No. 1-5805) filed May 12, 2021). 3.9 | | Certificate of Desi"
+        },
+        {
+          "rank": 7,
+          "target_chunk_id": "ccf8b306b6b8650289a343ad2bd67d6da0929369d3004f800a7d7594b30cfd09",
+          "record_id": "table::07f54ec1554c7416891dccf9a138bf3e178a92b0442d5795abf02234f94757b9",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 5.232778549194336,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "10.9 | | Forms of JPMorgan Chase & Co. Long-Term Incentive Plan Terms and Conditions for restricted stock units and performance share unit awards for Operating Committee members (U.S. and U.K.), dated as of January 21, 2020 (incorporated by reference to Exhibit 10.18 to the Annual Report on Form 10-K of JPMorgan Chase & Co. (File No. 1-5805) for the year ended December 31, 2019) . (a) 10.10 | | Forms of JPMorgan Chase & Co. Long-Term Incentive Plan Terms and Conditions for restricted stock units"
+        },
+        {
+          "rank": 8,
+          "target_chunk_id": "2c26e23b42cbce83357cf1372717677acc28e719cf8ef5cefc501578d02d0d1e",
+          "record_id": "table::d3ca7912b8b10b2dcbe37c38a351e067834bd9126f476a307359ae9fcbaba91d",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 5.178251266479492,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "10.15 | | Forms of JPMorgan Chase & Co. Long-Term Incentive Plan Terms and Conditions for restricted stock units and performance share unit awards for Operating Committee members (U.S. and U.K.), dated as of January 16, 2024 (incorporated by reference to Exhibit 10.19 to the Annual Report on Form 10-K of JPMorgan Chase & Co. (File No. 1-5808) for the year ended December 31, 2023). (a) 10.16 | | Forms of JPMorgan Chase & Co. Long-Term Incentive Plan Terms and Conditions for restricted stock units"
+        },
+        {
+          "rank": 9,
+          "target_chunk_id": "b13c7262757429525ac95a40db962417119d9b99b2d63915ff984dc2abbf1b01",
+          "record_id": "text::b13c7262757429525ac95a40db962417119d9b99b2d63915ff984dc2abbf1b01",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 5.161308765411377,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "Transactions with governmental entities can expose JPMorganChase to enhanced sovereign, credit, operational, legal and reputation risks. Governmental entities may claim that actions taken by government officials were beyond the legal authority of those officials or repudiate transactions authorized by a previous incumbent government. These types of actions have in the past caused, and could in the future cause, JPMorganChase to suffer losses or hamper its ability to conduct business in the relev"
+        },
+        {
+          "rank": 10,
+          "target_chunk_id": "251d3ac0edb5c438c603ba6c58d0414ba170169ebc76f165d17b638e010294ee",
+          "record_id": "table::90569e43b996ec8c55aea100b5f49d95717ea8b3cb7bfac0d91cc190732cf7e5",
+          "ticker": "JPM",
+          "record_type": "table",
+          "score": 5.159330368041992,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "preview": "10.1 | | Deferred Compensation Plan for Non-Employee Directors of JPMorgan Chase & Co., as amended and restated July 2001 and as of December 31, 2004 (incorporated by reference to Exhibit 10.1 to the Annual Report on Form 10-K of JPMorgan Chase & Co. (File No. 1-5805) for the year ended December 31, 2007). (a) 10.2 | | 2005 Deferred Compensation Plan for Non-Employee Directors of JPMorgan Chase & Co., a s amended and restated effective January 1, 2025 (a)(b) 10.3 | | 2005 Deferred Compensation P"
+        }
+      ]
+    },
+    {
+      "query_id": "dev_jpm_operational_risk_causes_2025",
+      "query": "What causes operational risk according to JPMorgan Chase?",
+      "ticker": "JPM",
+      "question_type": "narrative_definition",
+      "method": "hybrid",
+      "relevant_target_chunk_ids": [
+        "2a21170462fac2308db25855e4fe9a73c7e64cf51e69c276d800efc70ad6333b",
+        "a6d5f3cf521d504377063a41e849c992daa219cc17eddb7ad8c12e57d365a059"
+      ],
+      "metrics": {
+        "relevant_count": 2,
+        "first_relevant_rank": 2,
+        "hit_at_1": 0,
+        "recall_at_1": 0.0,
+        "hit_at_3": 1,
+        "recall_at_3": 0.5,
+        "hit_at_5": 1,
+        "recall_at_5": 0.5,
+        "hit_at_10": 1,
+        "recall_at_10": 0.5,
+        "reciprocal_rank_at_10": 0.5
+      },
+      "retrieved": [
+        {
+          "rank": 1,
+          "target_chunk_id": "7baf47111d4fb6a53e4461f18cf6d93770d16c60e8e54f4ac336447505d71d2e",
+          "record_id": "text::7baf47111d4fb6a53e4461f18cf6d93770d16c60e8e54f4ac336447505d71d2e",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.027673192771084338,
+          "dense_rank": 4,
+          "bm25_rank": 23,
+          "preview": "Part I • actions by banking regulators, as well as changes in applicable law or how applicable law is implemented by banking regulators • changes in the composition of JPMorganChase’s balance sheet or developments that could increase RWA, such as increased market risk, customer delinquencies, client credit rating downgrades or other factors, and • increases in estimated stress losses as determined by the Federal Reserve under CCAR, which could increase JPMorganChase’s SCB. Although more likely i"
+        },
+        {
+          "rank": 2,
+          "target_chunk_id": "a6d5f3cf521d504377063a41e849c992daa219cc17eddb7ad8c12e57d365a059",
+          "record_id": "text::a6d5f3cf521d504377063a41e849c992daa219cc17eddb7ad8c12e57d365a059",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.027051561365286855,
+          "dense_rank": 8,
+          "bm25_rank": 21,
+          "preview": "OPERATIONAL RISK MANAGEMENT Operational risk is the risk of an adverse outcome resulting from inadequate or failed internal processes or systems; human factors; or external events impacting the Firm’s processes or systems. Operational risk includes compliance, conduct, legal, and estimations and model risk. Operational risk is inherent in the Firm’s activities and can manifest itself in various ways, including fraudulent acts, business disruptions (including those caused by extraordinary events "
+        },
+        {
+          "rank": 3,
+          "target_chunk_id": "b13c7262757429525ac95a40db962417119d9b99b2d63915ff984dc2abbf1b01",
+          "record_id": "text::b13c7262757429525ac95a40db962417119d9b99b2d63915ff984dc2abbf1b01",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.02625745950554135,
+          "dense_rank": 25,
+          "bm25_rank": 9,
+          "preview": "Transactions with governmental entities can expose JPMorganChase to enhanced sovereign, credit, operational, legal and reputation risks. Governmental entities may claim that actions taken by government officials were beyond the legal authority of those officials or repudiate transactions authorized by a previous incumbent government. These types of actions have in the past caused, and could in the future cause, JPMorganChase to suffer losses or hamper its ability to conduct business in the relev"
+        },
+        {
+          "rank": 4,
+          "target_chunk_id": "5e7011b9c3a4e0fb4cb4415aa27dc536c190bd9c790a189e6af7ba04fa84bf74",
+          "record_id": "text::5e7011b9c3a4e0fb4cb4415aa27dc536c190bd9c790a189e6af7ba04fa84bf74",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.025657894736842105,
+          "dense_rank": 16,
+          "bm25_rank": 20,
+          "preview": "conducted under the CCOR organization’s Monitoring and Testing Program (“M&T Program”) and: • are based upon the Firm’s compliance, conduct and operational risk assessments; • are designed to identify control gaps or deficiencies, including potential non-compliance with applicable laws, rules and regulations; and • assess whether the procedures, processes and controls used by the Firm to mitigate compliance, conduct and operational risk are well-designed and functioning as intended. The Testing "
+        },
+        {
+          "rank": 5,
+          "target_chunk_id": "fc81892ea392e37c9c973bd91d1725d4571eb3f57f0904332dc41f12bc11e92b",
+          "record_id": "text::fc81892ea392e37c9c973bd91d1725d4571eb3f57f0904332dc41f12bc11e92b",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.023128342245989305,
+          "dense_rank": 28,
+          "bm25_rank": 25,
+          "preview": "The primary component of the operational risk-based capital estimate is the Loss Distribution Approach (“LDA”) statistical model, which simulates the projected frequency and severity of operational risk losses based on historical data. The LDA model is used to estimate an aggregate operational risk loss over a one-year time horizon, at a 99.9% confidence level. The LDA model incorporates actual internal operational risk losses in the quarter following the period in which those losses were realiz"
+        },
+        {
+          "rank": 6,
+          "target_chunk_id": "8f106940a9c6145cab20451d0dfc5a2b259b3dc95035700121a856261cb1062c",
+          "record_id": "text::8f106940a9c6145cab20451d0dfc5a2b259b3dc95035700121a856261cb1062c",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.01639344262295082,
+          "dense_rank": 1,
+          "bm25_rank": null,
+          "preview": "• errors made by JPMorganChase or another market participant, whether inadvertent or malicious, which could cause widespread system disruption • weaknesses or shortcomings in operational systems that may not be detected in a timely manner • isolated or seemingly insignificant errors in operational systems that could compound, or migrate to other systems, becoming larger issues • failures in synchronization or encryption software, or degraded performance of microprocessors, which could cause disr"
+        },
+        {
+          "rank": 7,
+          "target_chunk_id": "f334a5bd335e6e7257153c70c9eb9e4dbdb6f228f3e174fdf9e96a9dc2c4b019",
+          "record_id": "text::f334a5bd335e6e7257153c70c9eb9e4dbdb6f228f3e174fdf9e96a9dc2c4b019",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.01639344262295082,
+          "dense_rank": null,
+          "bm25_rank": 1,
+          "preview": "long-term debt issuances, and its intermediate holding company, JPMorgan Chase Holdings LLC (the “IHC”), provides funding to support the ongoing operations of the Parent Company and its subsidiaries. The Firm manages liquidity at the Parent Company, the IHC, and operating subsidiaries at levels sufficient to comply with liquidity risk tolerances and minimum liquidity requirements, and to manage through periods of stress when access to normal funding sources may be disrupted. Contingency funding "
+        },
+        {
+          "rank": 8,
+          "target_chunk_id": "182ef0aea03dc7bb61324967e719443381a549784d8234ba7d989cb5cb56ccdf",
+          "record_id": "text::182ef0aea03dc7bb61324967e719443381a549784d8234ba7d989cb5cb56ccdf",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.016129032258064516,
+          "dense_rank": 2,
+          "bm25_rank": null,
+          "preview": "• Operational risks, including risks associated with JPMorganChase’s dependence on its operational systems and its employees, as well as the systems and employees of acquired businesses and external parties; the harm that could be caused by a successful cyber attack affecting JPMorganChase or by other extraordinary events; the adverse effects of failing to identify and address operational risks associated with the introduction of or changes to products, services and delivery platforms or technol"
+        },
+        {
+          "rank": 9,
+          "target_chunk_id": "f0a0318f25e2c796f4f9f60baa6e600f8bc55558a8e3ab6ddf55a7c9dab34f30",
+          "record_id": "text::f0a0318f25e2c796f4f9f60baa6e600f8bc55558a8e3ab6ddf55a7c9dab34f30",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.016129032258064516,
+          "dense_rank": null,
+          "bm25_rank": 2,
+          "preview": "be rescinded. The proposed rulemaking has not yet been finalized. The Firm’s banking entities in the EU and the U.K. are subject to supervisory expectations published by the ECB and the PRA, respectively, addressing bank strategy, governance and risk management in the areas of climate change, operational resilience, reliance on IT systems and third-party services, and resilience from macro-financial and geopolitical shocks. Restrictions on transactions with affiliates. JPMorgan Chase Bank, N.A. "
+        },
+        {
+          "rank": 10,
+          "target_chunk_id": "402f0f0f6843bf9cd268d0d1516a77a5b0bfd969e5afddbaab08bdde9ab87816",
+          "record_id": "text::402f0f0f6843bf9cd268d0d1516a77a5b0bfd969e5afddbaab08bdde9ab87816",
+          "ticker": "JPM",
+          "record_type": "text",
+          "score": 0.015873015873015872,
+          "dense_rank": 3,
+          "bm25_rank": null,
+          "preview": "value of the instrument. Any of these factors could cause a decline in the value of financial instruments that JPMorganChase owns or in which it makes markets, which could have an adverse effect on its results of operations. Furthermore, JPMorganChase’s hedging and other risk management strategies may not always be effective, and it could incur significant losses, if extreme market events were to occur. Credit JPMorganChase could be negatively affected by adverse changes in the financial conditi"
+        }
+      ]
+    }
+  ]
+}
