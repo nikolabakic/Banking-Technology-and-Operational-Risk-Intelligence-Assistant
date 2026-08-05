@@ -14,46 +14,46 @@
   "page_count": 330,
   "table_parent_count": 350,
   "chunk_config_hashes": {
-    "sec2md_builtin": "ea3d7ee6aa8a80499422903ee7ed5532d11e4f3e0d2e1c39f6b580e92f308653",
-    "structure_aware": "d5cc84fd6d5d01e9eca378fe0f7572a6fc8b4e269aed1f422bedcfc0f4a13453"
+    "sec2md_builtin": "510ee92bd2033050ce5364b0da93002283b3aaab74794be7d30e49d357777edb",
+    "structure_aware": "48e632b0b1a0566a18f2c64bbdd074b772eced0ac3c1a58c2db4fc65ca145bcd"
   },
   "variants": {
     "sec2md_builtin": {
-      "all_records": 578,
-      "eligible_records": 576,
+      "all_records": 636,
+      "eligible_records": 634,
       "ineligible_records": 2,
       "record_types": {
-        "mixed": 268,
-        "table": 82,
-        "text": 226
+        "mixed": 241,
+        "table": 91,
+        "text": 302
       },
-      "maximum_qwen_tokens": 872,
-      "over_max_tokens": 71,
+      "maximum_qwen_tokens": 1272,
+      "over_project_limit": 12,
       "missing_page_provenance": 0
     },
     "structure_aware": {
-      "all_records": 4133,
-      "eligible_records": 4076,
-      "ineligible_records": 57,
+      "all_records": 3657,
+      "eligible_records": 3657,
+      "ineligible_records": 0,
       "record_types": {
         "glossary_child": 226,
-        "table_child": 3182,
-        "text": 668
+        "table_locator": 2754,
+        "text": 677
       },
-      "maximum_qwen_tokens": 699,
-      "over_max_tokens": 0,
+      "maximum_qwen_tokens": 807,
+      "over_project_limit": 0,
       "missing_page_provenance": 0
     }
   },
   "output_sha256": {
     "jpm_sec2md.md": "f611ad28dae5daab796fa34a86a617172b1e9f8d07731911a65be8bd7f1b8428",
-    "sec2md_builtin/chunks.jsonl": "d9f88167a22301bea30f486ed1941af5cf41453318926d6eefd007f6c77e1a51",
-    "sec2md_builtin/embedding_records.jsonl": "87f37947d93e28241477e72876868396f2780597ba3cee8bc927e3fb4252d036",
-    "sec2md_builtin/queries.jsonl": "bd3ef9c3db157f7ae49052147114dd5fa3e80ac225cbf663d3aaf4ca04844bd1",
-    "structure_aware/chunks.jsonl": "885bc8fd76e0184ab18e8dde56b949360876cb61e510534012d7c7c53fd0f841",
-    "structure_aware/embedding_records.jsonl": "d84f48de147430d997c39481da2f84b1e1cb8c1d81efad9061f690f70adb5abb",
-    "structure_aware/queries.jsonl": "c9ead8a78c8b88fb26284746b0710313b7c45fd6f4b6b4ff7571b3027bf4e5b3",
-    "structure_aware/table_parents.jsonl": "0107e8a4be5937f84d245d6455e14bf692fa3c702046ef536c4785c1229c8181",
-    "qrels_audit.json": "dec2a31fe9df7eeaad6e8299298d64f4e8acfb7ebe8ad83d6aefb4f9638a7554"
+    "sec2md_builtin/chunks.jsonl": "e473a82404c159e587d31b7e40130284550d5011d6297feef559fdc738f6845c",
+    "sec2md_builtin/embedding_records.jsonl": "cae513806bbfaef014d2f9450575a824b0bc4edcf345f9bc4e8cdae056c07a9c",
+    "sec2md_builtin/queries.jsonl": "eb09775fb07b47041758208ebb5da8bc05283251642cad777131a41c92e4bc17",
+    "structure_aware/chunks.jsonl": "6d33befde9cdfcff9fe4856fa6316cf4a9f318b78a7c42f65dda5b4447ebd909",
+    "structure_aware/embedding_records.jsonl": "6d33befde9cdfcff9fe4856fa6316cf4a9f318b78a7c42f65dda5b4447ebd909",
+    "structure_aware/queries.jsonl": "287f8c07401cf43382448b1fda317ce7e7362a18b5b41f16a7574b643e2d2f08",
+    "structure_aware/table_parents.jsonl": "91eff0e7540a66e0b05545893c4f789bb3567fa28bd43b14a5a386c52ce1bdd0",
+    "qrels_audit.json": "68ea1e81efc3c5438ff00a4ddbe191f13df00146e85aea1a5b6c6e3ef898e70d"
   }
 }

@@ -13,11 +13,13 @@ from sec2md.table_parser import TableParser
 PARSER_NAME = "sec2md"
 PARSER_VERSION = "0.1.23"
 BUILTIN_CHUNKER_VERSION = "sec2md-built-in-v1"
-STRUCTURE_CHUNKER_VERSION = "bankscope-structure-aware-v2"
+STRUCTURE_CHUNKER_VERSION = "bankscope-structure-aware-v3"
 
-TARGET_TOKENS = 600
-MAX_TOKENS = 700
-OVERLAP_TOKENS = 80
+TEXT_TARGET_TOKENS = 512
+TEXT_MAX_TOKENS = 1024
+TEXT_OVERLAP_TOKENS = 64
+DATA_LOCATOR_MAX_TOKENS = 512
+TABLE_TEXT_LOCATOR_MAX_TOKENS = 1024
 
 SEC_ITEM_PATTERN = re.compile(
     r"(?im)^(?:\*\*|__)?\s*item\s+(\d{1,2}[a-c]?)\s*[.:]",
@@ -373,9 +375,9 @@ def split_to_token_limit(
     content: str,
     token_count: TokenCounter,
     *,
-    target_tokens: int = TARGET_TOKENS,
-    max_tokens: int = MAX_TOKENS,
-    overlap_tokens: int = OVERLAP_TOKENS,
+    target_tokens: int = TEXT_TARGET_TOKENS,
+    max_tokens: int = TEXT_MAX_TOKENS,
+    overlap_tokens: int = TEXT_OVERLAP_TOKENS,
 ) -> list[str]:
     if token_count(content) <= max_tokens:
         return [content.strip()]
@@ -466,6 +468,22 @@ def parse_markdown_table_blocks(content: str) -> list[tuple[str, list[str]]]:
     return blocks
 
 
+def parse_markdown_table_matrices(content: str) -> list[list[list[str]]]:
+    matrices: list[list[list[str]]] = []
+
+    for _, table_lines in parse_markdown_table_blocks(content):
+        matrix = [
+            [normalize_space(cell) for cell in line.strip().strip("|").split("|")]
+            for line in table_lines
+            if not MARKDOWN_TABLE_SEPARATOR_PATTERN.fullmatch(line)
+        ]
+
+        if matrix:
+            matrices.append(matrix)
+
+    return matrices
+
+
 def table_row_is_context(row: str) -> bool:
     cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
     nonempty_cells = [cell for cell in cells if cell]
@@ -496,7 +514,7 @@ def make_table_child_content(
     if context:
         candidate = f"{context}\n\n{table}"
 
-        if token_count(candidate) <= MAX_TOKENS:
+        if token_count(candidate) <= TABLE_TEXT_LOCATOR_MAX_TOKENS:
             return candidate
 
     return table
@@ -646,12 +664,23 @@ def classify_table_parent(
         "acronym definition",
     )
 
-    if any(marker in f"{header_text} {normalized_content}" for marker in glossary_markers):
-        return "glossary"
-
     if (
         "table of contents" in normalized_content
         or "form 10-k index" in normalized_content
+        or "cross-reference index" in normalized_content
+        or "documents incorporated by reference" in normalized_content
+        or (
+            "incorporated documents" in header_text
+            and "where incorporated" in header_text
+        )
+        or (
+            "table description page" in header_text
+            and "table reference" in normalized_content
+        )
+        or (
+            "notes to consolidated financial statements" in header_text
+            and re.search(r"\bpage\b", header_text)
+        )
         or (
             re.search(r"\bitem\s+\d+[a-c]?\b", normalized_content)
             and re.search(r"\bpage\b", header_text)
@@ -659,7 +688,11 @@ def classify_table_parent(
     ):
         return "index"
 
+    if any(marker in f"{header_text} {normalized_content}" for marker in glossary_markers):
+        return "glossary"
+
     layout_markers = (
+        "commission file",
         "commission file number",
         "state or other jurisdiction of incorporation",
         "i.r.s. employer identification",
@@ -672,6 +705,12 @@ def classify_table_parent(
     )
 
     if any(marker in normalized_content for marker in layout_markers):
+        return "layout"
+
+    if all(
+        marker in header_text
+        for marker in ("title of each class", "trading symbol", "name of each exchange")
+    ):
         return "layout"
 
     row_count = max(len(matrix) for matrix in matrices)
@@ -755,7 +794,24 @@ def extract_table_title(content: str) -> str | None:
         if candidate and len(candidate) <= 180:
             candidates.append(candidate)
 
-    return candidates[-1] if candidates else None
+    prefix_title = candidates[-1] if candidates else None
+    header_title: str | None = None
+
+    for line in content.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+
+        first_cell = normalize_space(line.strip().strip("|").split("|", maxsplit=1)[0])
+
+        if first_cell and len(first_cell) <= 180 and not re.fullmatch(r":?-+:?", first_cell):
+            header_title = first_cell
+            break
+
+    if prefix_title and header_title and PERIOD_PATTERN.search(header_title):
+        combined = f"{prefix_title} — {header_title}"
+        return combined if len(combined) <= 180 else header_title
+
+    return prefix_title or header_title
 
 
 def extract_table_unit(content: str) -> str | None:
@@ -821,11 +877,32 @@ def find_first_data_row(matrix: Sequence[Sequence[str]]) -> int:
     return min(1, len(matrix))
 
 
+def render_data_locator_document(
+    *,
+    prefix: Sequence[str],
+    row_path: Sequence[str],
+    column_pairs: Sequence[Record],
+) -> str:
+    column_text = " | ".join(
+        f"{' > '.join(pair['column_path']['path'])}: {pair['cell_value']}"
+        for pair in column_pairs
+    )
+
+    return "\n".join(
+        [
+            *prefix,
+            f"Measure or row: {' > '.join(row_path)}",
+            f"Column context: {column_text}",
+        ]
+    )
+
+
 def build_data_locator_specs(
     matrix: Sequence[Sequence[str]],
     *,
     matrix_index: int,
     prefix: Sequence[str],
+    token_count: TokenCounter,
 ) -> list[Record]:
     if not matrix:
         return []
@@ -835,8 +912,18 @@ def build_data_locator_specs(
     specs: list[Record] = []
     active_row_context: list[str] = []
 
+    for header_row in reversed(header_rows):
+        context_labels = deduplicate(
+            cell for cell in header_row if normalize_space(cell) and not is_period_label(cell)
+        )
+
+        if len(context_labels) == 1:
+            active_row_context = context_labels
+            break
+
     for row_index in range(data_start, len(matrix)):
         row = list(matrix[row_index])
+
         value_columns = [
             column_index for column_index, cell in enumerate(row) if is_table_value(cell)
         ]
@@ -852,14 +939,14 @@ def build_data_locator_specs(
             continue
 
         first_value_column = min(value_columns)
+
         row_labels = deduplicate(cell for cell in row[:first_value_column] if normalize_space(cell))
         row_path = deduplicate([*active_row_context, *row_labels])
 
         if not row_path:
             continue
 
-        column_paths: list[Record] = []
-        cell_coordinates: list[Record] = []
+        column_pairs: list[Record] = []
 
         for column_index in value_columns:
             path = deduplicate(
@@ -871,39 +958,66 @@ def build_data_locator_specs(
             if not path:
                 path = [f"Column {column_index + 1}"]
 
-            column_paths.append(
+            column_pairs.append(
                 {
-                    "column_index": column_index,
-                    "path": path,
+                    "column_path": {
+                        "column_index": column_index,
+                        "path": path,
+                    },
+                    "cell_value": normalize_space(row[column_index]),
+                    "cell_coordinate": {
+                        "matrix_index": matrix_index,
+                        "row_index": row_index,
+                        "column_index": column_index,
+                    },
                 }
             )
-            cell_coordinates.append(
+
+        column_groups: list[list[Record]] = []
+        current_group: list[Record] = []
+
+        for pair in column_pairs:
+            candidate_group = [*current_group, pair]
+            candidate_document = render_data_locator_document(
+                prefix=prefix,
+                row_path=row_path,
+                column_pairs=candidate_group,
+            )
+
+            if current_group and token_count(candidate_document) > DATA_LOCATOR_MAX_TOKENS:
+                column_groups.append(current_group)
+                current_group = [pair]
+            else:
+                current_group = candidate_group
+
+        if current_group:
+            column_groups.append(current_group)
+
+        for group_index, group in enumerate(column_groups):
+            column_paths = [dict(pair["column_path"]) for pair in group]
+            cell_values = [str(pair["cell_value"]) for pair in group]
+            cell_coordinates = [dict(pair["cell_coordinate"]) for pair in group]
+
+            document = render_data_locator_document(
+                prefix=prefix,
+                row_path=row_path,
+                column_pairs=group,
+            )
+
+            specs.append(
                 {
+                    "document": document,
+                    "locator_scope": "row",
                     "matrix_index": matrix_index,
                     "row_index": row_index,
-                    "column_index": column_index,
+                    "row_path": row_path,
+                    "column_paths": column_paths,
+                    "cell_values": cell_values,
+                    "cell_coordinates": cell_coordinates,
+                    "column_group_index": group_index,
+                    "column_group_count": len(column_groups),
                 }
             )
-
-        column_text = " | ".join(" > ".join(column["path"]) for column in column_paths)
-
-        document = "\n".join(
-            [
-                *prefix,
-                f"Measure or row: {' > '.join(row_path)}",
-                f"Column context: {column_text}",
-            ]
-        )
-
-        specs.append(
-            {
-                "document": document,
-                "locator_scope": "row",
-                "row_path": row_path,
-                "column_paths": column_paths,
-                "cell_coordinates": cell_coordinates,
-            }
-        )
 
     if specs:
         return specs
@@ -915,19 +1029,33 @@ def build_data_locator_specs(
     if not schema_labels:
         return []
 
+    schema_groups: list[list[str]] = []
+    current_group: list[str] = []
+
+    for label in schema_labels:
+        candidate_group = [*current_group, label]
+        candidate_document = "\n".join(
+            [*prefix, f"Table fields: {' | '.join(candidate_group)}"]
+        )
+
+        if current_group and token_count(candidate_document) > TABLE_TEXT_LOCATOR_MAX_TOKENS:
+            schema_groups.append(current_group)
+            current_group = [label]
+        else:
+            current_group = candidate_group
+
+    if current_group:
+        schema_groups.append(current_group)
+
     return [
         {
-            "document": "\n".join(
-                [
-                    *prefix,
-                    f"Table fields: {' | '.join(schema_labels[:80])}",
-                ]
-            ),
+            "document": "\n".join([*prefix, f"Table fields: {' | '.join(group)}"]),
             "locator_scope": "table_schema",
             "row_path": [],
             "column_paths": [],
             "cell_coordinates": [],
         }
+        for group in schema_groups
     ]
 
 
@@ -945,6 +1073,10 @@ def build_glossary_locator_specs(
         if len(cells) < 2:
             continue
 
+        populated_columns = [
+            column_index for column_index, cell in enumerate(row) if normalize_space(cell)
+        ]
+
         document = "\n".join(
             [
                 *prefix,
@@ -958,15 +1090,20 @@ def build_glossary_locator_specs(
                 "document": document,
                 "locator_scope": "glossary_entry",
                 "row_path": [cells[0]],
-                "column_paths": [],
+                "column_paths": [
+                    {
+                        "column_index": column_index,
+                        "path": ["Term" if position == 0 else "Definition"],
+                    }
+                    for position, column_index in enumerate(populated_columns)
+                ],
                 "cell_coordinates": [
                     {
                         "matrix_index": matrix_index,
                         "row_index": row_index,
                         "column_index": column_index,
                     }
-                    for column_index, cell in enumerate(row)
-                    if normalize_space(cell)
+                    for column_index in populated_columns
                 ],
             }
         )
@@ -1010,6 +1147,7 @@ def build_table_locator_specs(
     content: str,
     cell_matrices: Sequence[Sequence[Sequence[str]]],
     section_title: str | None,
+    token_count: TokenCounter,
 ) -> list[Record]:
     if table_type in {"layout", "index"}:
         return []
@@ -1040,6 +1178,7 @@ def build_table_locator_specs(
                 matrix,
                 matrix_index=matrix_index,
                 prefix=prefix,
+                token_count=token_count,
             )
 
         specs.extend(matrix_specs)
@@ -1163,14 +1302,14 @@ def build_structure_aware_records(
                 [*[str(item["content"]).strip() for item in narrative_buffer], content]
             )
 
-            if narrative_buffer and token_count(candidate) > MAX_TOKENS:
+            if narrative_buffer and token_count(candidate) > TEXT_MAX_TOKENS:
                 emit_narrative_buffer()
 
             narrative_buffer.append(element)
 
             if (
                 token_count("\n\n".join(str(item["content"]).strip() for item in narrative_buffer))
-                >= TARGET_TOKENS
+                >= TEXT_TARGET_TOKENS
             ):
                 emit_narrative_buffer()
 
@@ -1185,7 +1324,11 @@ def build_structure_aware_records(
             child_key=f"table-parent:{element_index}",
         )
         logical_table_id = parent_id
-        cell_matrices = table_grids_by_element.get(element_id, [])
+        cell_matrices = (
+            table_grids_by_element.get(element_id, [])
+            if annotated_html
+            else parse_markdown_table_matrices(content)
+        )
         table_type = classify_table_parent(content=content, cell_matrices=cell_matrices)
         parent_metadata = build_metadata(
             filing,
@@ -1223,6 +1366,7 @@ def build_structure_aware_records(
             content=content,
             cell_matrices=cell_matrices,
             section_title=current_section_title,
+            token_count=token_count,
         )
 
         for locator_index, locator_spec in enumerate(locator_specs):
@@ -1252,6 +1396,7 @@ def build_structure_aware_records(
                     "locator_scope": locator_spec["locator_scope"],
                     "row_path": locator_spec["row_path"],
                     "column_paths": locator_spec["column_paths"],
+                    "cell_values": locator_spec.get("cell_values", []),
                     "cell_coordinates": locator_spec["cell_coordinates"],
                     "evidence_ref": {
                         "parent_id": parent_id,
@@ -1260,6 +1405,19 @@ def build_structure_aware_records(
                     },
                 }
             )
+            if locator_spec["locator_scope"] == "row":
+                matrix_index = int(locator_spec["matrix_index"])
+                row_index = int(locator_spec["row_index"])
+
+                record["metadata"].update(
+                    {
+                        "locator_group_id": (f"{logical_table_id}:m{matrix_index}:r{row_index}"),
+                        "matrix_index": matrix_index,
+                        "row_index": row_index,
+                        "column_group_index": locator_spec["column_group_index"],
+                        "column_group_count": locator_spec["column_group_count"],
+                    }
+                )
 
             if current_section_title:
                 record["metadata"]["section_title"] = current_section_title
@@ -1301,8 +1459,21 @@ def validate_records(
         if int(metadata["page_start"]) <= 0 or int(metadata["page_end"]) <= 0:
             raise ValueError(f"Invalid page provenance: {record_id}.")
 
-        if bool(metadata["retrieval_eligible"]) and token_count(document) > MAX_TOKENS:
-            raise ValueError(f"Record exceeds {MAX_TOKENS} tokens: {record_id}.")
+        if not bool(metadata["retrieval_eligible"]):
+            continue
+
+        limit = retrieval_token_limit(record)
+        tokens = token_count(document)
+
+        if tokens > limit:
+            raise ValueError(
+                "Record exceeds its project retrieval limit: "
+                f"record_id={record_id}, record_type={record.get('record_type')}, "
+                f"table_type={metadata.get('table_type')}, "
+                f"locator_scope={metadata.get('locator_scope')}, "
+                f"tokens={tokens}, limit={limit}, "
+                f"preview={' '.join(document.split())[:240]!r}."
+            )
 
 
 def eligible_records(records: Sequence[Record]) -> list[Record]:
@@ -1311,12 +1482,30 @@ def eligible_records(records: Sequence[Record]) -> list[Record]:
     ]
 
 
+def retrieval_token_limit(record: Mapping[str, Any]) -> int:
+    metadata = record.get("metadata")
+    record_type = str(record.get("record_type") or "")
+
+    if isinstance(metadata, Mapping) and record_type == "table_locator":
+        if (
+            metadata.get("table_type") == "data_table"
+            and metadata.get("locator_scope") == "row"
+        ):
+            return DATA_LOCATOR_MAX_TOKENS
+
+        return TABLE_TEXT_LOCATOR_MAX_TOKENS
+
+    return TEXT_MAX_TOKENS
+
+
 def chunk_config_hash(variant: str) -> str:
     config = {
         "variant": variant,
-        "target_tokens": TARGET_TOKENS,
-        "max_tokens": MAX_TOKENS,
-        "overlap_tokens": OVERLAP_TOKENS,
+        "text_target_tokens": TEXT_TARGET_TOKENS,
+        "text_max_tokens": TEXT_MAX_TOKENS,
+        "text_overlap_tokens": TEXT_OVERLAP_TOKENS,
+        "data_locator_max_tokens": DATA_LOCATOR_MAX_TOKENS,
+        "table_text_locator_max_tokens": TABLE_TEXT_LOCATOR_MAX_TOKENS,
         "parser_name": PARSER_NAME,
         "parser_version": PARSER_VERSION,
         "chunker_version": (

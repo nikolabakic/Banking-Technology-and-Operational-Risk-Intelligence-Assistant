@@ -11,13 +11,15 @@ from sec2md import Chunker, Parser
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from bankscope.parsing.sec2md_adapter import (
-    MAX_TOKENS,
     PARSER_VERSION,
-    TARGET_TOKENS,
+    TABLE_TEXT_LOCATOR_MAX_TOKENS,
+    TEXT_OVERLAP_TOKENS,
+    TEXT_TARGET_TOKENS,
     adapt_builtin_chunks,
     build_structure_aware_records,
     chunk_config_hash,
     eligible_records,
+    retrieval_token_limit,
     validate_records,
 )
 
@@ -288,7 +290,10 @@ def summarize(records: list[Record], token_count) -> Record:
             for record_type in sorted({str(record["record_type"]) for record in eligible})
         },
         "maximum_qwen_tokens": max(token_counts, default=0),
-        "over_max_tokens": sum(count > MAX_TOKENS for count in token_counts),
+        "over_project_limit": sum(
+            count > retrieval_token_limit(record)
+            for record, count in zip(eligible, token_counts, strict=True)
+        ),
         "missing_page_provenance": sum(
             not record["metadata"].get("page_start") or not record["metadata"].get("page_end")
             for record in eligible
@@ -328,9 +333,9 @@ def main() -> None:
     markdown = "\n\n".join(page.content for page in pages if page.content)
     header = f"Bank: JPM\nReport: {filing['report_date'][:4]} 10-K"
     builtin_chunks = Chunker(
-        chunk_size=TARGET_TOKENS,
-        chunk_overlap=80,
-        max_table_tokens=MAX_TOKENS,
+        chunk_size=TEXT_TARGET_TOKENS,
+        chunk_overlap=TEXT_OVERLAP_TOKENS,
+        max_table_tokens=TABLE_TEXT_LOCATOR_MAX_TOKENS,
     ).split(pages, header=header)
 
     builtin_all = adapt_builtin_chunks(

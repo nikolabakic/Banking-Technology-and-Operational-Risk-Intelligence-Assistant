@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -12,6 +13,7 @@ from sentence_transformers import SentenceTransformer
 MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 EMBEDDING_DIMENSION = 1024
 DEFAULT_BATCH_SIZE = 8
+DEFAULT_MAX_SEQ_LENGTH = 1024
 
 INPUT_PATH = Path("data/processed/embedding_records/sec_10k_embedding_records.jsonl")
 OUTPUT_PATH = Path("data/processed/embeddings/qwen3_embedding_0_6b_records.npz")
@@ -84,14 +86,38 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_BATCH_SIZE,
     )
     parser.add_argument(
+        "--max-seq-length",
+        type=int,
+        default=DEFAULT_MAX_SEQ_LENGTH,
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         help="Embed only the first N records without saving them.",
     )
+    parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
 
-def load_model() -> SentenceTransformer:
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+
+    with path.open("rb") as file:
+        for block in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(block)
+
+    return digest.hexdigest()
+
+
+def model_revision(model: SentenceTransformer) -> str:
+    transformer = model[0]
+    auto_model = getattr(transformer, "auto_model", None)
+    config = getattr(auto_model, "config", None)
+    revision = getattr(config, "_commit_hash", None)
+    return str(revision or "unknown")
+
+
+def load_model(max_seq_length: int) -> SentenceTransformer:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model_kwargs: dict[str, Any] = {}
 
@@ -109,6 +135,7 @@ def load_model() -> SentenceTransformer:
     if embedding_dimension != EMBEDDING_DIMENSION:
         raise ValueError(f"Unexpected embedding dimension: {embedding_dimension}")
 
+    model.max_seq_length = max_seq_length
     model_dtype = next(model.parameters()).dtype
 
     print(f"Device: {model.device}")
@@ -210,7 +237,7 @@ def encode_records(
 def load_checkpoint(
     path: Path,
     record_ids: list[str],
-) -> np.ndarray:
+) -> tuple[np.ndarray, str]:
     with np.load(path) as checkpoint:
         saved_record_ids = checkpoint["record_ids"].tolist()
         embeddings = np.asarray(
@@ -218,6 +245,11 @@ def load_checkpoint(
             dtype=np.float32,
         )
         model_name = str(checkpoint["model_name"])
+        revision = (
+            str(checkpoint["model_revision"])
+            if "model_revision" in checkpoint.files
+            else "unknown"
+        )
 
     if saved_record_ids != record_ids:
         raise ValueError(f"Checkpoint record IDs do not match: {path}")
@@ -230,7 +262,7 @@ def load_checkpoint(
         len(record_ids),
     )
 
-    return embeddings
+    return embeddings, revision
 
 
 def create_checkpoint(
@@ -238,7 +270,7 @@ def create_checkpoint(
     records: list[Record],
     path: Path,
     batch_size: int,
-) -> np.ndarray:
+) -> tuple[np.ndarray, str]:
     record_ids = [
         required_text(
             record,
@@ -260,15 +292,17 @@ def create_checkpoint(
     )
     temporary_path = path.with_suffix(".tmp.npz")
 
+    revision = model_revision(model)
     np.savez(
         temporary_path,
         embeddings=embeddings,
         record_ids=np.asarray(record_ids),
         model_name=np.asarray(MODEL_NAME),
+        model_revision=np.asarray(revision),
     )
     temporary_path.replace(path)
 
-    return embeddings
+    return embeddings, revision
 
 
 def run_smoke_test(
@@ -304,7 +338,14 @@ def main() -> None:
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be greater than zero")
 
+    if args.max_seq_length <= 0:
+        raise ValueError("--max-seq-length must be greater than zero")
+
+    if args.limit is None and args.output.exists() and not args.overwrite:
+        raise FileExistsError(f"Output already exists: {args.output}. Use --overwrite.")
+
     records = load_records(args.input)
+    input_sha256 = sha256_file(args.input)
 
     if args.limit is not None:
         records = records[: args.limit]
@@ -326,9 +367,10 @@ def main() -> None:
 
     print(f"Model: {MODEL_NAME}")
     print(f"Embedding records: {len(records)}")
+    print(f"Input SHA-256: {input_sha256}")
 
     if args.limit is not None:
-        model = load_model()
+        model = load_model(args.max_seq_length)
         run_smoke_test(
             model,
             records,
@@ -347,10 +389,11 @@ def main() -> None:
         if not (args.checkpoint_dir / f"{ticker}.npz").exists()
     ]
 
-    model = load_model() if missing_tickers else None
+    model = load_model(args.max_seq_length) if missing_tickers else None
 
     all_embeddings: list[np.ndarray] = []
     output_record_ids: list[str] = []
+    model_revisions: set[str] = set()
     started_at = perf_counter()
 
     for ticker, ticker_records in records_by_ticker.items():
@@ -365,7 +408,7 @@ def main() -> None:
         ]
 
         if checkpoint_path.exists():
-            embeddings = load_checkpoint(
+            embeddings, revision = load_checkpoint(
                 checkpoint_path,
                 ticker_record_ids,
             )
@@ -376,7 +419,7 @@ def main() -> None:
 
             print(f"{ticker}: generating {len(ticker_records)} embeddings")
 
-            embeddings = create_checkpoint(
+            embeddings, revision = create_checkpoint(
                 model,
                 ticker_records,
                 checkpoint_path,
@@ -386,6 +429,7 @@ def main() -> None:
 
         all_embeddings.append(embeddings)
         output_record_ids.extend(ticker_record_ids)
+        model_revisions.add(revision)
 
     embeddings = np.concatenate(
         all_embeddings,
@@ -399,6 +443,11 @@ def main() -> None:
 
     norms = np.linalg.norm(embeddings, axis=1)
 
+    if len(model_revisions) != 1:
+        raise ValueError(f"Checkpoints use inconsistent model revisions: {model_revisions}")
+
+    revision = next(iter(model_revisions))
+
     args.output.parent.mkdir(
         parents=True,
         exist_ok=True,
@@ -409,11 +458,16 @@ def main() -> None:
         embeddings=embeddings,
         record_ids=np.asarray(output_record_ids),
         model_name=np.asarray(MODEL_NAME),
+        model_revision=np.asarray(revision),
+        input_sha256=np.asarray(input_sha256),
+        embedding_dimension=np.asarray(EMBEDDING_DIMENSION),
+        max_seq_length=np.asarray(args.max_seq_length),
     )
 
     print(f"Shape: {embeddings.shape}")
     print(f"Norms: min={norms.min():.8f}, mean={norms.mean():.8f}, max={norms.max():.8f}")
     print(f"Time for this run: {perf_counter() - started_at:.1f} s")
+    print(f"Model revision: {revision}")
     print(f"Saved: {args.output}")
 
 

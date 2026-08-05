@@ -55,7 +55,7 @@ def test_builtin_adapter_marks_toc_as_not_retrieval_eligible() -> None:
     assert eligible_records(records)[0]["metadata"]["page_start"] == 150
 
 
-def test_structure_aware_table_child_repeats_header_and_links_parent() -> None:
+def test_structure_aware_table_locator_repeats_header_and_links_parent() -> None:
     table_content = (
         "The following table presents capital ratios.\n\n"
         "| December 31, 2025 | Standardized — JPMorgan Chase & Co. | "
@@ -92,13 +92,16 @@ def test_structure_aware_table_child_repeats_header_and_links_parent() -> None:
     assert len(parents) == 1
     assert len(records) == 1
     child = records[0]
-    assert child["record_type"] == "table_child"
+    assert child["record_type"] == "table_locator"
     assert "December 31, 2025" in child["document"]
     assert "Risk-based capital metrics" in child["document"]
     assert "CET1 capital ratio" in child["document"]
     assert "14.6%" in child["document"]
     assert "15.8%" in child["document"]
     assert child["metadata"]["parent_id"] == parents[0]["parent_id"]
+    assert len(child["metadata"]["column_paths"]) == len(
+        child["metadata"]["cell_coordinates"]
+    )
     assert child["metadata"]["start_display_page"] == 294
 
 
