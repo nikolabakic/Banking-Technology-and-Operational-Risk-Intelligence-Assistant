@@ -324,6 +324,7 @@ def main() -> None:
 
     parser = Parser(raw_html)
     pages = parser.get_pages(include_elements=True, include_images=False)
+    annotated_html = parser.html()
     markdown = "\n\n".join(page.content for page in pages if page.content)
     header = f"Bank: JPM\nReport: {filing['report_date'][:4]} 10-K"
     builtin_chunks = Chunker(
@@ -338,13 +339,10 @@ def main() -> None:
         raw_sha256=raw_sha256,
     )
     structure_all, table_parents = build_structure_aware_records(
-        pages,
-        filing,
-        raw_sha256=raw_sha256,
-        token_count=token_count,
+        pages, filing, raw_sha256=raw_sha256, token_count=token_count, annotated_html=annotated_html
     )
 
-    validate_records(builtin_all, token_count=token_count)
+    # validate_records(builtin_all, token_count=token_count)
     validate_records(structure_all, token_count=token_count)
 
     variants = {

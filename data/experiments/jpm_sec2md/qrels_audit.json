@@ -1,0 +1,225 @@
+[
+  {
+    "query_id": "dev_jpm_cybersecurity_risk_definition_2025",
+    "variant": "sec2md_builtin",
+    "status": "answerable",
+    "anchors": [
+      "Cybersecurity risk is the risk of harm or loss resulting from misuse or abuse of technology or the unauthorized disclosure of data"
+    ],
+    "matched_count": 1,
+    "primary_target_chunk_id": "5ad25cb118b55839d199e2a959ab97c9ad23e77a6705de0630d6a9ea09e7dfc0",
+    "matches": [
+      {
+        "target_chunk_id": "5ad25cb118b55839d199e2a959ab97c9ad23e77a6705de0630d6a9ea09e7dfc0",
+        "record_type": "text",
+        "page_start": 149,
+        "page_end": 150,
+        "preview": "The standards establish escalation protocols to senior management and to the Board of Directors. **Subcategories and examples of operational risks** Operational risk can manifest itself in various ways. Operational risk subcategories include Compliance risk, Conduct risk, Legal risk, and Estimations and Model risk. Refer to pages 150, 151, 152 and 153, respectively for more information on Compliance, Conduct, Legal, and Estimations and Model risk. Details on other select examples of operational risks such as firmwide resiliency, payment fraud and third-party outsourcing, as well as cybersecurity, are provided below. *Firmwide resiliency risk* Disruptions of the Firm’s business and operations can occur due to forces beyond the Firm’s control such as health emergencies, severe weather, natural disasters, the effects of climate change, utility or telecommunications failures, interruption of"
+      }
+    ]
+  },
+  {
+    "query_id": "dev_jpm_standardized_cet1_ratio_2025",
+    "variant": "sec2md_builtin",
+    "status": "answerable",
+    "anchors": [
+      "December 31, 2025",
+      "Standardized",
+      "CET1",
+      "14.6"
+    ],
+    "matched_count": 3,
+    "primary_target_chunk_id": "4a4f9238ec3aa3c3eae020386acd348d06a41e06d7fead8de900538c276fbe05",
+    "matches": [
+      {
+        "target_chunk_id": "4a4f9238ec3aa3c3eae020386acd348d06a41e06d7fead8de900538c276fbe05",
+        "record_type": "mixed",
+        "page_start": 296,
+        "page_end": 296,
+        "preview": "*CECL Regulatory Capital Transition* Beginning January 1, 2022, the $ 2.9 billion CECL capital benefit, provided by the Federal Reserve in response to the COVID-19 pandemic, was phased out at 25% per year over a three-year period and fully phased out as of January 1, 2025. As of December 31, 2024, the Firm’s CET1 capital reflected the remaining benefit of $ 720 million associated with the CECL capital transition provisions. Similarly, as of January 1, 2025, the Firm has phased out the other CECL capital transition provisions which impacted Tier 2 capital, adjusted average assets, total leverage exposure and RWA, as applicable. The following tables present risk-based capital metrics under both the Standardized and Advanced approaches and leverage-based capital metrics for JPMorgan Chase & Co. and JPMorgan Chase Bank, N.A. As of December 31, 2025 and 2024, JPMorgan Chase & Co. and JPMorgan"
+      },
+      {
+        "target_chunk_id": "45dfc89316f6497143a59df736082703ad77d28b444f57dcc05219c67e4ff182",
+        "record_type": "mixed",
+        "page_start": 96,
+        "page_end": 96,
+        "preview": "|(in millions, except ratios)|Standardized — December 31, 2025||December 31, 2024|Capital ratio requirements (d)|Advanced — December 31, 2025||December 31, 2024|Capital ratio requirements (d)| |---|---|---|---|---|---|---|---|---|---| |Risk-based capital metrics: (a)||||||||| |CET1 capital|$ 288,469||$ 275,513||$ 288,469||$ 275,513|| |Tier 1 capital|307,630||294,881||307,630||294,881|| |Total capital|343,843||325,589||328,962|(e)|311,898|(e)| |Risk-weighted assets|1,981,692|(b)|1,757,460||2,045,249|(b)(e)|1,740,429|(e)| |CET1 capital ratio|14.6 %|(c)|15.7 %|11.5 %|14.1 %|(c)|15.8 %|11.5 %| |Tier 1 capital ratio|15.5|(c)|16.8|13.0|15.0|(c)|16.9|13.0| |Total capital ratio|17.4|(c)|18.5|15.0|16.1|(c)|17.9|15.0| (a) As of January 1, 2025, the benefit from the CECL capital transition provision had been fully phased out. For the year ended December 31, 2024, CET1 capital reflected a $720 milli"
+      },
+      {
+        "target_chunk_id": "c10d5d9d6b935df340e460ddf8db627c2cc42de6004bb8d1864a635b2866b7dc",
+        "record_type": "mixed",
+        "page_start": 50,
+        "page_end": 51,
+        "preview": "Refer to Wholesale Credit Portfolio and Consumer Credit Portfolio on pages 118–128 and pages 112–117, respectively, for additional information. • Firmwide **average loans** of $1.4 trillion were up 6%, predominantly driven by higher loans in CIB and AWM. • Firmwide **average deposits** of $2.5 trillion were up 5%, reflecting: – net inflows related to client-driven activities in Payments and Securities Services, and – growth in both new accounts and balances in existing accounts in AWM, partially offset by – a decrease in CCB primarily driven by increased customer spending. Refer to Liquidity Risk Management on pages 100–107 for additional information. **Selected capital and other metrics** • **CET1 capital** was $288.5 billion, and the Standardized and Advanced CET1 ratios were 14.6% and 14.1%, respectively. • **SLR** was 5.8%. • **TBVPS** grew 10.5%, ending 2025 at $107.56. • As of Dece"
+      }
+    ]
+  },
+  {
+    "query_id": "dev_jpm_standardized_cet1_requirement_2025",
+    "variant": "sec2md_builtin",
+    "status": "answerable",
+    "anchors": [
+      "Standardized CET1 capital ratio requirement, including regulatory buffers",
+      "11.5%",
+      "December 31, 2025"
+    ],
+    "matched_count": 1,
+    "primary_target_chunk_id": "7d41160e268f6fa29b1fd3862576f1443fc57abf1b2c87dbf031daf34d3e5ce6",
+    "matches": [
+      {
+        "target_chunk_id": "7d41160e268f6fa29b1fd3862576f1443fc57abf1b2c87dbf031daf34d3e5ce6",
+        "record_type": "text",
+        "page_start": 91,
+        "page_end": 92,
+        "preview": "• Meet capital distribution objectives; and • Maintain sufficient capital resources to operate throughout a resolution period in accordance with the Firm’s preferred resolution strategy. The Firm addresses these objectives through: • Establishing internal minimum capital requirements and maintaining a strong capital governance framework. The internal minimum capital levels consider the Firm’s regulatory capital requirements as well as an internal assessment of capital adequacy, in normal economic cycles and in stress events; • Retaining flexibility in order to react to a range of potential events; and • Regularly monitoring the Firm’s capital position and following prescribed escalation protocols, both at the Firm and material legal entity levels. **Governance** Committees responsible for overseeing the Firm’s capital management include the Capital Governance Committee, the Firmwide ALCO"
+      }
+    ]
+  },
+  {
+    "query_id": "dev_jpm_bank_advanced_cet1_ratio_2025_metadata",
+    "variant": "sec2md_builtin",
+    "status": "answerable",
+    "anchors": [
+      "December 31, 2025",
+      "Advanced",
+      "JPMorgan Chase Bank, N.A.",
+      "CET1",
+      "15.8"
+    ],
+    "matched_count": 2,
+    "primary_target_chunk_id": "4a4f9238ec3aa3c3eae020386acd348d06a41e06d7fead8de900538c276fbe05",
+    "matches": [
+      {
+        "target_chunk_id": "4a4f9238ec3aa3c3eae020386acd348d06a41e06d7fead8de900538c276fbe05",
+        "record_type": "mixed",
+        "page_start": 296,
+        "page_end": 296,
+        "preview": "*CECL Regulatory Capital Transition* Beginning January 1, 2022, the $ 2.9 billion CECL capital benefit, provided by the Federal Reserve in response to the COVID-19 pandemic, was phased out at 25% per year over a three-year period and fully phased out as of January 1, 2025. As of December 31, 2024, the Firm’s CET1 capital reflected the remaining benefit of $ 720 million associated with the CECL capital transition provisions. Similarly, as of January 1, 2025, the Firm has phased out the other CECL capital transition provisions which impacted Tier 2 capital, adjusted average assets, total leverage exposure and RWA, as applicable. The following tables present risk-based capital metrics under both the Standardized and Advanced approaches and leverage-based capital metrics for JPMorgan Chase & Co. and JPMorgan Chase Bank, N.A. As of December 31, 2025 and 2024, JPMorgan Chase & Co. and JPMorgan"
+      },
+      {
+        "target_chunk_id": "cf3d3f9cf4f796faa37e76162e6b6e2b4c56dba69c2af7ce4942f6fca86838ff",
+        "record_type": "mixed",
+        "page_start": 295,
+        "page_end": 296,
+        "preview": "The CET1, Tier 1 and Total capital ratio requirements each include a respective minimum requirement plus a GSIB surcharge of 4.5 % as calculated under Method 2; plus a 2.5 % SCB for Standardized ratios and a fixed 2.5 % capital conservation buffer for Advanced ratios. The countercyclical buffer is currently set to 0 % by the federal banking agencies. (b) For the year ended December 31, 2024, the CET1, Tier 1, and Total capital ratio requirements under Standardized applicable to the Firm were 12.3 %, 13.8 %, and 15.8 %, respectively; the Advanced CET1, Tier 1, and Total capital ratio requirements applicable to the Firm were 11.5 %, 13.0 %, and 15.0 %, respectively. (c) Represents requirements for JPMorgan Chase Bank, N.A. The CET1, Tier 1 and Total capital ratio requirements include a fixed capital conservation buffer requirement of 2.5 % that is applicable to JPMorgan Chase Bank, N.A. JP"
+      }
+    ]
+  },
+  {
+    "query_id": "dev_unsupported_jpm_standardized_cet1_2026",
+    "variant": "sec2md_builtin",
+    "status": "unsupported",
+    "anchors": [],
+    "matched_count": 0,
+    "primary_target_chunk_id": null,
+    "matches": []
+  },
+  {
+    "query_id": "dev_jpm_cybersecurity_risk_definition_2025",
+    "variant": "structure_aware",
+    "status": "answerable",
+    "anchors": [
+      "Cybersecurity risk is the risk of harm or loss resulting from misuse or abuse of technology or the unauthorized disclosure of data"
+    ],
+    "matched_count": 1,
+    "primary_target_chunk_id": "b4323671a230ffe08f4eb0b11a111b22010e58240847170e24da1fbf67e4d79f",
+    "matches": [
+      {
+        "target_chunk_id": "b4323671a230ffe08f4eb0b11a111b22010e58240847170e24da1fbf67e4d79f",
+        "record_type": "text",
+        "page_start": 150,
+        "page_end": 150,
+        "preview": "**Management’s discussion and analysis** *Cybersecurity risk* Cybersecurity risk is the risk of harm or loss resulting from misuse or abuse of technology or the unauthorized disclosure of data."
+      }
+    ]
+  },
+  {
+    "query_id": "dev_jpm_standardized_cet1_ratio_2025",
+    "variant": "structure_aware",
+    "status": "answerable",
+    "anchors": [
+      "December 31, 2025",
+      "Standardized",
+      "CET1",
+      "14.6"
+    ],
+    "matched_count": 3,
+    "primary_target_chunk_id": "3537bf0b1f9cf12a364a4fd7d8000a9471f80661813c26297884f4f34348a9f0",
+    "matches": [
+      {
+        "target_chunk_id": "3537bf0b1f9cf12a364a4fd7d8000a9471f80661813c26297884f4f34348a9f0",
+        "record_type": "table_child",
+        "page_start": 96,
+        "page_end": 96,
+        "preview": "| (in millions, except ratios) | Standardized — December 31, 2025 | | December 31, 2024 | Capital ratio requirements (d) | Advanced — December 31, 2025 | | December 31, 2024 | Capital ratio requirements (d) | | --- | --- | --- | --- | --- | --- | --- | --- | --- | | Risk-based capital metrics: (a) | | | | | | | | | | CET1 capital ratio | 14.6 % | (c) | 15.7 % | 11.5 % | 14.1 % | (c) | 15.8 % | 11.5 % |"
+      },
+      {
+        "target_chunk_id": "2726b971fc6c716d7b82cfcbd5c88d5b154f9c6a13cff83e6251c12139372b62",
+        "record_type": "text",
+        "page_start": 50,
+        "page_end": 50,
+        "preview": "**Selected capital and other metrics** • **CET1 capital** was $288.5 billion, and the Standardized and Advanced CET1 ratios were 14.6% and 14.1%, respectively. • **SLR** was 5.8%. • **TBVPS** grew 10.5%, ending 2025 at $107.56. • As of December 31, 2025, the Firm had eligible end-of-period **High Quality Liquid Assets** (“HQLA”) of approximately $915 billion and **unencumbered marketable securities** with a fair value of approximately $548 billion, resulting in approximately $1.5 trillion of liquidity sources. Refer to Capital Risk Management and Liquidity Risk Management on pages 89–99 and pages 100–107, respectively, for additional information."
+      },
+      {
+        "target_chunk_id": "ed8ee6df23fadb6221a8e1658a8f635739452193de6bdf9ad0150b94f8be1017",
+        "record_type": "table_child",
+        "page_start": 296,
+        "page_end": 296,
+        "preview": "The following tables present risk-based capital metrics under both the Standardized and Advanced approaches and leverage-based capital metrics for JPMorgan Chase & Co. and JPMorgan Chase Bank, N.A. As of December 31, 2025 and 2024, JPMorgan Chase & Co. and JPMorgan Chase Bank, N.A. were well-capitalized and met all capital requirements to which each was subject. | December 31, 2025 (in millions, except ratios) | Standardized — JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | Advanced — JPMorgan Chase & Co. | | JPMorgan Chase Bank, N.A. | | | --- | --- | --- | --- | --- | --- | --- | | Risk-based capital metrics: (a) | | | | | | | | CET1 capital ratio (c) | 14.6 % | 15.3 % | 14.1 % | | 15.8 % | |"
+      }
+    ]
+  },
+  {
+    "query_id": "dev_jpm_standardized_cet1_requirement_2025",
+    "variant": "structure_aware",
+    "status": "answerable",
+    "anchors": [
+      "Standardized CET1 capital ratio requirement, including regulatory buffers",
+      "11.5%",
+      "December 31, 2025"
+    ],
+    "matched_count": 1,
+    "primary_target_chunk_id": "3aa6d86104f942780b700b4ac9a3e9bed783479774cbc8fc789025bee6eb46da",
+    "matches": [
+      {
+        "target_chunk_id": "3aa6d86104f942780b700b4ac9a3e9bed783479774cbc8fc789025bee6eb46da",
+        "record_type": "text",
+        "page_start": 92,
+        "page_end": 92,
+        "preview": "**Management’s discussion and analysis** Reserve uses results under the severely adverse scenario from its supervisory stress test to determine each firm’s Stress Capital Buffer (“SCB”) requirement for the coming year. The Firm's current SCB requirement is 2.5% and will remain in effect through September 30, 2027, based on the current rules. The Firm’s Standardized CET1 capital ratio requirement, including regulatory buffers, was 11.5% as of December 31, 2025. Refer to Key Regulatory Developments on page 91 for information related to proposed changes to the SCB requirement and stress testing framework. Refer to Capital actions on page 97 for information on actions taken by the Firm’s Board of Directors. *Internal Capital Adequacy Assessment Process* Annually, the Firm prepares the ICAAP, which informs the Board of Directors of the ongoing assessment of the Firm’s processes for managing t"
+      }
+    ]
+  },
+  {
+    "query_id": "dev_jpm_bank_advanced_cet1_ratio_2025_metadata",
+    "variant": "structure_aware",
+    "status": "answerable",
+    "anchors": [
+      "December 31, 2025",
+      "Advanced",
+      "JPMorgan Chase Bank, N.A.",
+      "CET1",
+      "15.8"
+    ],
+    "matched_count": 1,
+    "primary_target_chunk_id": "ed8ee6df23fadb6221a8e1658a8f635739452193de6bdf9ad0150b94f8be1017",
+    "matches": [
+      {
+        "target_chunk_id": "ed8ee6df23fadb6221a8e1658a8f635739452193de6bdf9ad0150b94f8be1017",
+        "record_type": "table_child",
+        "page_start": 296,
+        "page_end": 296,
+        "preview": "The following tables present risk-based capital metrics under both the Standardized and Advanced approaches and leverage-based capital metrics for JPMorgan Chase & Co. and JPMorgan Chase Bank, N.A. As of December 31, 2025 and 2024, JPMorgan Chase & Co. and JPMorgan Chase Bank, N.A. were well-capitalized and met all capital requirements to which each was subject. | December 31, 2025 (in millions, except ratios) | Standardized — JPMorgan Chase & Co. | JPMorgan Chase Bank, N.A. | Advanced — JPMorgan Chase & Co. | | JPMorgan Chase Bank, N.A. | | | --- | --- | --- | --- | --- | --- | --- | | Risk-based capital metrics: (a) | | | | | | | | CET1 capital ratio (c) | 14.6 % | 15.3 % | 14.1 % | | 15.8 % | |"
+      }
+    ]
+  },
+  {
+    "query_id": "dev_unsupported_jpm_standardized_cet1_2026",
+    "variant": "structure_aware",
+    "status": "unsupported",
+    "anchors": [],
+    "matched_count": 0,
+    "primary_target_chunk_id": null,
+    "matches": []
+  }
+]

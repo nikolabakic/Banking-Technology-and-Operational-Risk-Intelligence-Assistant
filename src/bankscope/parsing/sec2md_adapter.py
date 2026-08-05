@@ -3,13 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
+
+from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
+from sec2md.table_parser import TableParser
 
 PARSER_NAME = "sec2md"
 PARSER_VERSION = "0.1.23"
 BUILTIN_CHUNKER_VERSION = "sec2md-built-in-v1"
-STRUCTURE_CHUNKER_VERSION = "bankscope-structure-aware-v1"
+STRUCTURE_CHUNKER_VERSION = "bankscope-structure-aware-v2"
 
 TARGET_TOKENS = 600
 MAX_TOKENS = 700
@@ -181,6 +185,7 @@ def build_metadata(
     xbrl_tags: Sequence[str],
     retrieval_eligible: bool,
     parent_id: str | None = None,
+    logical_table_id: str | None = None,
     table_element_id: str | None = None,
 ) -> Record:
     sec_item, sec_item_source, sec_item_confidence = extract_explicit_sec_item(content)
@@ -219,6 +224,9 @@ def build_metadata(
     if parent_id is not None:
         metadata["parent_id"] = parent_id
 
+    if logical_table_id is not None:
+        metadata["logical_table_id"] = logical_table_id
+
     if table_element_id is not None:
         metadata["table_element_id"] = table_element_id
 
@@ -242,6 +250,7 @@ def build_record(
     child_key: str,
     retrieval_eligible: bool,
     parent_id: str | None = None,
+    logical_table_id: str | None = None,
     table_element_id: str | None = None,
 ) -> Record:
     content = content.strip()
@@ -270,6 +279,7 @@ def build_record(
         retrieval_eligible=retrieval_eligible,
         parent_id=parent_id,
         table_element_id=table_element_id,
+        logical_table_id=logical_table_id,
     )
     section_title = metadata.get("section_title")
 
@@ -550,15 +560,504 @@ def ordered_elements(pages: Sequence[Any]) -> list[Record]:
     return elements
 
 
+def extract_sec2md_table_grids(
+    annotated_html: str,
+) -> dict[str, list[list[list[str]]]]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(annotated_html, "lxml")
+    grids_by_element: dict[str, list[list[list[str]]]] = {}
+    seen_tables: set[tuple[str, int]] = set()
+
+    for source_node in soup.find_all(attrs={"data-sec2md-block": True}):
+        element_id = normalize_space(source_node.get("data-sec2md-block"))
+
+        if not element_id:
+            continue
+
+        table_nodes = (
+            [source_node] if source_node.name == "table" else source_node.find_all("table")
+        )
+
+        for table_node in table_nodes:
+            if not isinstance(table_node, Tag):
+                continue
+
+            table_key = (element_id, id(table_node))
+
+            if table_key in seen_tables:
+                continue
+
+            seen_tables.add(table_key)
+            parsed_table = TableParser(table_node)
+
+            matrix = [
+                [
+                    normalize_space(grid_cell.cell.text) if grid_cell is not None else ""
+                    for grid_cell in row
+                ]
+                for row in parsed_table.grid
+            ]
+
+            if not matrix:
+                continue
+
+            element_grids = grids_by_element.setdefault(element_id, [])
+
+            if matrix not in element_grids:
+                element_grids.append(matrix)
+
+    return grids_by_element
+
+
+def classify_table_parent(
+    *,
+    content: str,
+    cell_matrices: Sequence[Sequence[Sequence[str]]],
+) -> str:
+    matrices = [matrix for matrix in cell_matrices if matrix]
+
+    if not matrices:
+        return "layout"
+
+    cells = [
+        normalize_space(cell)
+        for matrix in matrices
+        for row in matrix
+        for cell in row
+        if normalize_space(cell)
+    ]
+
+    if not cells:
+        return "layout"
+
+    normalized_content = normalize_space(content).casefold()
+    header_text = " ".join(
+        normalize_space(cell).casefold()
+        for matrix in matrices
+        for row in matrix[:3]
+        for cell in row
+        if normalize_space(cell)
+    )
+
+    glossary_markers = (
+        "glossary of terms",
+        "term definition",
+        "acronym definition",
+    )
+
+    if any(marker in f"{header_text} {normalized_content}" for marker in glossary_markers):
+        return "glossary"
+
+    if (
+        "table of contents" in normalized_content
+        or "form 10-k index" in normalized_content
+        or (
+            re.search(r"\bitem\s+\d+[a-c]?\b", normalized_content)
+            and re.search(r"\bpage\b", header_text)
+        )
+    ):
+        return "index"
+
+    layout_markers = (
+        "commission file number",
+        "state or other jurisdiction of incorporation",
+        "i.r.s. employer identification",
+        "address of principal executive offices",
+        "registrant's telephone number",
+        "securities registered pursuant",
+        "indicate by check mark",
+        "large accelerated filer",
+        "emerging growth company",
+    )
+
+    if any(marker in normalized_content for marker in layout_markers):
+        return "layout"
+
+    row_count = max(len(matrix) for matrix in matrices)
+    column_count = max(
+        (len(row) for matrix in matrices for row in matrix),
+        default=0,
+    )
+
+    word_counts = [len(cell.split()) for cell in cells]
+    numeric_cell_count = sum(bool(re.search(r"\d|[$€£¥%]", cell)) for cell in cells)
+    long_text_cell_count = sum(word_count >= 12 for word_count in word_counts)
+
+    numeric_density = numeric_cell_count / len(cells)
+    long_text_density = long_text_cell_count / len(cells)
+
+    if row_count <= 1 or column_count <= 1:
+        return "narrative_table" if long_text_density >= 0.5 else "layout"
+
+    if numeric_density < 0.08 and long_text_density >= 0.35:
+        return "narrative_table"
+
+    return "data_table"
+
+
+PERIOD_PATTERN = re.compile(
+    r"(?i)\b(?:19|20)\d{2}\b|"
+    r"\b(?:january|february|march|april|may|june|july|august|"
+    r"september|october|november|december)\b|"
+    r"\b(?:first|second|third|fourth)\s+quarter\b"
+)
+
+VALUE_PATTERN = re.compile(
+    r"""(?ix)
+    ^\s*
+    (?:[$€£¥]\s*)?
+    \(?
+    [-+]?
+    \d[\d,\s]*
+    (?:\.\d+)?
+    \)?
+    \s*(?:%|x|bps)?
+    \s*(?:\([a-z]{1,3}\))?
+    \s*$
+    """
+)
+
+
+def is_period_label(value: str) -> bool:
+    return bool(PERIOD_PATTERN.search(normalize_space(value)))
+
+
+def is_table_value(value: str) -> bool:
+    value = normalize_space(value)
+
+    if not value or is_period_label(value):
+        return False
+
+    if value.casefold() in {
+        "-",
+        "—",
+        "–",
+        "nm",
+        "n/m",
+        "na",
+        "n/a",
+        "yes",
+        "no",
+    }:
+        return True
+
+    return bool(VALUE_PATTERN.fullmatch(value))
+
+
+def extract_table_title(content: str) -> str | None:
+    prefix = content.split("|", maxsplit=1)[0]
+    candidates: list[str] = []
+
+    for line in prefix.splitlines():
+        candidate = normalize_space(re.sub(r"[*_#]+", "", line)).rstrip(".:")
+
+        if candidate and len(candidate) <= 180:
+            candidates.append(candidate)
+
+    return candidates[-1] if candidates else None
+
+
+def extract_table_unit(content: str) -> str | None:
+    normalized = normalize_space(content)
+
+    match = re.search(
+        r"(?i)\b(?:dollars\s+)?in\s+"
+        r"(millions|billions|thousands)\b",
+        normalized,
+    )
+
+    if match:
+        return match.group(1).casefold()
+
+    if re.search(r"(?i)\bpercent(?:age)?\b", normalized):
+        return "percent"
+
+    if re.search(r"(?i)\bbasis points?\b", normalized):
+        return "basis points"
+
+    return None
+
+
+def make_locator_prefix(
+    filing: Mapping[str, Any],
+    *,
+    section_title: str | None,
+    table_title: str | None,
+    unit: str | None,
+) -> list[str]:
+    lines = [
+        f"Bank: {filing['ticker']}",
+        f"Entity: {filing.get('legal_name', 'JPMorgan Chase & Co.')}",
+        f"Report date: {filing['report_date']}",
+    ]
+
+    if section_title:
+        lines.append(f"Section: {section_title}")
+
+    if table_title and table_title != section_title:
+        lines.append(f"Table: {table_title}")
+
+    if unit:
+        lines.append(f"Unit: {unit}")
+
+    return lines
+
+
+def find_first_data_row(matrix: Sequence[Sequence[str]]) -> int:
+    for row_index, row in enumerate(matrix):
+        value_columns = [
+            column_index for column_index, cell in enumerate(row) if is_table_value(cell)
+        ]
+
+        if not value_columns:
+            continue
+
+        first_value_column = min(value_columns)
+
+        if any(normalize_space(cell) for cell in row[:first_value_column]):
+            return row_index
+
+    return min(1, len(matrix))
+
+
+def build_data_locator_specs(
+    matrix: Sequence[Sequence[str]],
+    *,
+    matrix_index: int,
+    prefix: Sequence[str],
+) -> list[Record]:
+    if not matrix:
+        return []
+
+    data_start = find_first_data_row(matrix)
+    header_rows = matrix[:data_start]
+    specs: list[Record] = []
+    active_row_context: list[str] = []
+
+    for row_index in range(data_start, len(matrix)):
+        row = list(matrix[row_index])
+        value_columns = [
+            column_index for column_index, cell in enumerate(row) if is_table_value(cell)
+        ]
+
+        if not value_columns:
+            context_labels = deduplicate(
+                cell for cell in row if normalize_space(cell) and not is_period_label(cell)
+            )
+
+            if context_labels:
+                active_row_context = context_labels
+
+            continue
+
+        first_value_column = min(value_columns)
+        row_labels = deduplicate(cell for cell in row[:first_value_column] if normalize_space(cell))
+        row_path = deduplicate([*active_row_context, *row_labels])
+
+        if not row_path:
+            continue
+
+        column_paths: list[Record] = []
+        cell_coordinates: list[Record] = []
+
+        for column_index in value_columns:
+            path = deduplicate(
+                header_row[column_index]
+                for header_row in header_rows
+                if column_index < len(header_row) and normalize_space(header_row[column_index])
+            )
+
+            if not path:
+                path = [f"Column {column_index + 1}"]
+
+            column_paths.append(
+                {
+                    "column_index": column_index,
+                    "path": path,
+                }
+            )
+            cell_coordinates.append(
+                {
+                    "matrix_index": matrix_index,
+                    "row_index": row_index,
+                    "column_index": column_index,
+                }
+            )
+
+        column_text = " | ".join(" > ".join(column["path"]) for column in column_paths)
+
+        document = "\n".join(
+            [
+                *prefix,
+                f"Measure or row: {' > '.join(row_path)}",
+                f"Column context: {column_text}",
+            ]
+        )
+
+        specs.append(
+            {
+                "document": document,
+                "locator_scope": "row",
+                "row_path": row_path,
+                "column_paths": column_paths,
+                "cell_coordinates": cell_coordinates,
+            }
+        )
+
+    if specs:
+        return specs
+
+    schema_labels = deduplicate(
+        cell for row in matrix for cell in row if normalize_space(cell) and not is_table_value(cell)
+    )
+
+    if not schema_labels:
+        return []
+
+    return [
+        {
+            "document": "\n".join(
+                [
+                    *prefix,
+                    f"Table fields: {' | '.join(schema_labels[:80])}",
+                ]
+            ),
+            "locator_scope": "table_schema",
+            "row_path": [],
+            "column_paths": [],
+            "cell_coordinates": [],
+        }
+    ]
+
+
+def build_glossary_locator_specs(
+    matrix: Sequence[Sequence[str]],
+    *,
+    matrix_index: int,
+    prefix: Sequence[str],
+) -> list[Record]:
+    specs: list[Record] = []
+
+    for row_index, row in enumerate(matrix):
+        cells = deduplicate(row)
+
+        if len(cells) < 2:
+            continue
+
+        document = "\n".join(
+            [
+                *prefix,
+                f"Term: {cells[0]}",
+                f"Definition: {' '.join(cells[1:])}",
+            ]
+        )
+
+        specs.append(
+            {
+                "document": document,
+                "locator_scope": "glossary_entry",
+                "row_path": [cells[0]],
+                "column_paths": [],
+                "cell_coordinates": [
+                    {
+                        "matrix_index": matrix_index,
+                        "row_index": row_index,
+                        "column_index": column_index,
+                    }
+                    for column_index, cell in enumerate(row)
+                    if normalize_space(cell)
+                ],
+            }
+        )
+
+    return specs
+
+
+def build_narrative_locator_specs(
+    matrix: Sequence[Sequence[str]],
+    *,
+    matrix_index: int,
+    prefix: Sequence[str],
+) -> list[Record]:
+    labels = deduplicate(
+        cell for row in matrix for cell in row if normalize_space(cell) and not is_table_value(cell)
+    )
+
+    if not labels:
+        return []
+
+    return [
+        {
+            "document": "\n".join(
+                [
+                    *prefix,
+                    f"Table content: {' '.join(labels[:100])}",
+                ]
+            ),
+            "locator_scope": "narrative",
+            "row_path": [],
+            "column_paths": [],
+            "cell_coordinates": [],
+        }
+    ]
+
+
+def build_table_locator_specs(
+    filing: Mapping[str, Any],
+    *,
+    table_type: str,
+    content: str,
+    cell_matrices: Sequence[Sequence[Sequence[str]]],
+    section_title: str | None,
+) -> list[Record]:
+    if table_type in {"layout", "index"}:
+        return []
+
+    prefix = make_locator_prefix(
+        filing,
+        section_title=section_title,
+        table_title=extract_table_title(content),
+        unit=extract_table_unit(content),
+    )
+    specs: list[Record] = []
+
+    for matrix_index, matrix in enumerate(cell_matrices):
+        if table_type == "glossary":
+            matrix_specs = build_glossary_locator_specs(
+                matrix,
+                matrix_index=matrix_index,
+                prefix=prefix,
+            )
+        elif table_type == "narrative_table":
+            matrix_specs = build_narrative_locator_specs(
+                matrix,
+                matrix_index=matrix_index,
+                prefix=prefix,
+            )
+        else:
+            matrix_specs = build_data_locator_specs(
+                matrix,
+                matrix_index=matrix_index,
+                prefix=prefix,
+            )
+
+        specs.extend(matrix_specs)
+
+    return specs
+
+
 def build_structure_aware_records(
     pages: Sequence[Any],
     filing: Mapping[str, Any],
     *,
     raw_sha256: str,
     token_count: TokenCounter,
+    annotated_html: str | None = None,
 ) -> tuple[list[Record], list[Record]]:
     display_pages, glossary_pages = page_maps(pages)
     elements = ordered_elements(pages)
+    table_grids_by_element = extract_sec2md_table_grids(annotated_html) if annotated_html else {}
     records: list[Record] = []
     table_parents: list[Record] = []
     narrative_buffer: list[Record] = []
@@ -607,6 +1106,7 @@ def build_structure_aware_records(
         narrative_index += 1
         narrative_buffer = []
 
+    current_section_title: str | None = None
     for element_index, element in enumerate(elements):
         content = str(element.get("content") or "").strip()
 
@@ -651,6 +1151,11 @@ def build_structure_aware_records(
             continue
 
         if kind != "table":
+            section_title = extract_section_title(content)
+
+            if section_title:
+                current_section_title = section_title
+
             if is_heading_start(content) and narrative_buffer:
                 emit_narrative_buffer()
 
@@ -679,6 +1184,9 @@ def build_structure_aware_records(
             element_ids=[element_id],
             child_key=f"table-parent:{element_index}",
         )
+        logical_table_id = parent_id
+        cell_matrices = table_grids_by_element.get(element_id, [])
+        table_type = classify_table_parent(content=content, cell_matrices=cell_matrices)
         parent_metadata = build_metadata(
             filing,
             variant="structure_aware",
@@ -695,99 +1203,68 @@ def build_structure_aware_records(
             retrieval_eligible=False,
             parent_id=parent_id,
             table_element_id=element_id,
+            logical_table_id=logical_table_id,
         )
+        parent_metadata["table_type"] = table_type
         table_parents.append(
             {
                 "parent_id": parent_id,
+                "logical_table_id": logical_table_id,
+                "table_type": table_type,
                 "document": content,
+                "cell_matrices": cell_matrices,
                 "metadata": parent_metadata,
             }
         )
 
-        child_count_before = len(records)
-        table_retrieval_eligible = not (
-            looks_like_navigation(content) or looks_like_page_furniture(content)
+        locator_specs = build_table_locator_specs(
+            filing,
+            table_type=table_type,
+            content=content,
+            cell_matrices=cell_matrices,
+            section_title=current_section_title,
         )
 
-        for block_index, (context, table_lines) in enumerate(parse_markdown_table_blocks(content)):
-            if not table_lines:
-                continue
-
-            header = table_lines[0]
-            separator = (
-                table_lines[1]
-                if len(table_lines) > 1
-                and MARKDOWN_TABLE_SEPARATOR_PATTERN.fullmatch(table_lines[1])
-                else ""
+        for locator_index, locator_spec in enumerate(locator_specs):
+            locator_document = str(locator_spec["document"])
+            record = build_record(
+                filing,
+                variant="structure_aware",
+                chunker_version=STRUCTURE_CHUNKER_VERSION,
+                raw_sha256=raw_sha256,
+                content=locator_document,
+                record_type="table_locator",
+                page_start=page_start,
+                page_end=page_end,
+                start_display_page=display_page(page_start),
+                end_display_page=display_page(page_end),
+                element_ids=[element_id],
+                xbrl_tags=tags,
+                child_key=f"table-locator:{element_index}:{locator_index}",
+                retrieval_eligible=True,
+                parent_id=parent_id,
+                logical_table_id=logical_table_id,
+                table_element_id=element_id,
             )
-            data_start = 2 if separator else 1
-            context_row: str | None = None
-
-            for row_index, row in enumerate(table_lines[data_start:]):
-                if not row.strip() or row.count("|") < 2:
-                    continue
-
-                if table_row_is_context(row):
-                    context_row = row
-                    continue
-
-                child_content = make_table_child_content(
-                    context=context,
-                    header=header,
-                    separator=separator,
-                    context_row=context_row,
-                    data_row=row,
-                    token_count=token_count,
-                )
-
-                for part_index, part in enumerate(split_to_token_limit(child_content, token_count)):
-                    records.append(
-                        build_record(
-                            filing,
-                            variant="structure_aware",
-                            chunker_version=STRUCTURE_CHUNKER_VERSION,
-                            raw_sha256=raw_sha256,
-                            content=part,
-                            record_type="table_child",
-                            page_start=page_start,
-                            page_end=page_end,
-                            start_display_page=display_page(page_start),
-                            end_display_page=display_page(page_end),
-                            element_ids=[element_id],
-                            xbrl_tags=tags,
-                            child_key=(
-                                f"table:{element_index}:{block_index}:{row_index}:{part_index}"
-                            ),
-                            retrieval_eligible=table_retrieval_eligible,
-                            parent_id=parent_id,
-                            table_element_id=element_id,
-                        )
-                    )
-
-        if len(records) == child_count_before:
-            retrieval_eligible = not (
-                looks_like_navigation(content) or looks_like_page_furniture(content)
+            record["metadata"].update(
+                {
+                    "table_type": table_type,
+                    "locator_scope": locator_spec["locator_scope"],
+                    "row_path": locator_spec["row_path"],
+                    "column_paths": locator_spec["column_paths"],
+                    "cell_coordinates": locator_spec["cell_coordinates"],
+                    "evidence_ref": {
+                        "parent_id": parent_id,
+                        "logical_table_id": logical_table_id,
+                        "cell_coordinates": locator_spec["cell_coordinates"],
+                    },
+                }
             )
-            records.append(
-                build_record(
-                    filing,
-                    variant="structure_aware",
-                    chunker_version=STRUCTURE_CHUNKER_VERSION,
-                    raw_sha256=raw_sha256,
-                    content=content,
-                    record_type="table_child",
-                    page_start=page_start,
-                    page_end=page_end,
-                    start_display_page=display_page(page_start),
-                    end_display_page=display_page(page_end),
-                    element_ids=[element_id],
-                    xbrl_tags=tags,
-                    child_key=f"table:{element_index}:whole",
-                    retrieval_eligible=retrieval_eligible,
-                    parent_id=parent_id,
-                    table_element_id=element_id,
-                )
-            )
+
+            if current_section_title:
+                record["metadata"]["section_title"] = current_section_title
+
+            records.append(record)
 
     emit_narrative_buffer()
     return records, table_parents
