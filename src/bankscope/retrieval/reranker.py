@@ -22,7 +22,7 @@ def load_reranker(
     model_name: str = RERANKER_MODEL_NAME,
     *,
     device: str | None = None,
-    max_length: int = 1024,
+    max_length: int = 2048,
 ) -> CrossEncoder:
     import torch  # noqa: F811
     from sentence_transformers import CrossEncoder

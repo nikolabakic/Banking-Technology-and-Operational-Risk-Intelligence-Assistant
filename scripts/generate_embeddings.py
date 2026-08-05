@@ -95,6 +95,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Embed only the first N records without saving them.",
     )
+    parser.add_argument(
+        "--reuse-npz",
+        type=Path,
+        help="Reuse vectors with matching record IDs and embed only new records.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -329,6 +334,81 @@ def run_smoke_test(
     print("Smoke test passed. Embeddings were not saved.")
 
 
+def build_with_reused_embeddings(
+    records: list[Record],
+    reuse_path: Path,
+    *,
+    batch_size: int,
+    max_seq_length: int,
+) -> tuple[np.ndarray, list[str], str]:
+    with np.load(reuse_path, allow_pickle=False) as reused:
+        reused_embeddings = np.asarray(reused["embeddings"], dtype=np.float32)
+        reused_record_ids = [str(value) for value in reused["record_ids"]]
+        reused_model_name = str(reused["model_name"].item())
+        reused_revision = str(reused["model_revision"].item())
+        reused_dimension = int(reused["embedding_dimension"].item())
+        reused_max_seq_length = int(reused["max_seq_length"].item())
+
+    if reused_model_name != MODEL_NAME:
+        raise ValueError(f"Reuse NPZ uses a different model: {reused_model_name}")
+
+    if reused_dimension != EMBEDDING_DIMENSION:
+        raise ValueError(f"Reuse NPZ uses dimension {reused_dimension}")
+
+    if reused_max_seq_length != max_seq_length:
+        raise ValueError(
+            "Reuse NPZ maximum sequence length does not match: "
+            f"{reused_max_seq_length} != {max_seq_length}"
+        )
+
+    if len(reused_record_ids) != len(set(reused_record_ids)):
+        raise ValueError("Reuse NPZ contains duplicate record IDs")
+
+    validate_embeddings(reused_embeddings, len(reused_record_ids))
+    reused_by_id = dict(zip(reused_record_ids, reused_embeddings, strict=True))
+    output_record_ids = [
+        required_text(record, "record_id", "embedding record") for record in records
+    ]
+    missing_records = [
+        record for record in records if record["record_id"] not in reused_by_id
+    ]
+
+    stale_count = len(set(reused_record_ids) - set(output_record_ids))
+    print(
+        f"Reuse NPZ: matched={len(records) - len(missing_records)}, "
+        f"new={len(missing_records)}, stale={stale_count}"
+    )
+
+    new_by_id: dict[str, np.ndarray] = {}
+
+    if missing_records:
+        model = load_model(max_seq_length)
+        current_revision = model_revision(model)
+
+        if reused_revision != current_revision:
+            raise ValueError(
+                "Reuse NPZ model revision does not match loaded model: "
+                f"{reused_revision} != {current_revision}"
+            )
+
+        missing_embeddings = encode_records(model, missing_records, batch_size)
+        new_by_id = {
+            record["record_id"]: embedding
+            for record, embedding in zip(
+                missing_records,
+                missing_embeddings,
+                strict=True,
+            )
+        }
+
+    embeddings_by_id = reused_by_id | new_by_id
+    embeddings = np.stack(
+        [embeddings_by_id[record_id] for record_id in output_record_ids]
+    ).astype(np.float32, copy=False)
+    validate_embeddings(embeddings, len(records))
+    return embeddings, output_record_ids, reused_revision
+
+
 def main() -> None:
     args = parse_args()
 
@@ -376,6 +456,36 @@ def main() -> None:
             records,
             args.batch_size,
         )
+        return
+
+    if args.reuse_npz is not None:
+        started_at = perf_counter()
+        embeddings, output_record_ids, revision = build_with_reused_embeddings(
+            records,
+            args.reuse_npz,
+            batch_size=args.batch_size,
+            max_seq_length=args.max_seq_length,
+        )
+        norms = np.linalg.norm(embeddings, axis=1)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(
+            args.output,
+            embeddings=embeddings,
+            record_ids=np.asarray(output_record_ids),
+            model_name=np.asarray(MODEL_NAME),
+            model_revision=np.asarray(revision),
+            input_sha256=np.asarray(input_sha256),
+            embedding_dimension=np.asarray(EMBEDDING_DIMENSION),
+            max_seq_length=np.asarray(args.max_seq_length),
+        )
+        print(f"Shape: {embeddings.shape}")
+        print(
+            f"Norms: min={norms.min():.8f}, mean={norms.mean():.8f}, "
+            f"max={norms.max():.8f}"
+        )
+        print(f"Time for this run: {perf_counter() - started_at:.1f} s")
+        print(f"Model revision: {revision}")
+        print(f"Saved: {args.output}")
         return
 
     records_by_ticker: dict[str, list[Record]] = defaultdict(list)

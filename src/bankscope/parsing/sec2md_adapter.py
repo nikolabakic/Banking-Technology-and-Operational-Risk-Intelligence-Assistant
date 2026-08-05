@@ -784,7 +784,11 @@ def is_table_value(value: str) -> bool:
     return bool(VALUE_PATTERN.fullmatch(value))
 
 
-def extract_table_title(content: str) -> str | None:
+def extract_table_title(
+    content: str,
+    *,
+    include_header_period: bool = True,
+) -> str | None:
     prefix = content.split("|", maxsplit=1)[0]
     candidates: list[str] = []
 
@@ -807,7 +811,12 @@ def extract_table_title(content: str) -> str | None:
             header_title = first_cell
             break
 
-    if prefix_title and header_title and PERIOD_PATTERN.search(header_title):
+    if (
+        include_header_period
+        and prefix_title
+        and header_title
+        and PERIOD_PATTERN.search(header_title)
+    ):
         combined = f"{prefix_title} — {header_title}"
         return combined if len(combined) <= 180 else header_title
 
@@ -903,6 +912,7 @@ def build_data_locator_specs(
     matrix_index: int,
     prefix: Sequence[str],
     token_count: TokenCounter,
+    track_period_groups: bool = False,
 ) -> list[Record]:
     if not matrix:
         return []
@@ -910,16 +920,26 @@ def build_data_locator_specs(
     data_start = find_first_data_row(matrix)
     header_rows = matrix[:data_start]
     specs: list[Record] = []
+    active_group_context: list[str] = []
     active_row_context: list[str] = []
 
     for header_row in reversed(header_rows):
+        populated_labels = deduplicate(cell for cell in header_row if normalize_space(cell))
+        group_labels = (
+            populated_labels
+            if len(populated_labels) == 1 and is_period_label(populated_labels[0])
+            else []
+        )
+
+        if track_period_groups and group_labels and not active_group_context:
+            active_group_context = group_labels
+
         context_labels = deduplicate(
             cell for cell in header_row if normalize_space(cell) and not is_period_label(cell)
         )
 
-        if len(context_labels) == 1:
+        if len(context_labels) == 1 and not active_row_context:
             active_row_context = context_labels
-            break
 
     for row_index in range(data_start, len(matrix)):
         row = list(matrix[row_index])
@@ -929,19 +949,30 @@ def build_data_locator_specs(
         ]
 
         if not value_columns:
-            context_labels = deduplicate(
-                cell for cell in row if normalize_space(cell) and not is_period_label(cell)
-            )
+            populated_labels = deduplicate(cell for cell in row if normalize_space(cell))
 
-            if context_labels:
-                active_row_context = context_labels
+            if populated_labels:
+                if (
+                    track_period_groups
+                    and len(populated_labels) == 1
+                    and is_period_label(populated_labels[0])
+                ):
+                    active_group_context = populated_labels
+                    active_row_context = []
+                else:
+                    context_labels = deduplicate(
+                        label for label in populated_labels if not is_period_label(label)
+                    )
+
+                    if context_labels:
+                        active_row_context = context_labels
 
             continue
 
         first_value_column = min(value_columns)
 
         row_labels = deduplicate(cell for cell in row[:first_value_column] if normalize_space(cell))
-        row_path = deduplicate([*active_row_context, *row_labels])
+        row_path = deduplicate([*active_group_context, *active_row_context, *row_labels])
 
         if not row_path:
             continue
@@ -1152,15 +1183,24 @@ def build_table_locator_specs(
     if table_type in {"layout", "index"}:
         return []
 
-    prefix = make_locator_prefix(
-        filing,
-        section_title=section_title,
-        table_title=extract_table_title(content),
-        unit=extract_table_unit(content),
-    )
     specs: list[Record] = []
 
     for matrix_index, matrix in enumerate(cell_matrices):
+        period_group_count = sum(
+            len(populated := deduplicate(cell for cell in row if normalize_space(cell))) == 1
+            and is_period_label(populated[0])
+            for row in matrix
+        )
+        prefix = make_locator_prefix(
+            filing,
+            section_title=section_title,
+            table_title=extract_table_title(
+                content,
+                include_header_period=period_group_count < 2,
+            ),
+            unit=extract_table_unit(content),
+        )
+
         if table_type == "glossary":
             matrix_specs = build_glossary_locator_specs(
                 matrix,
@@ -1179,6 +1219,7 @@ def build_table_locator_specs(
                 matrix_index=matrix_index,
                 prefix=prefix,
                 token_count=token_count,
+                track_period_groups=period_group_count >= 2,
             )
 
         specs.extend(matrix_specs)

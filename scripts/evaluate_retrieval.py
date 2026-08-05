@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import Counter
 from collections.abc import Sequence
@@ -44,6 +45,16 @@ METHODS = ("dense", "bm25", "hybrid", "reranked")
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     with path.open(encoding="utf-8") as file:
         return [json.loads(line) for line in file if line.strip()]
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+
+    with path.open("rb") as file:
+        for block in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(block)
+
+    return digest.hexdigest()
 
 
 def validate_queries(
@@ -198,7 +209,24 @@ def make_result_preview(
         "score": score,
         "dense_rank": result.get("dense_rank"),
         "bm25_rank": result.get("bm25_rank"),
+        "parent_id": result.get("metadata", {}).get("parent_id"),
         "preview": document[:500],
+    }
+
+
+def parent_table_diagnostics(
+    results: Sequence[dict[str, Any]],
+    *,
+    limit: int,
+) -> dict[str, int]:
+    parent_counts = Counter(
+        str(parent_id)
+        for result in results[:limit]
+        if (parent_id := result.get("metadata", {}).get("parent_id"))
+    )
+    return {
+        "unique_parent_tables": len(parent_counts),
+        "max_candidates_from_same_table": max(parent_counts.values(), default=0),
     }
 
 
@@ -261,6 +289,7 @@ def retrieve_with_method(
             k_values=(30,),
             reciprocal_rank_limit=30,
         )
+        candidate_parent_diagnostics = parent_table_diagnostics(candidates, limit=30)
 
         reranking_started = perf_counter()
         results = rerank_candidates(
@@ -278,6 +307,12 @@ def retrieve_with_method(
             "candidate_count": len(candidates),
             "candidate_recall_at_30": candidate_metrics["recall_at_30"],
             "candidate_hit_at_30": candidate_metrics["hit_at_30"],
+            "candidate_unique_parent_tables": candidate_parent_diagnostics[
+                "unique_parent_tables"
+            ],
+            "candidate_max_from_same_table": candidate_parent_diagnostics[
+                "max_candidates_from_same_table"
+            ],
         }
     else:
         raise ValueError(f"Unknown retrieval method: {method}.")
@@ -288,6 +323,8 @@ def retrieve_with_method(
         "candidate_count": None,
         "candidate_recall_at_30": None,
         "candidate_hit_at_30": None,
+        "candidate_unique_parent_tables": None,
+        "candidate_max_from_same_table": None,
     }
 
 
@@ -323,6 +360,13 @@ def summarize_rows(
         method_summary["mean_reranking_seconds"] = fmean(
             float(row["diagnostics"]["reranking_seconds"]) for row in method_rows
         )
+        method_summary["mean_unique_parent_tables_at_10"] = fmean(
+            int(row["diagnostics"]["unique_parent_tables"]) for row in method_rows
+        )
+        method_summary["max_candidates_from_same_table_at_10"] = max(
+            int(row["diagnostics"]["max_candidates_from_same_table"])
+            for row in method_rows
+        )
 
         ticker_rows = [
             row for row in method_rows if row["diagnostics"]["ticker_filter_accuracy"] is not None
@@ -338,11 +382,22 @@ def summarize_rows(
         ]
 
         if candidate_rows:
+            method_summary["candidate_hits_at_30"] = sum(
+                int(row["diagnostics"]["candidate_hit_at_30"]) for row in candidate_rows
+            )
             method_summary["candidate_hit_rate_at_30"] = fmean(
                 int(row["diagnostics"]["candidate_hit_at_30"]) for row in candidate_rows
             )
             method_summary["mean_candidate_recall_at_30"] = fmean(
                 float(row["diagnostics"]["candidate_recall_at_30"]) for row in candidate_rows
+            )
+            method_summary["mean_candidate_unique_parent_tables"] = fmean(
+                int(row["diagnostics"]["candidate_unique_parent_tables"])
+                for row in candidate_rows
+            )
+            method_summary["max_candidate_siblings_from_same_table"] = max(
+                int(row["diagnostics"]["candidate_max_from_same_table"])
+                for row in candidate_rows
             )
 
         group_rows = [
@@ -432,6 +487,10 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=QUERIES_PATH,
     )
+    parser.add_argument("--records", type=Path, default=RECORDS_PATH)
+    parser.add_argument("--embeddings", type=Path, default=EMBEDDINGS_PATH)
+    parser.add_argument("--results", type=Path, default=RESULTS_PATH)
+    parser.add_argument("--top1-misses", type=Path, default=TOP1_MISSES_PATH)
     parser.add_argument(
         "--candidate-k",
         type=int,
@@ -464,21 +523,34 @@ def main() -> None:
     if args.reranker_batch_size <= 0:
         raise ValueError("reranker-batch-size must be positive.")
 
-    records = load_jsonl(RECORDS_PATH)
+    records = load_jsonl(args.records)
     queries = load_jsonl(args.queries)
 
     with np.load(
-        EMBEDDINGS_PATH,
+        args.embeddings,
         allow_pickle=False,
     ) as archive:
         embeddings = archive["embeddings"]
         npz_record_ids = archive["record_ids"].astype(str).tolist()
         model_name = str(archive["model_name"].item())
+        embedded_input_sha256 = (
+            str(archive["input_sha256"].item())
+            if "input_sha256" in archive.files
+            else None
+        )
 
     jsonl_record_ids = [str(record["record_id"]) for record in records]
 
     if npz_record_ids != jsonl_record_ids:
         raise ValueError("NPZ vectors and embedding records are not in the same order.")
+
+    records_sha256 = sha256_file(args.records)
+
+    if embedded_input_sha256 is not None and embedded_input_sha256 != records_sha256:
+        raise ValueError(
+            "NPZ input SHA-256 does not match embedding records: "
+            f"{embedded_input_sha256} != {records_sha256}."
+        )
 
     answerable_queries = validate_queries(
         queries,
@@ -493,7 +565,7 @@ def main() -> None:
     model = SentenceTransformer(model_name)
 
     query_vectors = model.encode_query(
-        [str(query["query"]) for query in answerable_queries],
+        [str(query["query"]) for query in queries],
         normalize_embeddings=True,
         convert_to_numpy=True,
         show_progress_bar=True,
@@ -513,11 +585,17 @@ def main() -> None:
 
     evaluation_rows: list[dict[str, Any]] = []
 
-    for query_record, query_vector in zip(
-        answerable_queries,
-        query_vectors,
-        strict=True,
-    ):
+    query_vectors_by_id = {
+        str(query["query_id"]): vector
+        for query, vector in zip(queries, query_vectors, strict=True)
+    }
+
+    for query_index, query_record in enumerate(answerable_queries, start=1):
+        print(
+            f"Evaluating {query_index}/{len(answerable_queries)}: "
+            f"{query_record['query_id']}"
+        )
+        query_vector = query_vectors_by_id[str(query_record["query_id"])]
         query_text = str(query_record["query"])
         ticker_value = query_record.get("ticker")
         ticker = str(ticker_value) if ticker_value else None
@@ -557,6 +635,7 @@ def main() -> None:
                 )
 
             diagnostics["duplicate_target_count"] = len(retrieved_ids) - len(set(retrieved_ids))
+            diagnostics.update(parent_table_diagnostics(results, limit=10))
             diagnostics["ticker_filter_accuracy"] = (
                 None
                 if ticker is None or not results
@@ -610,11 +689,59 @@ def main() -> None:
     skipped_statuses = Counter(
         str(query["status"]) for query in queries if query["status"] != "answerable"
     )
+    non_answerable_diagnostics: list[dict[str, Any]] = []
+
+    for query_record in queries:
+        if query_record["status"] == "answerable":
+            continue
+
+        ticker_value = query_record.get("ticker")
+        ticker = str(ticker_value) if ticker_value else None
+        query_text = str(query_record["query"])
+        candidates = retriever.get_hybrid_candidates(
+            query_text,
+            query_vectors_by_id[str(query_record["query_id"])],
+            candidate_k=args.candidate_k,
+            rrf_pool_size=20,
+            per_method_limit=5,
+            max_candidates=30,
+            rrf_k=args.rrf_k,
+            ticker=ticker,
+        )
+        results = rerank_candidates(
+            reranker,
+            query_text,
+            candidates,
+            limit=retrieval_limit,
+            batch_size=args.reranker_batch_size,
+        )
+        non_answerable_diagnostics.append(
+            {
+                "query_id": query_record["query_id"],
+                "status": query_record["status"],
+                "query": query_text,
+                "annotation_notes": query_record.get("annotation_notes"),
+                "candidate_count": len(candidates),
+                "candidate_parent_diagnostics": parent_table_diagnostics(
+                    candidates,
+                    limit=30,
+                ),
+                "top10_parent_diagnostics": parent_table_diagnostics(results, limit=10),
+                "retrieved": [
+                    make_result_preview(result, rank)
+                    for rank, result in enumerate(results, start=1)
+                ],
+            }
+        )
 
     output = {
         "model_name": model_name,
         "record_count": len(records),
         "query_file": str(args.queries),
+        "records_file": str(args.records),
+        "embeddings_file": str(args.embeddings),
+        "records_sha256": records_sha256,
+        "embedded_input_sha256": embedded_input_sha256,
         "answerable_query_count": len(answerable_queries),
         "skipped_queries_by_status": dict(skipped_statuses),
         "skipped_queries": [
@@ -627,6 +754,7 @@ def main() -> None:
             for query in queries
             if query["status"] != "answerable"
         ],
+        "non_answerable_diagnostics": non_answerable_diagnostics,
         "candidate_k": args.candidate_k,
         "rrf_k": args.rrf_k,
         "overall": overall_summary,
@@ -639,17 +767,17 @@ def main() -> None:
 
     top1_misses = [row for row in evaluation_rows if int(row["metrics"]["hit_at_1"]) == 0]
 
-    write_json(RESULTS_PATH, output)
+    write_json(args.results, output)
     write_jsonl(
-        TOP1_MISSES_PATH,
+        args.top1_misses,
         top1_misses,
     )
 
     print(f"\nAnswerable queries evaluated: {len(answerable_queries)}")
     print(f"Skipped by status: {dict(skipped_statuses)}")
     print_summary(overall_summary)
-    print(f"\nFull results: {RESULTS_PATH}")
-    print(f"Top-1 misses: {TOP1_MISSES_PATH}")
+    print(f"\nFull results: {args.results}")
+    print(f"Top-1 misses: {args.top1_misses}")
 
 
 if __name__ == "__main__":

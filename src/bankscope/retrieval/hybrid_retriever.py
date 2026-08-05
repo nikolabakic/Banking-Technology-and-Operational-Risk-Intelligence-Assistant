@@ -284,6 +284,7 @@ class HybridRetriever:
         rrf_pool_size: int = 20,
         per_method_limit: int = 5,
         max_candidates: int = 30,
+        max_per_parent: int = 2,
         rrf_k: int = 60,
         ticker: str | None = None,
         record_type: str | None = None,
@@ -307,6 +308,7 @@ class HybridRetriever:
             rrf_pool_size=rrf_pool_size,
             per_method_limit=per_method_limit,
             max_candidates=max_candidates,
+            max_per_parent=max_per_parent,
             rrf_k=rrf_k,
         )
 
@@ -382,6 +384,7 @@ def build_hybrid_candidate_pool(
     rrf_pool_size: int = 20,
     per_method_limit: int = 5,
     max_candidates: int = 30,
+    max_per_parent: int = 2,
     rrf_k: int = 60,
 ) -> list[dict[str, Any]]:
     if rrf_pool_size <= 0:
@@ -393,6 +396,9 @@ def build_hybrid_candidate_pool(
     if max_candidates <= 0:
         raise ValueError("max_candidates must be positive.")
 
+    if max_per_parent <= 0:
+        raise ValueError("max_per_parent must be positive.")
+
     fused_results = reciprocal_rank_fusion(
         dense_results,
         bm25_results,
@@ -402,20 +408,17 @@ def build_hybrid_candidate_pool(
 
     fused_by_target_id = {str(result["target_chunk_id"]): result for result in fused_results}
 
-    selected: list[dict[str, Any]] = []
-    selected_ids: set[str] = set()
+    prioritized: list[dict[str, Any]] = []
+    prioritized_ids: set[str] = set()
 
     def add_result(result: dict[str, Any]) -> None:
         target_chunk_id = str(result["target_chunk_id"])
 
-        if target_chunk_id in selected_ids:
+        if target_chunk_id in prioritized_ids:
             return
 
-        if len(selected) >= max_candidates:
-            return
-
-        selected.append(result)
-        selected_ids.add(target_chunk_id)
+        prioritized.append(result)
+        prioritized_ids.add(target_chunk_id)
 
     for result in fused_results[:rrf_pool_size]:
         add_result(result)
@@ -432,4 +435,30 @@ def build_hybrid_candidate_pool(
     for result in fused_results:
         add_result(result)
 
+    selected: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    parent_counts: dict[str, int] = {}
+
+    for result in prioritized:
+        metadata = result.get("metadata", {})
+        parent_id = metadata.get("parent_id") if isinstance(metadata, dict) else None
+
+        if parent_id:
+            parent_key = str(parent_id)
+            parent_count = parent_counts.get(parent_key, 0)
+
+            if parent_count >= max_per_parent:
+                deferred.append(result)
+                continue
+
+            parent_counts[parent_key] = parent_count + 1
+
+        selected.append(result)
+
+        if len(selected) == max_candidates:
+            return selected
+
+    # Small or heavily filtered corpora may not provide enough distinct parents.
+    # In that case, fill the requested pool with the strongest deferred siblings.
+    selected.extend(deferred[: max_candidates - len(selected)])
     return selected

@@ -105,6 +105,53 @@ def test_structure_aware_table_locator_repeats_header_and_links_parent() -> None
     assert child["metadata"]["start_display_page"] == 294
 
 
+def test_structure_aware_table_locator_keeps_period_group_context() -> None:
+    table_content = (
+        "Capital amounts and ratios are presented below.\n\n"
+        "|  | Actual â€” Amount | Ratio |\n"
+        "| --- | --- | --- |\n"
+        "| Consolidated - December 31, 2025 | | |\n"
+        "| Common Equity Tier 1 | | |\n"
+        "| (to Risk-Weighted Assets) | $ 1,162,337 | 10.53% |\n"
+        "| Bank - December 31, 2024 | | |\n"
+        "| Common Equity Tier 1 | | |\n"
+        "| (to Risk-Weighted Assets) | $ 1,020,820 | 10.96% |"
+    )
+    pages = [
+        {
+            "number": 137,
+            "display_page": 133,
+            "content": table_content,
+            "elements": [
+                {
+                    "id": "table-period-groups",
+                    "content": table_content,
+                    "kind": "table",
+                    "page_start": 137,
+                    "page_end": 137,
+                    "tags": [],
+                }
+            ],
+        }
+    ]
+
+    records, _ = build_structure_aware_records(
+        pages,
+        make_filing(),
+        raw_sha256="raw",
+        token_count=word_count,
+    )
+
+    bank_2024 = next(record for record in records if "10.96%" in record["document"])
+    assert "Bank - December 31, 2024" in bank_2024["document"]
+    assert "Consolidated - December 31, 2025" not in bank_2024["document"]
+    assert bank_2024["metadata"]["row_path"] == [
+        "Bank - December 31, 2024",
+        "Common Equity Tier 1",
+        "(to Risk-Weighted Assets)",
+    ]
+
+
 def test_structure_aware_glossary_has_one_pair_per_child() -> None:
     glossary = (
         "**Glossary of Terms and Acronyms**\n\n"
