@@ -12,8 +12,8 @@ class FakeReranker:
     ) -> list[dict[str, int | float]]:
         assert query == "What is operational risk?"
         assert documents == [
-            "Unrelated candidate",
-            "Operational risk definition",
+            "Bank: WFC\nReport: 2024 10-K\n\nUnrelated candidate",
+            "Bank: JPM\nReport: 2025 10-K\n\nOperational risk definition",
         ]
         assert kwargs["top_k"] == 2
         assert kwargs["batch_size"] == 4
@@ -34,12 +34,16 @@ def test_rerank_candidates_uses_model_order() -> None:
     candidates = [
         {
             "target_chunk_id": "first",
+            "embedding_text": "Bank: WFC\nReport: 2024 10-K\n\nUnrelated candidate",
             "document": "Unrelated candidate",
             "retrieval_method": "hybrid",
             "rrf_score": 0.03,
         },
         {
             "target_chunk_id": "second",
+            "embedding_text": (
+                "Bank: JPM\nReport: 2025 10-K\n\nOperational risk definition"
+            ),
             "document": "Operational risk definition",
             "retrieval_method": "hybrid",
             "rrf_score": 0.02,

@@ -31,6 +31,17 @@ def normalize_lexical_text(text: str) -> str:
     return re.sub(r"(?<=\d),(?=\d)", "", text)
 
 
+def get_retrieval_text(record: dict[str, Any]) -> str:
+    """Return the enriched text shared by dense, lexical, and reranking models."""
+    embedding_text = str(record.get("embedding_text") or "").strip()
+
+    if embedding_text:
+        return embedding_text
+
+    # Keep compatibility with callers that construct retrieval results directly.
+    return str(record["document"])
+
+
 class HybridRetriever:
     def __init__(
         self,
@@ -63,7 +74,7 @@ class HybridRetriever:
             stemmer=None,
         )
 
-        documents = [normalize_lexical_text(str(record["document"])) for record in records]
+        documents = [normalize_lexical_text(get_retrieval_text(record)) for record in records]
 
         corpus_tokens = self.tokenizer.tokenize(
             documents,
@@ -121,6 +132,7 @@ class HybridRetriever:
             "target_chunk_id": str(record["target_chunk_id"]),
             "record_type": str(record["record_type"]),
             "ticker": str(get_field(record, "ticker") or ""),
+            "embedding_text": get_retrieval_text(record),
             "document": str(record["document"]),
             "metadata": metadata,
             "retrieval_method": method,
@@ -335,6 +347,7 @@ def reciprocal_rank_fusion(
                     "target_chunk_id": target_chunk_id,
                     "record_type": result["record_type"],
                     "ticker": result["ticker"],
+                    "embedding_text": get_retrieval_text(result),
                     "document": result["document"],
                     "metadata": result["metadata"],
                     "retrieval_method": "hybrid",

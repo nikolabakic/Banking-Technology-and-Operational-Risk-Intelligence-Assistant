@@ -8,6 +8,8 @@ if TYPE_CHECKING:
 import torch  # noqa: F401
 from sentence_transformers import CrossEncoder
 
+from bankscope.retrieval.hybrid_retriever import get_retrieval_text
+
 RERANKER_MODEL_NAME = "Qwen/Qwen3-Reranker-0.6B"
 RERANKER_PROMPT_NAME = "bankscope"
 RERANKER_INSTRUCTION = (
@@ -64,7 +66,7 @@ def rerank_candidates(
     if not candidates:
         return []
 
-    documents = [str(candidate["document"]) for candidate in candidates]
+    documents = [get_retrieval_text(candidate) for candidate in candidates]
 
     ranking = reranker.rank(
         query,

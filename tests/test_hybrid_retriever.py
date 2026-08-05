@@ -1,6 +1,9 @@
 from typing import Any
 
+import numpy as np
+
 from bankscope.retrieval.hybrid_retriever import (
+    HybridRetriever,
     build_hybrid_candidate_pool,
 )
 
@@ -96,3 +99,31 @@ def test_candidate_pool_prioritizes_distinct_parent_tables() -> None:
         "table_a_2",
         "table_b_1",
     ]
+
+
+def test_bm25_indexes_embedding_text_but_returns_original_document() -> None:
+    records = [
+        {
+            "record_id": "text::jpm",
+            "target_chunk_id": "jpm",
+            "record_type": "text",
+            "embedding_text": "Bank: JPM\nReport: 2025 10-K\n\nOperational risk definition",
+            "document": "Operational risk definition",
+            "metadata": {"ticker": "JPM"},
+        },
+        {
+            "record_id": "text::wfc",
+            "target_chunk_id": "wfc",
+            "record_type": "text",
+            "embedding_text": "Bank: WFC\nReport: 2024 10-K\n\nOperational risk definition",
+            "document": "Operational risk definition",
+            "metadata": {"ticker": "WFC"},
+        },
+    ]
+    retriever = HybridRetriever(records, np.eye(2, dtype=np.float32))
+
+    results = retriever.search_bm25("JPM 2025 operational risk", limit=2)
+
+    assert results[0]["target_chunk_id"] == "jpm"
+    assert results[0]["embedding_text"].startswith("Bank: JPM")
+    assert results[0]["document"] == "Operational risk definition"
