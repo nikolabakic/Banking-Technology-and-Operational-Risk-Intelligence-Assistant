@@ -1,8 +1,7 @@
 # BankScope RAG Assistant
 
 BankScope is a student RAG project for searching the latest downloaded 10-K
-filings of ten U.S. banks. The repository favors a short, reproducible local
-pipeline over production infrastructure.
+filings of ten U.S. banks. 
 
 ## Current design
 
