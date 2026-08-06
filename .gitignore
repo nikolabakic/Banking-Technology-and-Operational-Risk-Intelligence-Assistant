@@ -107,8 +107,12 @@ Thumbs.db
 # Downloaded and processed SEC data
 data/raw/
 data/processed/
+data/evaluation/results/
 
 # Generated project artifacts
 artifacts/
+
+# Local archive of generated data kept outside the active pipeline
+sandbox/local_data/
 
 HF_token.py

@@ -1,55 +1,44 @@
 # BankScope roadmap
 
-This roadmap records project phases, not predetermined technology choices.
-
-Before every new phase:
-
-1. define the concrete project requirement and constraints;
-2. review suitable current libraries, models and software;
-3. compare realistic candidates against the existing code and data;
-4. agree on one minimal baseline;
-5. implement a small smoke test before a full run;
-6. keep the decision only if evaluation supports it.
-
-## Phase status
+The repository-overhaul phase was accepted on 2026-08-06 after the whole-table
+corpus, full test suite and BM25 evaluation were recorded. A GPU dense/hybrid
+run is an explicit measurement follow-up, not an unresolved code migration.
 
 | Phase | Status | Exit condition |
 |---|---|---|
-| Project setup and bank registry | Complete | Ten configured banks validate correctly |
-| SEC acquisition | Complete | Latest primary 10-K HTML and manifest exist for all banks |
-| HTML parsing | Complete | Ordered text, headings, tables and citation metadata are extracted |
-| Chunking | Complete | Text and tables satisfy the accepted `600/700/80` policy |
-| Table proxies | Complete | One deterministic, validated proxy exists per table chunk |
-| Repository cleanup | Complete | Active paths contain current code; older artifacts are labeled in `sandbox/` |
-| Embeddings | Next | Chosen baseline passes a small test and full corpus generation |
-| Vector storage | Pending | Records can be persisted, filtered and reconstructed reliably |
-| Retrieval | Pending | Evaluation queries retrieve supporting chunks with citations |
-| RAG generation | Pending | Answers remain grounded and expose their sources |
-| Conversation history | Pending | Follow-up questions work without contaminating retrieval |
-| User interface | Pending | A simple usable chat interface runs locally |
-| Final evaluation and report | Pending | Retrieval and generation are evaluated separately |
+| Registry and SEC acquisition | Complete | Ten configured banks and a reproducible filing manifest |
+| Parser selection | Complete | sec2md selected from recorded evaluation evidence |
+| Repository overhaul | Complete | Five active commands, legacy isolated, tests and lint green |
+| Whole-table corpus | Complete | One stored table and at most one description per parser-emitted table |
+| Embeddings | Implemented | Length/order/hash/model contracts and real smoke run pass |
+| Retrieval evaluation | BM25 complete | Frozen 30-question BM25 result recorded; GPU dense/hybrid run remains |
+| Answer generation | Pending | Answers use hydrated evidence and expose citations |
+| Conversation history | Pending | Follow-ups work without contaminating retrieval |
+| Simple user interface | Pending | Local chat flow is usable by a reviewer |
+| Final report | Pending | Retrieval and generation results are reported separately |
 
-## Embeddings decision gate
+## Acceptance gates
 
-No model or framework is currently selected for this phase. The discussion
-must cover at least:
+Before changing the active parser, chunking, table descriptions, embedding
+model or retrieval method:
 
-- retrieval quality for financial and SEC language;
-- handling of narrative text and deterministic table proxies;
-- model context length relative to the real chunk distribution;
-- local CPU, Colab T4 and memory constraints;
-- license, download size, runtime and reproducibility;
-- query/document instruction requirements;
-- compatibility with the vector storage options considered in the next phase;
-- a small project-specific comparison before full generation.
+1. state the concrete problem;
+2. make the smallest isolated change;
+3. run unit/integrity checks;
+4. run the frozen evaluation set;
+5. keep the change only with a documented result and caveat.
 
-The existing `scripts/generate_embeddings.py` is an experiment to inspect, not
-an accepted architecture. It must not be used for the full corpus until this
-decision gate is complete.
+The previous sec2md v3 hybrid result (`Hit@1 12/28`, `Hit@5 23/28`,
+`MRR@10 0.589`) is the comparison point for the new simpler table design. A
+regression is not hidden: it must either be fixed or explicitly accepted for a
+clear simplicity benefit.
+
+The accepted overhaul result and its compute caveat are recorded in
+`docs/decisions/002-repository-overhaul.md`.
 
 ## Scope boundary
 
-The required result is a clear RAG assistant for ten banks. Multi-agent
-orchestration, knowledge graphs, fine-tuning, support for 100 banks and
-production observability are outside the baseline unless evaluation reveals a
+The baseline is a clear student RAG assistant for ten banks. Multi-agent
+orchestration, knowledge graphs, fine-tuning, production observability and
+support for hundreds of banks are outside scope unless evaluation identifies a
 specific need.

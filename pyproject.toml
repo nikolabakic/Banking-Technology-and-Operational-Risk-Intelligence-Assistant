@@ -15,7 +15,6 @@ dependencies = [
     "lxml>=6.1,<7.0",
     "sec2md==0.1.23",
     "transformers>=4.51,<6.0",
-    "langchain-text-splitters>=1.1,<2.0",
     "bm25s>=0.2.14,<0.3",
     "numpy>=2.0,<3.0",
     "sentence-transformers>=5.0,<6.0",
@@ -25,6 +24,9 @@ dependencies = [
 dev = [
     "pytest>=8.0,<9.0",
     "ruff>=0.9",
+]
+llm = [
+    "openai>=1.66,<3.0",
 ]
 
 [tool.setuptools.packages.find]

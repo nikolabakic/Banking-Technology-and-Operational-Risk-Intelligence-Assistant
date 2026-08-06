@@ -1,24 +1,18 @@
 # Sandbox
 
-This directory preserves development artifacts that are no longer part of the
-active BankScope pipeline. They remain in the repository so earlier approaches,
-experiments, and project evolution can be reviewed with a mentor.
+Nothing under this directory is part of the active BankScope pipeline.
+It is kept only so the project history can be reviewed without leaving old
+entry points mixed with current code.
 
-Files under `sandbox/` are reference material only. They may contain outdated
-paths, dependencies, assumptions, or interfaces and should not be used by the
-current pipeline without review.
+- `legacy_builtin/`: the original BeautifulSoup parser, table chunker and
+  deterministic table-proxy pipeline.
+- `legacy_v3/`: the larger sec2md row-locator pipeline and its evaluation
+  history. It is the regression baseline for the overhaul.
+- `experiments/`: completed notebooks and Docling, XBRL and JPM bake-off
+  experiments, including the early project scaffold.
+- `local_data/`: ignored, machine-local generated artifacts from before the
+  overhaul. These files are not intended for Git.
+- `docs/`: an earlier roadmap retained for historical context.
 
-## Contents
-
-- `app.py`: empty application placeholder from the initial project structure.
-- `docs/`: the original long-form roadmap, retained as historical planning
-  context.
-- `notebooks/`: exploratory parser, chunking, table-proxy, and embedding
-  notebooks. Reusable checks were moved into active tests or scripts.
-- `scripts/`: superseded chunking, LLM table-proxy, and setup smoke-test
-  scripts.
-- `tests/`: former setup and embedding smoke checks that were replaced by
-  smaller responsibility-based tests.
-
-The active project workflow is documented in `README.md`, `docs/roadmap.md`,
-and `docs/data_pipeline.md`.
+Archived code can contain obsolete paths, dependencies and assumptions. Do
+not import it from active code or use its commands without an explicit review.

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
+from contextlib import redirect_stdout
+from importlib import import_module
+from io import StringIO
 from typing import Any
 
-import bm25s
 import numpy as np
-from bm25s.tokenization import Tokenizer
 
 FINANCIAL_TOKEN_PATTERN = r"(?iu)(?<!\w)[a-z0-9]+(?:[._-][a-z0-9]+)*%?(?!\w)"
 
@@ -15,125 +17,146 @@ def get_field(record: dict[str, Any], field: str) -> Any:
     if field in record:
         return record[field]
 
-    metadata = record.get("metadata", {})
-
-    if isinstance(metadata, dict):
-        return metadata.get(field)
-
-    return None
+    metadata = record.get("metadata")
+    return metadata.get(field) if isinstance(metadata, dict) else None
 
 
 def normalize_lexical_text(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text)
-    text = text.replace("–", "-").replace("—", "-")
-
-    # Treat 12,345 and 12345 as the same lexical value.
-    return re.sub(r"(?<=\d),(?=\d)", "", text)
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = normalized.replace("\u2013", "-").replace("\u2014", "-")
+    return re.sub(r"(?<=\d),(?=\d)", "", normalized)
 
 
 def get_retrieval_text(record: dict[str, Any]) -> str:
-    """Return the enriched text shared by dense, lexical, and reranking models."""
-    embedding_text = str(record.get("embedding_text") or "").strip()
+    """Return the text used by both dense and lexical retrieval."""
+    for field in ("embedding_text", "retrieval_text", "document"):
+        value = str(record.get(field) or "").strip()
+        if value:
+            return value
 
-    if embedding_text:
-        return embedding_text
-
-    # Keep compatibility with callers that construct retrieval results directly.
-    return str(record["document"])
+    raise ValueError("Record has no embedding_text, retrieval_text, or document.")
 
 
 class HybridRetriever:
     def __init__(
         self,
-        records: list[dict[str, Any]],
-        embeddings: np.ndarray,
+        records: Sequence[dict[str, Any]],
+        embeddings: np.ndarray | None = None,
+        tables: Sequence[dict[str, Any]] | None = None,
     ) -> None:
-        self.records = records
-        self.embeddings = np.asarray(
-            embeddings,
-            dtype=np.float32,
-        )
-
-        if self.embeddings.ndim != 2:
-            raise ValueError(f"Expected a 2D embedding matrix, got {self.embeddings.shape}.")
-
-        if len(records) != self.embeddings.shape[0]:
-            raise ValueError("Embedding and record counts do not match.")
-
+        self.records = list(records)
+        if not self.records:
+            raise ValueError("At least one retrieval record is required.")
+        self.embeddings: np.ndarray | None = None
+        if embeddings is not None:
+            matrix = np.asarray(embeddings, dtype=np.float32)
+            if matrix.ndim != 2:
+                raise ValueError(f"Expected a 2D embedding matrix, got {matrix.shape}.")
+            if len(self.records) != matrix.shape[0]:
+                raise ValueError("Embedding and record counts do not match.")
+            if matrix.shape[1] == 0:
+                raise ValueError("Embedding vectors must have at least one dimension.")
+            if not np.isfinite(matrix).all():
+                raise ValueError("Embeddings contain NaN or Inf values.")
+            norms = np.linalg.norm(matrix, axis=1)
+            if np.any(norms == 0):
+                raise ValueError("Document embeddings must have non-zero norm.")
+            self.embeddings = matrix / norms[:, None]
+        self._validate_record_order()
+        self.tables_by_id = self._index_tables(tables or [])
+        table_ids = {
+            str(get_field(record, "table_id") or record["target_chunk_id"])
+            for record in self.records
+            if str(get_field(record, "record_type") or "").lower() == "table"
+        }
+        if table_ids and tables is None:
+            raise ValueError("A table store is required when retrieval records include tables.")
+        missing_tables = table_ids - self.tables_by_id.keys()
+        if missing_tables:
+            raise ValueError(
+                f"Table records reference unknown table IDs: {sorted(missing_tables)}."
+            )
         self.tickers = np.asarray(
-            [str(get_field(record, "ticker") or "").upper() for record in records]
+            [str(get_field(record, "ticker") or "").upper() for record in self.records]
         )
         self.record_types = np.asarray(
-            [str(get_field(record, "record_type") or "") for record in records]
+            [str(get_field(record, "record_type") or "").lower() for record in self.records]
         )
-
-        self.tokenizer = Tokenizer(
-            lower=True,
-            splitter=FINANCIAL_TOKEN_PATTERN,
-            stopwords=[],
-            stemmer=None,
+        # bm25s prints a Windows-only import notice to stdout; contain only that import.
+        with redirect_stdout(StringIO()):
+            bm25s = import_module("bm25s")
+            tokenizer_class = import_module("bm25s.tokenization").Tokenizer
+        self.tokenizer = tokenizer_class(
+            lower=True, splitter=FINANCIAL_TOKEN_PATTERN, stopwords=[], stemmer=None
         )
-
-        documents = [normalize_lexical_text(get_retrieval_text(record)) for record in records]
-
-        corpus_tokens = self.tokenizer.tokenize(
-            documents,
-            update_vocab=True,
-            show_progress=True,
-        )
-
+        corpus = [normalize_lexical_text(get_retrieval_text(record)) for record in self.records]
+        corpus_tokens = self.tokenizer.tokenize(corpus, update_vocab=True, show_progress=False)
         self.bm25 = bm25s.BM25(method="lucene")
-        self.bm25.index(
-            corpus_tokens,
-            show_progress=True,
-        )
+        self.bm25.index(corpus_tokens, show_progress=False)
 
-    def _allowed_indices(
-        self,
-        *,
-        ticker: str | None,
-        record_type: str | None,
-    ) -> np.ndarray:
+    def _validate_record_order(self) -> None:
+        record_ids = [str(record.get("record_id") or "").strip() for record in self.records]
+        if any(not record_id for record_id in record_ids):
+            raise ValueError("Every retrieval record must have a non-empty record_id.")
+        if len(record_ids) != len(set(record_ids)):
+            raise ValueError("Retrieval record IDs must be unique.")
+        for record in self.records:
+            if not str(record.get("target_chunk_id") or "").strip():
+                raise ValueError(f"Record {record['record_id']} has no target_chunk_id.")
+            get_retrieval_text(record)
+
+    @staticmethod
+    def _index_tables(tables: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        indexed: dict[str, dict[str, Any]] = {}
+        for table in tables:
+            table_id = str(get_field(table, "table_id") or "").strip()
+            if not table_id:
+                raise ValueError("Every table must have a non-empty table_id.")
+            if table_id in indexed:
+                raise ValueError(f"Duplicate table_id: {table_id}.")
+            if not str(table.get("document") or "").strip():
+                raise ValueError(f"Table {table_id} has no document.")
+            indexed[table_id] = table
+        return indexed
+
+    def _allowed_indices(self, *, ticker: str | None, record_type: str | None) -> np.ndarray:
         mask = np.ones(len(self.records), dtype=bool)
-
         if ticker:
             mask &= self.tickers == ticker.upper()
-
         if record_type:
-            mask &= self.record_types == record_type
-
+            mask &= self.record_types == record_type.lower()
         indices = np.flatnonzero(mask)
-
         if len(indices) == 0:
             raise ValueError(
                 "No records match the requested filters: "
                 f"ticker={ticker}, record_type={record_type}."
             )
-
         return indices
 
-    def _make_result(
-        self,
-        index: int,
-        *,
-        method: str,
-        rank: int,
-        score: float,
-    ) -> dict[str, Any]:
+    def _make_result(self, index: int, *, method: str, rank: int, score: float) -> dict[str, Any]:
         record = self.records[index]
-        metadata = record.get("metadata", {})
-
-        if not isinstance(metadata, dict):
-            metadata = {}
-
+        metadata = record.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        retrieval_text = get_retrieval_text(record)
+        target_chunk_id = str(record["target_chunk_id"])
+        record_type = str(get_field(record, "record_type") or "")
+        document = str(record.get("document") or retrieval_text)
+        if record_type.lower() == "table" and self.tables_by_id:
+            table_id = str(get_field(record, "table_id") or target_chunk_id)
+            table = self.tables_by_id.get(table_id)
+            if table is None:
+                raise ValueError(f"Table retrieval record references unknown table_id: {table_id}.")
+            document = str(table["document"])
         return {
             "record_index": index,
             "record_id": str(record["record_id"]),
-            "target_chunk_id": str(record["target_chunk_id"]),
-            "record_type": str(record["record_type"]),
+            "target_chunk_id": target_chunk_id,
+            "record_type": record_type,
             "ticker": str(get_field(record, "ticker") or ""),
-            "embedding_text": get_retrieval_text(record),
-            "document": str(record["document"]),
+            "embedding_text": retrieval_text,
+            "retrieval_text": retrieval_text,
+            "document": document,
+            "evidence": document,
             "metadata": metadata,
             "retrieval_method": method,
             "rank": rank,
@@ -144,116 +167,57 @@ class HybridRetriever:
         self,
         query_vector: np.ndarray,
         *,
-        limit: int = 30,
+        limit: int = 10,
         ticker: str | None = None,
         record_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        query_vector = np.asarray(
-            query_vector,
-            dtype=np.float32,
-        )
-
-        if query_vector.ndim != 1:
-            raise ValueError(f"Expected one query vector, got {query_vector.shape}.")
-
-        if query_vector.shape[0] != self.embeddings.shape[1]:
+        _validate_positive("limit", limit)
+        if self.embeddings is None:
+            raise ValueError("Dense retrieval requires document embeddings.")
+        vector = np.asarray(query_vector, dtype=np.float32)
+        if vector.ndim != 1:
+            raise ValueError(f"Expected one query vector, got {vector.shape}.")
+        if vector.shape[0] != self.embeddings.shape[1]:
             raise ValueError("Query and document embedding dimensions do not match.")
-
-        query_norm = np.linalg.norm(query_vector)
-
-        if query_norm == 0:
+        if not np.isfinite(vector).all():
+            raise ValueError("Query embedding contains NaN or Inf values.")
+        norm = np.linalg.norm(vector)
+        if norm == 0:
             raise ValueError("Query embedding has zero norm.")
-
-        query_vector = query_vector / query_norm
-
-        allowed_indices = self._allowed_indices(
-            ticker=ticker,
-            record_type=record_type,
-        )
-
-        scores = self.embeddings @ query_vector
-        allowed_scores = scores[allowed_indices]
-
-        order = np.argsort(
-            -allowed_scores,
-            kind="stable",
-        )[:limit]
-
-        ranked_indices = allowed_indices[order]
-
+        scores = self.embeddings @ (vector / norm)
+        allowed = self._allowed_indices(ticker=ticker, record_type=record_type)
+        order = np.argsort(-scores[allowed], kind="stable")[:limit]
         return [
-            self._make_result(
-                int(index),
-                method="dense",
-                rank=rank,
-                score=float(scores[index]),
-            )
-            for rank, index in enumerate(
-                ranked_indices,
-                start=1,
-            )
+            self._make_result(int(index), method="dense", rank=rank, score=float(scores[index]))
+            for rank, index in enumerate(allowed[order], start=1)
         ]
 
     def search_bm25(
         self,
         query: str,
         *,
-        limit: int = 30,
+        limit: int = 10,
         ticker: str | None = None,
         record_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        normalized_query = normalize_lexical_text(query)
-
+        _validate_positive("limit", limit)
+        allowed = set(self._allowed_indices(ticker=ticker, record_type=record_type).tolist())
         query_tokens = self.tokenizer.tokenize(
-            [normalized_query],
-            update_vocab=False,
-            show_progress=False,
+            [normalize_lexical_text(query)], update_vocab=False, show_progress=False
         )
-
-        has_filter = ticker is not None or record_type is not None
-        retrieval_limit = len(self.records) if has_filter else min(limit, len(self.records))
-
         document_ids, scores = self.bm25.retrieve(
-            query_tokens,
-            k=retrieval_limit,
-            show_progress=False,
+            query_tokens, k=len(self.records), show_progress=False
         )
-
-        allowed_indices = set(
-            self._allowed_indices(
-                ticker=ticker,
-                record_type=record_type,
-            ).tolist()
-        )
-
         results: list[dict[str, Any]] = []
-
-        for index, score in zip(
-            document_ids[0],
-            scores[0],
-            strict=True,
-        ):
-            index = int(index)
-            score = float(score)
-
-            if score <= 0:
+        for raw_index, raw_score in zip(document_ids[0], scores[0], strict=True):
+            index, score = int(raw_index), float(raw_score)
+            if index not in allowed or score <= 0:
                 continue
-
-            if index not in allowed_indices:
-                continue
-
             results.append(
-                self._make_result(
-                    index,
-                    method="bm25",
-                    rank=len(results) + 1,
-                    score=score,
-                )
+                self._make_result(index, method="bm25", rank=len(results) + 1, score=score)
             )
-
             if len(results) == limit:
                 break
-
         return results
 
     def search_hybrid(
@@ -261,95 +225,41 @@ class HybridRetriever:
         query: str,
         query_vector: np.ndarray,
         *,
-        limit: int = 5,
+        limit: int = 10,
         candidate_k: int = 30,
         rrf_k: int = 60,
         ticker: str | None = None,
         record_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        dense_results = self.search_dense(
-            query_vector,
-            limit=candidate_k,
-            ticker=ticker,
-            record_type=record_type,
+        _validate_positive("limit", limit)
+        if candidate_k < limit:
+            raise ValueError("candidate_k must be at least limit.")
+        _validate_positive("rrf_k", rrf_k)
+        dense = self.search_dense(
+            query_vector, limit=candidate_k, ticker=ticker, record_type=record_type
         )
-        bm25_results = self.search_bm25(
-            query,
-            limit=candidate_k,
-            ticker=ticker,
-            record_type=record_type,
-        )
-
-        return reciprocal_rank_fusion(
-            dense_results,
-            bm25_results,
-            limit=limit,
-            rrf_k=rrf_k,
-        )
-
-    def get_hybrid_candidates(
-        self,
-        query: str,
-        query_vector: np.ndarray,
-        *,
-        candidate_k: int = 30,
-        rrf_pool_size: int = 20,
-        per_method_limit: int = 5,
-        max_candidates: int = 30,
-        max_per_parent: int = 2,
-        rrf_k: int = 60,
-        ticker: str | None = None,
-        record_type: str | None = None,
-    ) -> list[dict[str, Any]]:
-        dense_results = self.search_dense(
-            query_vector,
-            limit=candidate_k,
-            ticker=ticker,
-            record_type=record_type,
-        )
-        bm25_results = self.search_bm25(
-            query,
-            limit=candidate_k,
-            ticker=ticker,
-            record_type=record_type,
-        )
-
-        return build_hybrid_candidate_pool(
-            dense_results,
-            bm25_results,
-            rrf_pool_size=rrf_pool_size,
-            per_method_limit=per_method_limit,
-            max_candidates=max_candidates,
-            max_per_parent=max_per_parent,
-            rrf_k=rrf_k,
-        )
+        lexical = self.search_bm25(query, limit=candidate_k, ticker=ticker, record_type=record_type)
+        return reciprocal_rank_fusion(dense, lexical, limit=limit, rrf_k=rrf_k)
 
 
 def reciprocal_rank_fusion(
-    dense_results: list[dict[str, Any]],
-    bm25_results: list[dict[str, Any]],
+    dense_results: Sequence[dict[str, Any]],
+    bm25_results: Sequence[dict[str, Any]],
     *,
     limit: int,
     rrf_k: int = 60,
 ) -> list[dict[str, Any]]:
+    """Fuse dense and BM25 rankings, deduplicating by target evidence ID."""
+    _validate_positive("limit", limit)
+    _validate_positive("rrf_k", rrf_k)
     fused: dict[str, dict[str, Any]] = {}
-
-    for ranking in (dense_results, bm25_results):
-        for result in ranking:
-            target_chunk_id = result["target_chunk_id"]
-            method = result["retrieval_method"]
-
+    for method, ranking in (("dense", dense_results), ("bm25", bm25_results)):
+        for fallback_rank, result in enumerate(ranking, start=1):
+            target_id = str(result["target_chunk_id"])
             entry = fused.setdefault(
-                target_chunk_id,
+                target_id,
                 {
-                    "record_index": result["record_index"],
-                    "record_id": result["record_id"],
-                    "target_chunk_id": target_chunk_id,
-                    "record_type": result["record_type"],
-                    "ticker": result["ticker"],
-                    "embedding_text": get_retrieval_text(result),
-                    "document": result["document"],
-                    "metadata": result["metadata"],
+                    **result,
                     "retrieval_method": "hybrid",
                     "rrf_score": 0.0,
                     "dense_rank": None,
@@ -358,120 +268,26 @@ def reciprocal_rank_fusion(
                     "bm25_score": None,
                 },
             )
-
-            rank_field = f"{method}_rank"
-
-            if entry[rank_field] is not None:
+            if entry[f"{method}_rank"] is not None:
                 continue
-
-            entry["rrf_score"] += 1.0 / (rrf_k + result["rank"])
-            entry[rank_field] = result["rank"]
-            entry[f"{method}_score"] = result["score"]
-
-    def sort_key(result: dict[str, Any]) -> tuple[Any, ...]:
-        ranks = [
-            rank
-            for rank in (
-                result["dense_rank"],
-                result["bm25_rank"],
-            )
-            if rank is not None
-        ]
-
-        return (
-            -result["rrf_score"],
-            min(ranks),
-            result["target_chunk_id"],
-        )
-
-    return sorted(
+            rank = int(result.get("rank", fallback_rank))
+            entry["rrf_score"] += 1.0 / (rrf_k + rank)
+            entry[f"{method}_rank"] = rank
+            entry[f"{method}_score"] = float(result["score"])
+    ranked = sorted(
         fused.values(),
-        key=sort_key,
+        key=lambda item: (
+            -float(item["rrf_score"]),
+            min(rank for rank in (item["dense_rank"], item["bm25_rank"]) if rank is not None),
+            str(item["target_chunk_id"]),
+        ),
     )[:limit]
+    for rank, result in enumerate(ranked, start=1):
+        result["rank"] = rank
+        result["score"] = result["rrf_score"]
+    return ranked
 
 
-def build_hybrid_candidate_pool(
-    dense_results: list[dict[str, Any]],
-    bm25_results: list[dict[str, Any]],
-    *,
-    rrf_pool_size: int = 20,
-    per_method_limit: int = 5,
-    max_candidates: int = 30,
-    max_per_parent: int = 2,
-    rrf_k: int = 60,
-) -> list[dict[str, Any]]:
-    if rrf_pool_size <= 0:
-        raise ValueError("rrf_pool_size must be positive.")
-
-    if per_method_limit < 0:
-        raise ValueError("per_method_limit cannot be negative.")
-
-    if max_candidates <= 0:
-        raise ValueError("max_candidates must be positive.")
-
-    if max_per_parent <= 0:
-        raise ValueError("max_per_parent must be positive.")
-
-    fused_results = reciprocal_rank_fusion(
-        dense_results,
-        bm25_results,
-        limit=len(dense_results) + len(bm25_results),
-        rrf_k=rrf_k,
-    )
-
-    fused_by_target_id = {str(result["target_chunk_id"]): result for result in fused_results}
-
-    prioritized: list[dict[str, Any]] = []
-    prioritized_ids: set[str] = set()
-
-    def add_result(result: dict[str, Any]) -> None:
-        target_chunk_id = str(result["target_chunk_id"])
-
-        if target_chunk_id in prioritized_ids:
-            return
-
-        prioritized.append(result)
-        prioritized_ids.add(target_chunk_id)
-
-    for result in fused_results[:rrf_pool_size]:
-        add_result(result)
-
-    # Preserve strong lexical candidates before dense-only candidates.
-    for ranking in (bm25_results, dense_results):
-        for result in ranking[:per_method_limit]:
-            target_chunk_id = str(result["target_chunk_id"])
-            add_result(fused_by_target_id[target_chunk_id])
-
-    # Fill the remaining slots from the fused ranking. The earlier steps reserve
-    # room for strong method-specific candidates, but overlaps between rankings
-    # must not silently shrink a requested pool of 30 to 20 or 21 candidates.
-    for result in fused_results:
-        add_result(result)
-
-    selected: list[dict[str, Any]] = []
-    deferred: list[dict[str, Any]] = []
-    parent_counts: dict[str, int] = {}
-
-    for result in prioritized:
-        metadata = result.get("metadata", {})
-        parent_id = metadata.get("parent_id") if isinstance(metadata, dict) else None
-
-        if parent_id:
-            parent_key = str(parent_id)
-            parent_count = parent_counts.get(parent_key, 0)
-
-            if parent_count >= max_per_parent:
-                deferred.append(result)
-                continue
-
-            parent_counts[parent_key] = parent_count + 1
-
-        selected.append(result)
-
-        if len(selected) == max_candidates:
-            return selected
-
-    # Small or heavily filtered corpora may not provide enough distinct parents.
-    # In that case, fill the requested pool with the strongest deferred siblings.
-    selected.extend(deferred[: max_candidates - len(selected)])
-    return selected
+def _validate_positive(name: str, value: int) -> None:
+    if value <= 0:
+        raise ValueError(f"{name} must be positive.")

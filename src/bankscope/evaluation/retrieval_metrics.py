@@ -66,3 +66,27 @@ def evaluate_ranking(
     metrics[f"reciprocal_rank_at_{reciprocal_rank_limit}"] = reciprocal_rank
 
     return metrics
+
+
+def evaluate_evidence_groups(
+    retrieved_target_chunk_ids: Sequence[str],
+    required_evidence_groups: Sequence[Sequence[str]],
+    *,
+    k_values: Sequence[int] = DEFAULT_K_VALUES,
+) -> dict[str, MetricValue]:
+    """Measure whether retrieval covers every independently required evidence group."""
+    if not required_evidence_groups:
+        return {}
+
+    groups = [set(group) for group in required_evidence_groups]
+    if any(not group for group in groups):
+        raise ValueError("Required evidence groups cannot be empty.")
+
+    retrieved_ids = deduplicate_ids(retrieved_target_chunk_ids)
+    metrics: dict[str, MetricValue] = {"required_evidence_group_count": len(groups)}
+    for k in k_values:
+        top_ids = set(retrieved_ids[:k])
+        covered = sum(bool(group & top_ids) for group in groups)
+        metrics[f"group_recall_at_{k}"] = covered / len(groups)
+        metrics[f"complete_group_hit_at_{k}"] = int(covered == len(groups))
+    return metrics

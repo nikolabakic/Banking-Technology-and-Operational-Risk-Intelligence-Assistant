@@ -1,13 +1,24 @@
 # BankScope retrieval pipeline comparison
 
+**Status: accepted on 2026-08-06.** The active parser is `sec2md==0.1.23`.
+The original BeautifulSoup pipeline and the sec2md builtin-chunker experiment
+are archived under `sandbox/`; the active retriever is dense + BM25S + RRF
+without the evaluated reranker. The detailed JSON results remain in
+`sandbox/legacy_v3/evaluation/` as historical evidence.
+
+This document records the comparison that selected the parser. The subsequent
+repository overhaul keeps sec2md but simplifies its 16,419 row/cell locators to
+one complete table plus one description per retrieval-relevant table. That new
+representation must be evaluated separately against the same frozen questions.
+
 ## Decision summary
 
 The sec2md v3 corpus improves retrieval before reranking, including both table and
 narrative questions. The current Qwen3 reranker reverses much of that improvement.
 
-Recommended next main retriever: **sec2md v3 dense + BM25S + RRF, without the current
-reranker**. Keep the baseline reranked pipeline as a comparison/fallback until the
-reranker and candidate selection are corrected.
+The comparison recommended **sec2md v3 dense + BM25S + RRF, without the current
+reranker**. The completed overhaul then archived both evaluated implementations:
+their results remain comparison evidence, but neither is an active runtime fallback.
 
 Do not promote the evaluated sec2md + current-reranker combination as-is.
 
@@ -129,12 +140,11 @@ variant support check is still required before generation.
 The structured corpus costs roughly 3x more storage but allows a competitive pipeline
 without the approximately 1.3-second reranking stage.
 
-## Decision options
+## Historical decision options
 
-1. **Recommended:** promote sec2md v3 hybrid retrieval without the current reranker;
-   retain baseline reranked as fallback/comparison.
+1. **Selected at the time:** promote sec2md v3 hybrid retrieval without the current
+   reranker and retain the baseline result for comparison.
 2. Keep the baseline reranked pipeline as main because it still has the best Hit@1 and
    Hit@10, while retaining sec2md v3 as an experiment.
 3. Select neither yet and authorize one bounded tuning cycle for schema/glossary
    locators, parent diversity, and reranking, followed by the same frozen 30-query test.
-

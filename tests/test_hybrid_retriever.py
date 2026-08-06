@@ -1,129 +1,178 @@
 from typing import Any
 
 import numpy as np
+import pytest
 
 from bankscope.retrieval.hybrid_retriever import (
     HybridRetriever,
-    build_hybrid_candidate_pool,
+    normalize_lexical_text,
+    reciprocal_rank_fusion,
 )
 
 
-def make_result(
-    target_chunk_id: str,
-    method: str,
-    rank: int,
-    parent_id: str | None = None,
+def record(
+    record_id: str,
+    *,
+    ticker: str = "JPM",
+    record_type: str = "text",
+    embedding_text: str | None = None,
+    document: str | None = None,
+    table_id: str | None = None,
 ) -> dict[str, Any]:
+    metadata = {"ticker": ticker}
+    if table_id:
+        metadata["table_id"] = table_id
     return {
-        "record_index": rank,
-        "record_id": f"record::{target_chunk_id}",
-        "target_chunk_id": target_chunk_id,
+        "record_id": record_id,
+        "target_chunk_id": table_id or record_id,
+        "record_type": record_type,
+        "embedding_text": embedding_text or f"retrieval text {record_id}",
+        "document": document or f"evidence {record_id}",
+        "metadata": metadata,
+    }
+
+
+def ranked(target_id: str, method: str, rank: int) -> dict[str, Any]:
+    return {
+        "record_index": rank - 1,
+        "record_id": f"record::{target_id}",
+        "target_chunk_id": target_id,
         "record_type": "text",
         "ticker": "JPM",
-        "document": target_chunk_id,
-        "metadata": {"parent_id": parent_id} if parent_id else {},
+        "embedding_text": target_id,
+        "retrieval_text": target_id,
+        "document": target_id,
+        "evidence": target_id,
+        "metadata": {},
         "retrieval_method": method,
         "rank": rank,
         "score": 1.0 / rank,
     }
 
 
-def test_candidate_pool_preserves_method_specific_results() -> None:
-    dense_results = [
-        make_result("dense_only", "dense", 1),
-        make_result("shared", "dense", 2),
-    ]
-    bm25_results = [
-        make_result("bm25_only", "bm25", 1),
-        make_result("shared", "bm25", 2),
-    ]
-
-    candidates = build_hybrid_candidate_pool(
-        dense_results,
-        bm25_results,
-        rrf_pool_size=1,
-        per_method_limit=1,
-        max_candidates=3,
-    )
-
-    candidate_ids = [result["target_chunk_id"] for result in candidates]
-
-    assert candidate_ids == [
-        "shared",
-        "bm25_only",
-        "dense_only",
-    ]
-
-
-def test_candidate_pool_fills_requested_size_after_overlaps() -> None:
-    dense_results = [make_result(f"shared_{index}", "dense", index) for index in range(1, 31)]
-    bm25_results = [make_result(f"shared_{index}", "bm25", index) for index in range(1, 31)]
-
-    candidates = build_hybrid_candidate_pool(
-        dense_results,
-        bm25_results,
-        rrf_pool_size=20,
-        per_method_limit=5,
-        max_candidates=30,
-    )
-
-    assert len(candidates) == 30
-    assert len({result["target_chunk_id"] for result in candidates}) == 30
-
-
-def test_candidate_pool_prioritizes_distinct_parent_tables() -> None:
-    dense_results = [
-        make_result("table_a_1", "dense", 1, "table_a"),
-        make_result("table_a_2", "dense", 2, "table_a"),
-        make_result("table_a_3", "dense", 3, "table_a"),
-        make_result("table_b_1", "dense", 4, "table_b"),
-    ]
-    bm25_results = [
-        make_result("table_a_1", "bm25", 1, "table_a"),
-        make_result("table_a_2", "bm25", 2, "table_a"),
-        make_result("table_a_3", "bm25", 3, "table_a"),
-        make_result("table_b_1", "bm25", 4, "table_b"),
-    ]
-
-    candidates = build_hybrid_candidate_pool(
-        dense_results,
-        bm25_results,
-        rrf_pool_size=4,
-        per_method_limit=0,
-        max_candidates=3,
-        max_per_parent=2,
-    )
-
-    assert [result["target_chunk_id"] for result in candidates] == [
-        "table_a_1",
-        "table_a_2",
-        "table_b_1",
-    ]
-
-
-def test_bm25_indexes_embedding_text_but_returns_original_document() -> None:
+def test_bm25_indexes_embedding_text_and_hydrates_table_evidence() -> None:
     records = [
-        {
-            "record_id": "text::jpm",
-            "target_chunk_id": "jpm",
-            "record_type": "text",
-            "embedding_text": "Bank: JPM\nReport: 2025 10-K\n\nOperational risk definition",
-            "document": "Operational risk definition",
-            "metadata": {"ticker": "JPM"},
-        },
-        {
-            "record_id": "text::wfc",
-            "target_chunk_id": "wfc",
-            "record_type": "text",
-            "embedding_text": "Bank: WFC\nReport: 2024 10-K\n\nOperational risk definition",
-            "document": "Operational risk definition",
-            "metadata": {"ticker": "WFC"},
-        },
+        record("narrative", embedding_text="operational risk controls"),
+        record(
+            "table-description",
+            record_type="table",
+            embedding_text="Liquidity coverage ratio was 115 percent in 2025",
+            document="Short generated table description",
+            table_id="table-7",
+        ),
     ]
+    tables = [
+        {
+            "table_id": "table-7",
+            "document": "| Metric | 2025 |\n|---|---|\n| LCR | 115% |",
+            "metadata": {"ticker": "JPM"},
+        }
+    ]
+    retriever = HybridRetriever(records, tables=tables)
+
+    [result] = retriever.search_bm25("2025 liquidity coverage 115%", limit=1, record_type="TABLE")
+
+    assert result["target_chunk_id"] == "table-7"
+    assert result["retrieval_text"].startswith("Liquidity coverage")
+    assert result["embedding_text"] == result["retrieval_text"]
+    assert result["document"].startswith("| Metric")
+    assert result["evidence"] == result["document"]
+
+
+def test_dense_search_applies_ticker_and_record_type_filters() -> None:
+    records = [
+        record("jpm-text", ticker="JPM"),
+        record("wfc-text", ticker="WFC"),
+        record("wfc-table", ticker="WFC", record_type="table", table_id="wfc-table"),
+    ]
+    embeddings = np.asarray([[1.0, 0.0], [0.8, 0.2], [0.9, 0.1]], dtype=np.float32)
+    tables = [{"table_id": "wfc-table", "document": "| WFC table |"}]
+    retriever = HybridRetriever(records, embeddings, tables)
+
+    results = retriever.search_dense(
+        np.asarray([1.0, 0.0]), limit=3, ticker="wfc", record_type="text"
+    )
+
+    assert [result["record_id"] for result in results] == ["wfc-text"]
+    assert results[0]["ticker"] == "WFC"
+
+
+def test_dense_search_preserves_record_order_when_scores_tie() -> None:
+    records = [record("first"), record("second")]
+    embeddings = np.asarray([[2.0, 0.0], [4.0, 0.0]], dtype=np.float32)
+    retriever = HybridRetriever(records, embeddings)
+
+    results = retriever.search_dense(np.asarray([1.0, 0.0]), limit=2)
+
+    assert [result["record_id"] for result in results] == ["first", "second"]
+
+
+def test_reciprocal_rank_fusion_is_deduplicated_and_deterministic() -> None:
+    results = reciprocal_rank_fusion(
+        [ranked("a", "dense", 1), ranked("b", "dense", 2)],
+        [ranked("b", "bm25", 1), ranked("c", "bm25", 2)],
+        limit=3,
+        rrf_k=60,
+    )
+
+    assert [result["target_chunk_id"] for result in results] == ["b", "a", "c"]
+    assert results[0]["dense_rank"] == 2
+    assert results[0]["bm25_rank"] == 1
+    assert results[0]["score"] == results[0]["rrf_score"]
+    assert [result["rank"] for result in results] == [1, 2, 3]
+
+
+def test_hybrid_fuses_candidate_window_before_applying_output_limit() -> None:
+    records = [
+        record("a", embedding_text="generic evidence"),
+        record("b", embedding_text="special evidence"),
+    ]
+    retriever = HybridRetriever(records, np.asarray([[1.0, 0.0], [0.9, 0.1]], dtype=np.float32))
+
+    results = retriever.search_hybrid("special", np.asarray([1.0, 0.0]), limit=1, candidate_k=2)
+
+    assert [result["target_chunk_id"] for result in results] == ["b"]
+
+
+def test_retriever_rejects_shape_order_and_query_errors() -> None:
+    records = [record("first"), record("second")]
+
+    with pytest.raises(ValueError, match="counts do not match"):
+        HybridRetriever(records, np.eye(3, dtype=np.float32))
+    with pytest.raises(ValueError, match="unique"):
+        HybridRetriever([records[0], records[0]], np.eye(2, dtype=np.float32))
+
     retriever = HybridRetriever(records, np.eye(2, dtype=np.float32))
+    with pytest.raises(ValueError, match="dimensions do not match"):
+        retriever.search_dense(np.ones(3, dtype=np.float32))
+    with pytest.raises(ValueError, match="zero norm"):
+        retriever.search_dense(np.zeros(2, dtype=np.float32))
+    with pytest.raises(ValueError, match="No records match"):
+        retriever.search_bm25("risk", ticker="BAC")
+    with pytest.raises(ValueError, match="candidate_k"):
+        retriever.search_hybrid("risk", np.ones(2), limit=2, candidate_k=1)
 
-    results = retriever.search_bm25("JPM 2025 operational risk", limit=2)
 
-    assert results[0]["target_chunk_id"] == "jpm"
-    assert results[0]["embedding_text"].startswith("Bank: JPM")
-    assert results[0]["document"] == "Operational risk definition"
+def test_bm25_does_not_require_embeddings_but_dense_does() -> None:
+    retriever = HybridRetriever([record("risk", embedding_text="operational risk")])
+
+    assert retriever.search_bm25("operational", limit=1)[0]["record_id"] == "risk"
+    with pytest.raises(ValueError, match="requires document embeddings"):
+        retriever.search_dense(np.ones(2))
+    with pytest.raises(ValueError, match="requires document embeddings"):
+        retriever.search_hybrid("risk", np.ones(2))
+
+
+def test_table_records_require_a_complete_table_store() -> None:
+    table_record = record("description", record_type="table", table_id="table-1")
+
+    with pytest.raises(ValueError, match="table store is required"):
+        HybridRetriever([table_record])
+    with pytest.raises(ValueError, match="unknown table IDs"):
+        HybridRetriever([table_record], tables=[])
+
+
+def test_financial_lexical_normalization_removes_numeric_commas() -> None:
+    assert normalize_lexical_text("Assets were 12,345 \u2014 unchanged") == (
+        "Assets were 12345 - unchanged"
+    )
