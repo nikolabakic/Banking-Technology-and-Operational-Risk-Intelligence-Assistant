@@ -1,0 +1,203 @@
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping, Sequence
+from decimal import Decimal, InvalidOperation
+from statistics import fmean
+from typing import Any
+
+STATUS_MAP = {
+    "answerable": "supported",
+    "ambiguous": "ambiguous",
+    "unsupported": "unsupported",
+}
+NUMBER_PATTERN = re.compile(r"(?<![\w.])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
+TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+CITATION_MARKER_PATTERN = re.compile(r"\[E\d+\]", re.IGNORECASE)
+ENTITY_STOPWORDS = {"and", "co", "company", "corp", "corporation", "inc", "na", "the"}
+
+
+def expected_answer_status(query_status: str) -> str:
+    try:
+        return STATUS_MAP[query_status]
+    except KeyError as error:
+        raise ValueError(f"Unsupported evaluation status: {query_status}.") from error
+
+
+def _normalized_tokens(value: Any, *, remove_entity_stopwords: bool = False) -> set[str]:
+    tokens = set(TOKEN_PATTERN.findall(str(value or "").lower()))
+    return tokens - ENTITY_STOPWORDS if remove_entity_stopwords else tokens
+
+
+def _text_match(expected: Any, answer: str, *, entity: bool = False) -> int:
+    expected_tokens = _normalized_tokens(expected, remove_entity_stopwords=entity)
+    if not expected_tokens:
+        return 1
+    answer_tokens = _normalized_tokens(answer, remove_entity_stopwords=entity)
+    required = max(1, int(len(expected_tokens) * 0.6 + 0.999999))
+    return int(len(expected_tokens & answer_tokens) >= required)
+
+
+def _numbers(answer: str, expected_unit: str) -> list[Decimal]:
+    text = CITATION_MARKER_PATTERN.sub("", answer)
+    values: list[Decimal] = []
+    for match in NUMBER_PATTERN.finditer(text):
+        try:
+            value = Decimal(match.group(0).replace(",", ""))
+        except InvalidOperation:
+            continue
+        following = text[match.end() : match.end() + 24].lower()
+        if "million" in expected_unit.lower() and "billion" in following:
+            value *= Decimal(1000)
+        values.append(value)
+    return values
+
+
+def _value_match(expected: Any, expected_unit: str, answer: str) -> int:
+    try:
+        target = Decimal(str(expected))
+    except InvalidOperation as error:
+        raise ValueError(f"Invalid expected_value: {expected!r}.") from error
+    return int(
+        any(abs(value - target) <= Decimal("0.0001") for value in _numbers(answer, expected_unit))
+    )
+
+
+def _unit_match(expected_unit: str, answer: str) -> int:
+    expected = expected_unit.strip().lower()
+    text = answer.lower()
+    if expected == "percent":
+        return int("%" in text or "percent" in text)
+    if expected == "usd millions":
+        return int("million" in text and ("$" in text or "usd" in text or "dollar" in text))
+    return _text_match(expected, text)
+
+
+def _period_match(expected_period: Any, answer: str) -> int:
+    expected = str(expected_period or "").strip()
+    years = re.findall(r"(?<!\d)(?:19|20)\d{2}(?!\d)", expected)
+    if years:
+        return int(all(year in answer for year in years))
+    return int(expected.lower() in answer.lower())
+
+
+def _citation_metrics(
+    query: Mapping[str, Any], answer: Mapping[str, Any], expected_status: str
+) -> dict[str, Any]:
+    raw_citations = answer.get("citations")
+    citations = raw_citations if isinstance(raw_citations, Sequence) else []
+    cited_ids = [
+        str(citation.get("target_chunk_id") or "")
+        for citation in citations
+        if isinstance(citation, Mapping)
+    ]
+    cited_ids = [target_id for target_id in cited_ids if target_id]
+    relevant_ids = {str(value) for value in query.get("relevant_target_chunk_ids", [])}
+    relevant_cited = set(cited_ids) & relevant_ids
+    precision = len(relevant_cited) / len(set(cited_ids)) if cited_ids else None
+
+    raw_groups = query.get("required_evidence_groups", [])
+    groups = [
+        {str(value) for value in group.get("target_chunk_ids", [])}
+        for group in raw_groups
+        if isinstance(group, Mapping)
+    ]
+    group_coverage = (
+        sum(bool(group & set(cited_ids)) for group in groups) / len(groups) if groups else None
+    )
+    if expected_status == "supported":
+        complete = int(group_coverage == 1.0) if groups else int(bool(relevant_cited))
+    else:
+        complete = int(not cited_ids)
+    return {
+        "citation_count": len(set(cited_ids)),
+        "relevant_citation_count": len(relevant_cited),
+        "citation_precision": precision,
+        "citation_relevant_hit": int(bool(relevant_cited)),
+        "required_group_count": len(groups),
+        "required_group_coverage": group_coverage,
+        "citation_complete": complete,
+    }
+
+
+def evaluate_answer(query: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, Any]:
+    """Return deterministic generation metrics for one frozen evaluation query."""
+    expected_status = expected_answer_status(str(query.get("status") or ""))
+    actual_status = str(answer.get("status") or "")
+    answer_text = str(answer.get("answer") or "")
+    structured: dict[str, int] = {}
+    if expected_status == "supported":
+        if query.get("expected_value") is not None:
+            expected_unit = str(query.get("expected_unit") or "")
+            structured["value_match"] = _value_match(
+                query["expected_value"], expected_unit, answer_text
+            )
+        if query.get("expected_unit"):
+            structured["unit_match"] = _unit_match(str(query["expected_unit"]), answer_text)
+        if query.get("expected_period"):
+            structured["period_match"] = _period_match(query["expected_period"], answer_text)
+        if query.get("expected_entity"):
+            structured["entity_match"] = _text_match(
+                query["expected_entity"], answer_text, entity=True
+            )
+        if query.get("expected_variant"):
+            structured["variant_match"] = _text_match(query["expected_variant"], answer_text)
+
+    return {
+        "expected_status": expected_status,
+        "actual_status": actual_status,
+        "status_correct": int(actual_status == expected_status),
+        "citations": _citation_metrics(query, answer, expected_status),
+        "structured": structured,
+    }
+
+
+def summarize_answer_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    metric_rows = [row for row in rows if isinstance(row.get("metrics"), Mapping)]
+    summary: dict[str, Any] = {
+        "query_count": len(rows),
+        "evaluated_count": len(metric_rows),
+        "error_count": len(rows) - len(metric_rows),
+    }
+    if not metric_rows:
+        return summary
+
+    summary["status_accuracy"] = fmean(int(row["metrics"]["status_correct"]) for row in metric_rows)
+    citation_values = [
+        row["metrics"]["citations"] for row in metric_rows if row["metrics"]["citations"]
+    ]
+    supported_citation_values = [
+        row["metrics"]["citations"]
+        for row in metric_rows
+        if row["metrics"]["expected_status"] == "supported"
+    ]
+    summary["citation_relevant_hit_rate"] = (
+        fmean(int(value["citation_relevant_hit"]) for value in supported_citation_values)
+        if supported_citation_values
+        else None
+    )
+    summary["citation_complete_rate"] = fmean(
+        int(value["citation_complete"]) for value in citation_values
+    )
+    precisions = [
+        float(value["citation_precision"])
+        for value in supported_citation_values
+        if value["citation_precision"] is not None
+    ]
+    summary["mean_citation_precision"] = fmean(precisions) if precisions else None
+
+    for key in ("value_match", "unit_match", "period_match", "entity_match", "variant_match"):
+        values = [
+            int(row["metrics"]["structured"][key])
+            for row in metric_rows
+            if key in row["metrics"]["structured"]
+        ]
+        summary[f"{key}_count"] = len(values)
+        summary[f"{key}_rate"] = fmean(values) if values else None
+
+    judgements = [row["judge"] for row in metric_rows if isinstance(row.get("judge"), Mapping)]
+    summary["semantic_judge_count"] = len(judgements)
+    for key in ("correctness", "completeness", "groundedness"):
+        values = [int(bool(judgement[key])) for judgement in judgements if key in judgement]
+        summary[f"semantic_{key}_rate"] = fmean(values) if values else None
+    return summary

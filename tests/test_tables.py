@@ -93,7 +93,7 @@ def test_cover_page_commission_file_table_is_layout_only() -> None:
     assert not [chunk for chunk in chunks if chunk["record_type"] == "table"]
 
 
-class MockResponses:
+class MockCompletions:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.calls: list[dict[str, Any]] = []
@@ -102,15 +102,15 @@ class MockResponses:
         self.calls.append(kwargs)
         if self.fail:
             raise ConnectionError("test outage")
-        return SimpleNamespace(
-            id="resp_test_1",
-            output_text="BAC 2025 credit exposure table covering Loans and Securities.",
+        message = SimpleNamespace(
+            content="BAC 2025 credit exposure table covering Loans and Securities."
         )
+        return SimpleNamespace(id="chatcmpl_test_1", choices=[SimpleNamespace(message=message)])
 
 
-def test_openai_mode_uses_responses_api_and_records_provenance() -> None:
-    responses = MockResponses()
-    client = SimpleNamespace(responses=responses)
+def test_openai_mode_uses_chat_completions_and_records_provenance() -> None:
+    completions = MockCompletions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
     chunks, tables = build_corpus(
         table_page(data_table()),
@@ -122,10 +122,10 @@ def test_openai_mode_uses_responses_api_and_records_provenance() -> None:
         llm_model="gpt-4o-test",
     )
 
-    assert len(responses.calls) == 1
-    assert responses.calls[0]["model"] == "gpt-4o-test"
-    assert responses.calls[0]["max_output_tokens"] == 300
-    assert "Original markdown table" in responses.calls[0]["input"]
+    assert len(completions.calls) == 1
+    assert completions.calls[0]["model"] == "gpt-4o-test"
+    assert completions.calls[0]["max_tokens"] == 300
+    assert "Original markdown table" in completions.calls[0]["messages"][1]["content"]
     chunk = next(chunk for chunk in chunks if chunk["record_type"] == "table")
     assert "Significant rows: Loans; Securities" in chunk["document"]
     assert chunk["document"].endswith(
@@ -135,16 +135,17 @@ def test_openai_mode_uses_responses_api_and_records_provenance() -> None:
     assert provenance == {
         "mode": "openai",
         "provider": "openai",
-        "api": "responses",
+        "api": "chat.completions",
         "model": "gpt-4o-test",
-        "response_id": "resp_test_1",
+        "response_id": "chatcmpl_test_1",
         "base_generator": "bankscope-local-table-description-v1",
     }
     assert tables[0]["metadata"]["description_provenance"] == provenance
 
 
 def test_openai_failure_does_not_fall_back_to_local_description() -> None:
-    client = SimpleNamespace(responses=MockResponses(fail=True))
+    completions = MockCompletions(fail=True)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
     with pytest.raises(RuntimeError, match="OpenAI table description failed"):
         build_corpus(

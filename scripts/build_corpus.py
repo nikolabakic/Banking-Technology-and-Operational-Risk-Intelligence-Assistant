@@ -137,16 +137,10 @@ def main() -> None:
     description_model = None
     if args.description_mode == "openai":
         settings = get_settings()
-        if settings.openai_api_key is None:
-            raise ValueError("OPENAI_API_KEY is required for --description-mode openai.")
-        try:
-            from openai import OpenAI
-        except ImportError as error:
-            raise RuntimeError(
-                "Install the optional LLM dependencies with 'pip install -e .[llm]'."
-            ) from error
+        from bankscope.llm import create_openai_client
+
         description_model = args.model or settings.openai_model
-        llm_client = OpenAI(api_key=settings.openai_api_key.get_secret_value())
+        llm_client = create_openai_client(settings)
 
     all_chunks: list[Record] = []
     all_tables: list[Record] = []

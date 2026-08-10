@@ -337,11 +337,19 @@ def build_local_description(table: Mapping[str, Any], filing: Mapping[str, Any])
     return "\n".join(lines)
 
 
-def _response_output_text(response: Any) -> str:
-    output_text = getattr(response, "output_text", None)
-    if output_text is None and isinstance(response, Mapping):
-        output_text = response.get("output_text")
-    return str(output_text or "").strip()
+def _chat_completion_text(response: Any) -> str:
+    choices = getattr(response, "choices", None)
+    if choices:
+        return str(getattr(getattr(choices[0], "message", None), "content", None) or "").strip()
+    if isinstance(response, Mapping):
+        response_choices = response.get("choices")
+        if isinstance(response_choices, Sequence) and response_choices:
+            choice = response_choices[0]
+            if isinstance(choice, Mapping):
+                message = choice.get("message")
+                if isinstance(message, Mapping):
+                    return str(message.get("content") or "").strip()
+    return ""
 
 
 def build_openai_description(
@@ -351,7 +359,7 @@ def build_openai_description(
     client: Any,
     model: str,
 ) -> tuple[str, Record]:
-    """Describe one table through OpenAI's Responses API, with no local fallback."""
+    """Describe one table through Chat Completions, with no local fallback."""
     metadata = table["metadata"]
     instructions = (
         "Use the supplied bank, report, section, and page metadata as context. Describe this SEC "
@@ -372,25 +380,27 @@ def build_openai_description(
     )
 
     try:
-        response = client.responses.create(
+        response = client.chat.completions.create(
             model=model,
-            instructions=instructions,
-            input=prompt,
-            max_output_tokens=300,
+            messages=[
+                {"role": "system", "content": instructions},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=300,
         )
     except Exception as error:
         raise RuntimeError(
             f"OpenAI table description failed for table {table['table_id']}."
         ) from error
 
-    description = _response_output_text(response)
+    description = _chat_completion_text(response)
     if not description:
         raise RuntimeError(f"OpenAI returned an empty description for table {table['table_id']}.")
 
     provenance: Record = {
         "mode": "openai",
         "provider": "openai",
-        "api": "responses",
+        "api": "chat.completions",
         "model": model,
     }
     response_id = getattr(response, "id", None)

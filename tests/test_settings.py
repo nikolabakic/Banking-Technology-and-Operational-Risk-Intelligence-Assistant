@@ -30,7 +30,7 @@ def test_settings_load_valid_values(
     assert settings.sec_user_agent == "BankScopeRAG test@example.com"
     assert settings.sec_requests_per_second == 5
     assert settings.sec_timeout_seconds == 30
-    assert settings.openai_model == "gpt-4o"
+    assert settings.openai_model == "AZURE_GPT_4o_2024_1120"
 
 
 def test_settings_reject_user_agent_without_email(

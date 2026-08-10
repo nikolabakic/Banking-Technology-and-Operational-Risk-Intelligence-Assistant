@@ -24,7 +24,13 @@ class ApplicationSettings(BaseSettings):
     raw_data_dir: Path = PROJECT_ROOT / "data/raw/sec"
 
     openai_api_key: SecretStr | None = None
-    openai_model: str = "gpt-4o"
+    openai_api_base_url: str | None = None
+    openai_model: str = "AZURE_GPT_4o_2024_1120"
+    openai_x_app_id: SecretStr | None = None
+    openai_x_user_id: SecretStr | None = None
+    openai_x_company_id: SecretStr | None = None
+    openai_x_api_version: SecretStr | None = None
+    llm_temperature: float = Field(default=0, ge=0, le=2)
 
     @field_validator("sec_user_agent")
     @classmethod

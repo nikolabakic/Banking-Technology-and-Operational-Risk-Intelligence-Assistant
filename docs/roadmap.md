@@ -12,7 +12,8 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Whole-table corpus | Complete | One stored table and at most one description per parser-emitted table |
 | Embeddings | Implemented | Length/order/hash/model contracts and real smoke run pass |
 | Retrieval evaluation | Complete | Frozen 30-question baseline/Qdrant comparison and backend decision recorded |
-| Answer generation | Pending | Answers use hydrated evidence and expose citations |
+| Answer generation | Implemented | Single-bank answers use hydrated evidence, abstain and expose citations |
+| Generation evaluation | Complete | Reusable 26-question evaluator and first baseline record deterministic metrics, advisory judge results and two explicit query errors |
 | Conversation history | Pending | Follow-ups work without contaminating retrieval |
 | Simple user interface | Pending | Local chat flow is usable by a reviewer |
 | Final report | Pending | Retrieval and generation results are reported separately |
@@ -38,7 +39,9 @@ The accepted overhaul result and its compute caveat are recorded in
 measured full-backend result are recorded in
 `docs/decisions/003-qdrant-local-retrieval.md`. The requirement-driven decision
 to use Qdrant dense search with BM25S and application RRF is recorded in
-`docs/decisions/004-mixed-vector-retrieval.md`.
+`docs/decisions/004-mixed-vector-retrieval.md`. The current single-bank
+generation-evaluation scope and its first measured baseline are recorded in
+`docs/decisions/005-generation-evaluation.md`.
 
 ## Scope boundary
 

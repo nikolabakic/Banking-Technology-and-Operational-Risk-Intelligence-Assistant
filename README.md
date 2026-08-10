@@ -5,10 +5,10 @@ filings of ten U.S. banks.
 
 ## Current design
 
-The active pipeline has five commands:
+The active pipeline has six commands:
 
 ```text
-download.py -> build_corpus.py -> embed.py -> search.py / evaluate.py
+download.py -> build_corpus.py -> embed.py -> search.py / evaluate.py -> answer.py
 ```
 
 - `sec2md==0.1.23` is the only active filing parser.
@@ -53,7 +53,9 @@ python scripts/build_corpus.py --overwrite
 python scripts/embed.py --overwrite
 python scripts/build_qdrant.py
 python scripts/search.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
+python scripts/answer.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
 python scripts/evaluate.py
+python scripts/evaluate_answers.py
 ```
 
 The default search uses Qdrant for dense retrieval and BM25S plus application
@@ -74,6 +76,7 @@ Useful smoke runs:
 python scripts/download.py --ticker JPM
 python scripts/build_corpus.py --ticker JPM --output-dir data/processed/smoke-jpm --overwrite
 python scripts/embed.py --limit 10
+python scripts/evaluate_answers.py --query-id dev_jpm_standardized_cet1_ratio_2025
 ```
 
 Filtered corpus builds require their own output directory so a smoke run cannot
@@ -89,6 +92,7 @@ data/processed/manifest.json  parser and corpus provenance
 data/processed/embeddings.npz vectors joined to chunks by record order
 data/processed/qdrant/        generated persistent local Qdrant database
 data/processed/qdrant_manifest.json Qdrant source hashes and vector configuration
+data/evaluation/results/generation.json generation metrics, answers and provenance
 ```
 
 Table descriptions are deterministic by default. GPT-4o descriptions are an
@@ -100,9 +104,32 @@ python -m pip install -e ".[dev,llm]"
 python scripts/build_corpus.py --description-mode openai --overwrite
 ```
 
-This mode requires `OPENAI_API_KEY`; `OPENAI_MODEL` is configurable in `.env`
-and defaults to `gpt-4o`. It makes one API request per retrieval-eligible table,
-so the local mode should be used for normal development runs.
+This mode obtains the authenticated corporate client through
+`model_access.access_model()`. `OPENAI_MODEL` is configurable in `.env` and
+defaults to `AZURE_GPT_4o_2024_1120`. It makes one API request per
+retrieval-eligible table, so the local mode should be used for normal development runs.
+
+`answer.py` performs the default mixed hybrid retrieval, passes only hydrated
+evidence to the configured OpenAI-compatible Chat Completions endpoint, and returns a JSON
+answer with filing citations. The first generation slice intentionally requires
+`--ticker`; unsupported periods fail before the model call, while ambiguous or
+insufficient evidence produces an abstention. Custom gateways can be configured
+by the internal `model_access` package.
+
+`evaluate_answers.py` reuses the same long-lived answer pipeline and evaluates
+the 26 frozen questions that fit the current single-bank contract: 25 answerable
+questions and one unsupported-period question. Three cross-bank questions and
+the ambiguous question without a ticker are listed as explicit scope exclusions.
+Deterministic status, structured-field and citation metrics are reported
+separately from the advisory semantic judge. The run sends hydrated filing
+evidence to the configured model endpoint; use `--skip-judge` to omit the
+additional semantic-judge calls.
+
+The first recorded 26-question generation baseline completed 24 queries and
+captured two model-format/citation errors. Among completed queries, answer
+status accuracy was 100%, exact expected-value accuracy was 86.7%, relevant
+citation hit rate was 87.0%, and all eight advisory semantic judgements passed.
+See decision 005 for denominators and caveats; retrieval metrics remain separate.
 
 ## Checks
 
@@ -120,7 +147,9 @@ for the completed migration result,
 [`docs/decisions/003-qdrant-local-retrieval.md`](docs/decisions/003-qdrant-local-retrieval.md)
 for the Qdrant evaluation decision,
 [`docs/decisions/004-mixed-vector-retrieval.md`](docs/decisions/004-mixed-vector-retrieval.md)
-for the active mixed-backend decision, and [`docs/roadmap.md`](docs/roadmap.md)
+for the active mixed-backend decision,
+[`docs/decisions/005-generation-evaluation.md`](docs/decisions/005-generation-evaluation.md)
+for the generation-evaluation contract, and [`docs/roadmap.md`](docs/roadmap.md)
 for the next project phases.
 
 ## Known corpus limitations
