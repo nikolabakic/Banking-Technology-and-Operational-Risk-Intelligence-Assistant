@@ -72,6 +72,18 @@ contribute to metrics, while ambiguous and unsupported queries are recorded as
 diagnostics. Cross-bank qrels additionally report evidence-group coverage, so a
 result is complete only when every required entity is represented.
 
+`build_qdrant.py` imports the same frozen records and dense vectors into
+persistent Qdrant Local Mode. The default `mixed` backend uses Qdrant dense
+search, local BM25S and application RRF. This stores and queries embeddings in a
+VectorDB while retaining the stronger measured lexical and fusion paths.
+
+The collection also has a named `sparse` vector using `Qdrant/bm25` with the IDF
+modifier. `search.py --backend qdrant` uses that sparse vector and native Qdrant
+RRF, while `--backend baseline` keeps the NumPy/BM25S implementation for
+comparison. `evaluate.py --backend all` compares all three backends in one
+report. Every backend retains the same BankScope result shape and hydrates table
+descriptions from the canonical table store.
+
 ## Invariants
 
 - IDs and record order are unique and deterministic for the same raw filing

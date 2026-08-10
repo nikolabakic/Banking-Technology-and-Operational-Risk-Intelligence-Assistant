@@ -17,9 +17,12 @@ download.py -> build_corpus.py -> embed.py -> search.py / evaluate.py
   stored once in `tables.jsonl`.
 - Each retrieval-relevant table gets one compact description in `chunks.jsonl`.
   A table hit is resolved back to the complete table before evidence is shown.
-- Hybrid retrieval is dense search plus BM25S combined with reciprocal-rank
-  fusion (RRF). The previous reranker is archived because it reduced the
-  measured sec2md result.
+- The default mixed backend retrieves dense candidates from persistent Qdrant,
+  retrieves lexical candidates with BM25S and combines both rankings with
+  application reciprocal-rank fusion (RRF).
+- Persistent Qdrant Local Mode is available as an optional backend. Its dense,
+  BM25 and native-RRF paths are also implemented, but full Qdrant hybrid did not
+  pass the MRR quality gate.
 
 The parser decision is based on the frozen 30-question comparison: sec2md
 hybrid improved Hit@1 from 8/28 to 12/28 and MRR@10 from 0.494 to 0.589 over
@@ -48,9 +51,22 @@ Run commands from the repository root:
 python scripts/download.py
 python scripts/build_corpus.py --overwrite
 python scripts/embed.py --overwrite
+python scripts/build_qdrant.py
 python scripts/search.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
 python scripts/evaluate.py
 ```
+
+The default search uses Qdrant for dense retrieval and BM25S plus application
+RRF for hybrid retrieval. Baseline and full-Qdrant comparisons remain available:
+
+```powershell
+python scripts/search.py "operational risk capital" --backend baseline --mode hybrid --ticker JPM
+python scripts/search.py "operational risk capital" --backend qdrant --mode hybrid --ticker JPM
+python scripts/evaluate.py --backend all
+```
+
+Use `build_qdrant.py --recreate` only when intentionally rebuilding the existing
+`bankscope_retrieval` collection.
 
 Useful smoke runs:
 
@@ -71,6 +87,8 @@ data/processed/chunks.jsonl   text chunks and table descriptions
 data/processed/tables.jsonl   complete tables and stable table IDs
 data/processed/manifest.json  parser and corpus provenance
 data/processed/embeddings.npz vectors joined to chunks by record order
+data/processed/qdrant/        generated persistent local Qdrant database
+data/processed/qdrant_manifest.json Qdrant source hashes and vector configuration
 ```
 
 Table descriptions are deterministic by default. GPT-4o descriptions are an
@@ -98,8 +116,12 @@ python -m ruff format --check .
 it is imported by the active project. See [`docs/data_pipeline.md`](docs/data_pipeline.md)
 for schemas and invariants,
 [`docs/decisions/002-repository-overhaul.md`](docs/decisions/002-repository-overhaul.md)
-for the completed migration result, and [`docs/roadmap.md`](docs/roadmap.md) for
-the next project phases.
+for the completed migration result,
+[`docs/decisions/003-qdrant-local-retrieval.md`](docs/decisions/003-qdrant-local-retrieval.md)
+for the Qdrant evaluation decision,
+[`docs/decisions/004-mixed-vector-retrieval.md`](docs/decisions/004-mixed-vector-retrieval.md)
+for the active mixed-backend decision, and [`docs/roadmap.md`](docs/roadmap.md)
+for the next project phases.
 
 ## Known corpus limitations
 

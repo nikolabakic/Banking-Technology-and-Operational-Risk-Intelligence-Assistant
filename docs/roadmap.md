@@ -1,8 +1,8 @@
 # BankScope roadmap
 
 The repository-overhaul phase was accepted on 2026-08-06 after the whole-table
-corpus, full test suite and BM25 evaluation were recorded. A GPU dense/hybrid
-run is an explicit measurement follow-up, not an unresolved code migration.
+corpus, full test suite and BM25 evaluation were recorded. The complete
+dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 
 | Phase | Status | Exit condition |
 |---|---|---|
@@ -11,7 +11,7 @@ run is an explicit measurement follow-up, not an unresolved code migration.
 | Repository overhaul | Complete | Five active commands, legacy isolated, tests and lint green |
 | Whole-table corpus | Complete | One stored table and at most one description per parser-emitted table |
 | Embeddings | Implemented | Length/order/hash/model contracts and real smoke run pass |
-| Retrieval evaluation | BM25 complete | Frozen 30-question BM25 result recorded; GPU dense/hybrid run remains |
+| Retrieval evaluation | Complete | Frozen 30-question baseline/Qdrant comparison and backend decision recorded |
 | Answer generation | Pending | Answers use hydrated evidence and expose citations |
 | Conversation history | Pending | Follow-ups work without contaminating retrieval |
 | Simple user interface | Pending | Local chat flow is usable by a reviewer |
@@ -34,7 +34,11 @@ regression is not hidden: it must either be fixed or explicitly accepted for a
 clear simplicity benefit.
 
 The accepted overhaul result and its compute caveat are recorded in
-`docs/decisions/002-repository-overhaul.md`.
+`docs/decisions/002-repository-overhaul.md`. The Qdrant implementation and its
+measured full-backend result are recorded in
+`docs/decisions/003-qdrant-local-retrieval.md`. The requirement-driven decision
+to use Qdrant dense search with BM25S and application RRF is recorded in
+`docs/decisions/004-mixed-vector-retrieval.md`.
 
 ## Scope boundary
 
