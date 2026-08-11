@@ -18,6 +18,7 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Automatic bank resolution | Complete | Names, aliases and tickers resolve before retrieval; missing/multiple banks fail locally |
 | Conversation history | Pending | Follow-ups inherit the resolved session bank without contaminating retrieval |
 | Simple user interface | Pending | Local chat flow is usable by a reviewer |
+| External tools and function calling | Future consideration | Assess web search, calculator and document lookup integrations to extend the assistant's capabilities |
 | Final report | Pending | Retrieval and generation results are reported separately |
 
 ## Acceptance gates
