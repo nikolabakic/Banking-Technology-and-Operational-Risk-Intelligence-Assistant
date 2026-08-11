@@ -13,8 +13,9 @@ BankScope je studentski RAG projekat za pretragu najnovijih lokalno preuzetih
 6. meri kvalitet retrieval-a na unapred označenim pitanjima;
 7. generiše proverljiv odgovor iz hidriranih dokaza, uz citate ili abstention.
 
-Retrieval i prvi single-bank generation tok sada rade. Conversation history,
-evaluacija kvaliteta generisanja i korisnički interfejs tek slede.
+Retrieval i prvi single-bank generation tok sada rade. Hardening generisanih
+odgovora je implementiran lokalno, ali GPT-5.1 probe i frozen baseline još čekaju
+izričito odobrenje. Conversation history počinje tek ako novi quality gate prođe.
 
 ## 2. Najvažnija mentalna slika
 
@@ -393,6 +394,12 @@ Canonical table store. Cuva 1.783 cele Markdown tabele, cell matrices,
 klasifikaciju, eligibility i izvorne metapodatke. Njih 1.556 je retrieval eligible;
 227 layout/index tabela se samo cuva radi audit-a.
 
+### `data/processed/lexical_glossary_locators_v1.jsonl`
+
+Verzionisani lexical-only zapisi za acronym/glossary parove. Svaki locator pokazuje na postojeci
+whole-table `target_chunk_id`; BM25 deduplikuje parent tabelu pre limita, a korisniku se uvek
+vraca puna tabela. Dense embeddings i Qdrant kolekcija se zbog ovih locatora ne menjaju.
+
 ### `data/processed/manifest.json`
 
 Dokaz kako je korpus napravljen: verzije parsera i tokenizer-a, token limit,
@@ -424,6 +431,8 @@ jedno unsupported. Neka cross-bank pitanja imaju `required_evidence_groups`.
 
 `retrieval.json` je kompletan zbirni i per-query rezultat. `run_provenance.json`
 beleži Colab/T4 okruženje, parametre i hash-eve korišćenih artefakata.
+`retrieval-glossary-locators-v1.json` je odvojeni lokalni v2 retrieval rezultat; istorijski
+`retrieval.json` ostaje netaknut.
 
 ## 8. Konfiguracioni i root fajlovi
 
@@ -512,9 +521,10 @@ zato nije prošao definisani MRR prag.
 
 Sledeće faze su:
 
-1. conversation history bez kontaminacije retrieval query-ja;
-2. jednostavan lokalni chat UI;
-3. odvojeno izveštavanje retrieval i generation kvaliteta.
+1. approval-gated GPT-5.1 compatibility probe i jedan frozen generation run;
+2. conversation history bez kontaminacije retrieval query-ja, samo ako gate prođe;
+3. jednostavan lokalni chat UI;
+4. odvojeno izveštavanje retrieval i generation kvaliteta.
 
 ## 11. Kako pokrenuti projekat
 
@@ -586,5 +596,6 @@ prvim bezbednim single-bank generation tokom i implementiranim evaluatorom.
 `scripts/` pokreće pipeline, `src/` nosi validiranu logiku, `data/` čuva izvore i
 artefakte, `tests/` štiti ugovore, a `sandbox/` čuva istoriju van runtime-a.
 Prvi generation baseline je zabeležen nad 26 in-scope pitanja: 24 su evaluirana,
-a dve model-format/citation greške su sačuvane kao eksplicitni rezultati. Sledeća
-granica je conversation history, a zatim jednostavan chat interfejs.
+a dve model-format/citation greške su sačuvane kao eksplicitni rezultati. Lokalni
+hardening kandidat sada čeka odobren GPT-5.1 probe i jedan frozen run. Conversation
+history dolazi tek posle uspešnog quality gate-a.

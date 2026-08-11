@@ -43,10 +43,12 @@ class HybridRetriever:
         records: Sequence[dict[str, Any]],
         embeddings: np.ndarray | None = None,
         tables: Sequence[dict[str, Any]] | None = None,
+        lexical_records: Sequence[dict[str, Any]] | None = None,
     ) -> None:
         self.records = list(records)
         if not self.records:
             raise ValueError("At least one retrieval record is required.")
+        self.lexical_records = [*self.records, *(lexical_records or [])]
         self.embeddings: np.ndarray | None = None
         if embeddings is not None:
             matrix = np.asarray(embeddings, dtype=np.float32)
@@ -62,11 +64,12 @@ class HybridRetriever:
             if np.any(norms == 0):
                 raise ValueError("Document embeddings must have non-zero norm.")
             self.embeddings = matrix / norms[:, None]
-        self._validate_record_order()
+        self._validate_record_order(self.records)
+        self._validate_record_order(self.lexical_records)
         self.tables_by_id = self._index_tables(tables or [])
         table_ids = {
             str(get_field(record, "table_id") or record["target_chunk_id"])
-            for record in self.records
+            for record in self.lexical_records
             if str(get_field(record, "record_type") or "").lower() == "table"
         }
         if table_ids and tables is None:
@@ -82,6 +85,12 @@ class HybridRetriever:
         self.record_types = np.asarray(
             [str(get_field(record, "record_type") or "").lower() for record in self.records]
         )
+        self.lexical_tickers = np.asarray(
+            [str(get_field(record, "ticker") or "").upper() for record in self.lexical_records]
+        )
+        self.lexical_record_types = np.asarray(
+            [str(get_field(record, "record_type") or "").lower() for record in self.lexical_records]
+        )
         # bm25s prints a Windows-only import notice to stdout; contain only that import.
         with redirect_stdout(StringIO()):
             bm25s = import_module("bm25s")
@@ -89,18 +98,21 @@ class HybridRetriever:
         self.tokenizer = tokenizer_class(
             lower=True, splitter=FINANCIAL_TOKEN_PATTERN, stopwords=[], stemmer=None
         )
-        corpus = [normalize_lexical_text(get_retrieval_text(record)) for record in self.records]
+        corpus = [
+            normalize_lexical_text(get_retrieval_text(record)) for record in self.lexical_records
+        ]
         corpus_tokens = self.tokenizer.tokenize(corpus, update_vocab=True, show_progress=False)
         self.bm25 = bm25s.BM25(method="lucene")
         self.bm25.index(corpus_tokens, show_progress=False)
 
-    def _validate_record_order(self) -> None:
-        record_ids = [str(record.get("record_id") or "").strip() for record in self.records]
+    @staticmethod
+    def _validate_record_order(records: Sequence[dict[str, Any]]) -> None:
+        record_ids = [str(record.get("record_id") or "").strip() for record in records]
         if any(not record_id for record_id in record_ids):
             raise ValueError("Every retrieval record must have a non-empty record_id.")
         if len(record_ids) != len(set(record_ids)):
             raise ValueError("Retrieval record IDs must be unique.")
-        for record in self.records:
+        for record in records:
             if not str(record.get("target_chunk_id") or "").strip():
                 raise ValueError(f"Record {record['record_id']} has no target_chunk_id.")
             get_retrieval_text(record)
@@ -133,8 +145,33 @@ class HybridRetriever:
             )
         return indices
 
-    def _make_result(self, index: int, *, method: str, rank: int, score: float) -> dict[str, Any]:
-        record = self.records[index]
+    def _allowed_lexical_indices(
+        self, *, ticker: str | None, record_type: str | None
+    ) -> np.ndarray:
+        mask = np.ones(len(self.lexical_records), dtype=bool)
+        if ticker:
+            mask &= self.lexical_tickers == ticker.upper()
+        if record_type:
+            mask &= self.lexical_record_types == record_type.lower()
+        indices = np.flatnonzero(mask)
+        if len(indices) == 0:
+            raise ValueError(
+                "No records match the requested filters: "
+                f"ticker={ticker}, record_type={record_type}."
+            )
+        return indices
+
+    def _make_result(
+        self,
+        index: int,
+        *,
+        method: str,
+        rank: int,
+        score: float,
+        records: Sequence[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        source_records = self.records if records is None else records
+        record = source_records[index]
         metadata = record.get("metadata")
         metadata = metadata if isinstance(metadata, dict) else {}
         retrieval_text = get_retrieval_text(record)
@@ -201,20 +238,33 @@ class HybridRetriever:
         record_type: str | None = None,
     ) -> list[dict[str, Any]]:
         _validate_positive("limit", limit)
-        allowed = set(self._allowed_indices(ticker=ticker, record_type=record_type).tolist())
+        allowed = set(
+            self._allowed_lexical_indices(ticker=ticker, record_type=record_type).tolist()
+        )
         query_tokens = self.tokenizer.tokenize(
             [normalize_lexical_text(query)], update_vocab=False, show_progress=False
         )
         document_ids, scores = self.bm25.retrieve(
-            query_tokens, k=len(self.records), show_progress=False
+            query_tokens, k=len(self.lexical_records), show_progress=False
         )
         results: list[dict[str, Any]] = []
+        seen_targets: set[str] = set()
         for raw_index, raw_score in zip(document_ids[0], scores[0], strict=True):
             index, score = int(raw_index), float(raw_score)
             if index not in allowed or score <= 0:
                 continue
+            target_id = str(self.lexical_records[index]["target_chunk_id"])
+            if target_id in seen_targets:
+                continue
+            seen_targets.add(target_id)
             results.append(
-                self._make_result(index, method="bm25", rank=len(results) + 1, score=score)
+                self._make_result(
+                    index,
+                    method="bm25",
+                    rank=len(results) + 1,
+                    score=score,
+                    records=self.lexical_records,
+                )
             )
             if len(results) == limit:
                 break

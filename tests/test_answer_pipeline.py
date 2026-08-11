@@ -32,27 +32,36 @@ class MockRetriever:
 
 
 class MockCompletions:
+    def __init__(self) -> None:
+        self.calls = []
+
     def create(self, **kwargs):
-        del kwargs
+        self.calls.append(kwargs)
         message = SimpleNamespace(
             content=(
-                '{"status":"supported","answer":"The ratio was 14.6% [E1].",'
-                '"citation_ids":["E1"],"reason":"Direct support."}'
+                '{"status":"supported","answer_type":"numeric",'
+                '"answer":"The ratio was 14.6% [E1].",'
+                '"facts":{"entity":"JPMorgan Chase & Co.","metric":"ratio",'
+                '"variant":null,"period":"2025","value_text":"14.6%",'
+                '"unit":"percent"},"citation_ids":["E1"],'
+                '"reason":"Direct support."}'
             )
         )
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
 
 
 def test_pipeline_reuses_encoder_and_retriever_and_preserves_cli_output() -> None:
     encoder = MockEncoder()
     retriever = MockRetriever()
+    completions = MockCompletions()
     close_calls = []
     pipeline = SingleBankAnswerPipeline(
         retriever=retriever,
         query_encoder=encoder,
-        client=SimpleNamespace(chat=SimpleNamespace(completions=MockCompletions())),
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
         generation_model="generation-model",
         close_callback=lambda: close_calls.append(True),
+        bank_names={"JPM": "JPMorgan Chase & Co."},
     )
 
     first = pipeline.answer("What was the ratio?", ticker="jpm")
@@ -70,4 +79,8 @@ def test_pipeline_reuses_encoder_and_retriever_and_preserves_cli_output() -> Non
         "evidence_count": 1,
     }
     assert first.output["status"] == "supported"
+    assert first.output["facts"]["entity"] == "JPMorgan Chase & Co."
+    assert first.output["answer"] == ("JPMorgan Chase & Co. — ratio — 2025: 14.6 percent [E1]")
+    assert len(completions.calls) == 2
+    assert "Expected bank: JPMorgan Chase & Co." in completions.calls[0]["messages"][1]["content"]
     assert second.evidence[0]["target_chunk_id"] == "chunk-1"

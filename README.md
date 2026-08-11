@@ -17,6 +17,9 @@ download.py -> build_corpus.py -> embed.py -> search.py / evaluate.py -> answer.
   stored once in `tables.jsonl`.
 - Each retrieval-relevant table gets one compact description in `chunks.jsonl`.
   A table hit is resolved back to the complete table before evidence is shown.
+- Acronym and glossary tables additionally get small lexical-only definition
+  locators. They share the parent table target ID, are deduplicated before the
+  output limit and always hydrate back to the complete table.
 - The default mixed backend retrieves dense candidates from persistent Qdrant,
   retrieves lexical candidates with BM25S and combines both rankings with
   application reciprocal-rank fusion (RRF).
@@ -55,7 +58,7 @@ python scripts/build_qdrant.py
 python scripts/search.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
 python scripts/answer.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
 python scripts/evaluate.py
-python scripts/evaluate_answers.py
+python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113
 ```
 
 The default search uses Qdrant for dense retrieval and BM25S plus application
@@ -76,11 +79,17 @@ Useful smoke runs:
 python scripts/download.py --ticker JPM
 python scripts/build_corpus.py --ticker JPM --output-dir data/processed/smoke-jpm --overwrite
 python scripts/embed.py --limit 10
-python scripts/evaluate_answers.py --query-id dev_jpm_standardized_cet1_ratio_2025
+python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113 `
+  --query-id dev_jpm_standardized_cet1_ratio_2025 `
+  --output artifacts/generation-gpt51-smoke.json
 ```
 
 Filtered corpus builds require their own output directory so a smoke run cannot
 replace the complete ten-bank corpus by accident.
+
+`build_corpus.py` writes the glossary locator artifact together with chunks and
+tables. To regenerate only that small artifact from existing processed data, run
+`python scripts/build_glossary_locators.py --overwrite`.
 
 Generated files are local and ignored by Git:
 
@@ -88,11 +97,15 @@ Generated files are local and ignored by Git:
 data/raw/sec/                 downloaded filing HTML
 data/processed/chunks.jsonl   text chunks and table descriptions
 data/processed/tables.jsonl   complete tables and stable table IDs
+data/processed/lexical_glossary_locators_v1.jsonl lexical-only definition locators
 data/processed/manifest.json  parser and corpus provenance
 data/processed/embeddings.npz vectors joined to chunks by record order
 data/processed/qdrant/        generated persistent local Qdrant database
 data/processed/qdrant_manifest.json Qdrant source hashes and vector configuration
 data/evaluation/results/generation.json generation metrics, answers and provenance
+data/evaluation/results/generation-gpt51-json-v1.json hardened candidate baseline
+data/evaluation/results/retrieval-glossary-locators-v1.json v2 retrieval gate result
+data/evaluation/results/generation-gpt51-json-v2.json reserved v2 generation result
 ```
 
 Table descriptions are deterministic by default. GPT-4o descriptions are an
@@ -109,27 +122,46 @@ This mode obtains the authenticated corporate client through
 defaults to `AZURE_GPT_4o_2024_1120`. It makes one API request per
 retrieval-eligible table, so the local mode should be used for normal development runs.
 
-`answer.py` performs the default mixed hybrid retrieval, passes only hydrated
-evidence to the configured OpenAI-compatible Chat Completions endpoint, and returns a JSON
-answer with filing citations. The first generation slice intentionally requires
+`answer.py` performs the default mixed hybrid retrieval and passes only hydrated
+evidence to the configured OpenAI-compatible Chat Completions endpoint. Generation
+uses JSON mode followed by a strict Pydantic contract. Numeric answers are rendered
+locally from validated `facts`, and their exact numeric token must occur in at least
+one cited evidence document. The flow makes at most one generation request per
+question and never retries. The first generation slice intentionally requires
 `--ticker`; unsupported periods fail before the model call, while ambiguous or
-insufficient evidence produces an abstention. Custom gateways can be configured
-by the internal `model_access` package.
+insufficient evidence produces an abstention. Custom gateways can be configured by
+the internal `model_access` package.
 
 `evaluate_answers.py` reuses the same long-lived answer pipeline and evaluates
 the 26 frozen questions that fit the current single-bank contract: 25 answerable
 questions and one unsupported-period question. Three cross-bank questions and
 the ambiguous question without a ticker are listed as explicit scope exclusions.
 Deterministic status, structured-field and citation metrics are reported
-separately from the advisory semantic judge. The run sends hydrated filing
-evidence to the configured model endpoint; use `--skip-judge` to omit the
-additional semantic-judge calls.
+separately from the advisory semantic judge. Metrics read structured `facts` first
+and retain a text fallback for the historical baseline. Qrel citation metrics stay
+unchanged; support-aware metrics additionally use the versioned manual citation
+audit. The GPT-4o semantic judge receives only evidence actually cited by the
+answer. Use `--skip-judge` to omit the additional evaluation-only judge calls.
 
 The first recorded 26-question generation baseline completed 24 queries and
 captured two model-format/citation errors. Among completed queries, answer
 status accuracy was 100%, exact expected-value accuracy was 86.7%, relevant
 citation hit rate was 87.0%, and all eight advisory semantic judgements passed.
 See decision 005 for denominators and caveats; retrieval metrics remain separate.
+
+The hardened GPT-5.1 candidate is implemented but is not yet the default. The
+v1 compatibility probe has already passed; the v2 frozen run still requires
+separate explicit approval:
+
+```powershell
+python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113
+```
+
+The command writes `generation-gpt51-json-v2.json`; the historical
+`generation.json` and v1 candidate remain unchanged. The default output path is reserved for the
+GPT-5.1 candidate, preventing an accidental run under a differently configured
+default model. See [`docs/generation_hardening.md`](docs/generation_hardening.md)
+for the gate and audit contract.
 
 ## Checks
 

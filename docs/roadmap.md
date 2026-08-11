@@ -14,7 +14,8 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Retrieval evaluation | Complete | Frozen 30-question baseline/Qdrant comparison and backend decision recorded |
 | Answer generation | Implemented | Single-bank answers use hydrated evidence, abstain and expose citations |
 | Generation evaluation | Complete | Reusable 26-question evaluator and first baseline record deterministic metrics, advisory judge results and two explicit query errors |
-| Conversation history | Pending | Follow-ups work without contaminating retrieval |
+| Generation hardening | Local retrieval gate passed | GPT-5.1 v2 JSON candidate passes the approval-gated 26-question quality gate |
+| Conversation history | Blocked by generation gate | Follow-ups work without contaminating retrieval |
 | Simple user interface | Pending | Local chat flow is usable by a reviewer |
 | Final report | Pending | Retrieval and generation results are reported separately |
 
@@ -41,7 +42,9 @@ measured full-backend result are recorded in
 to use Qdrant dense search with BM25S and application RRF is recorded in
 `docs/decisions/004-mixed-vector-retrieval.md`. The current single-bank
 generation-evaluation scope and its first measured baseline are recorded in
-`docs/decisions/005-generation-evaluation.md`.
+`docs/decisions/005-generation-evaluation.md`. The locally implemented hardening
+candidate and its still-pending approval gate are described in
+`docs/generation_hardening.md`.
 
 ## Scope boundary
 

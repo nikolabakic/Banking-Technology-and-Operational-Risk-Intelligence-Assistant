@@ -10,6 +10,7 @@ from bankscope.config.settings import get_settings
 from bankscope.generation import SingleBankAnswerPipeline
 from bankscope.generation.pipeline import (
     DEFAULT_CHUNKS,
+    DEFAULT_GLOSSARY_LOCATORS,
     DEFAULT_QDRANT_MANIFEST,
     DEFAULT_QDRANT_PATH,
     DEFAULT_TABLES,
@@ -29,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", help="Generation model override (defaults to OPENAI_MODEL).")
     parser.add_argument("--chunks", type=Path, default=DEFAULT_CHUNKS)
     parser.add_argument("--tables", type=Path, default=DEFAULT_TABLES)
+    parser.add_argument("--glossary-locators", type=Path, default=DEFAULT_GLOSSARY_LOCATORS)
     parser.add_argument("--qdrant-path", type=Path, default=DEFAULT_QDRANT_PATH)
     parser.add_argument("--qdrant-manifest", type=Path, default=DEFAULT_QDRANT_MANIFEST)
     parser.add_argument("--collection", default=DEFAULT_COLLECTION_NAME)
@@ -53,9 +55,11 @@ def main() -> None:
         temperature=settings.llm_temperature,
         chunks_path=args.chunks,
         tables_path=args.tables,
+        glossary_locators_path=args.glossary_locators,
         qdrant_path=args.qdrant_path,
         qdrant_manifest_path=args.qdrant_manifest,
         collection_name=args.collection,
+        bank_registry_path=settings.bank_registry_path,
     ) as pipeline:
         run = pipeline.answer(
             args.question,

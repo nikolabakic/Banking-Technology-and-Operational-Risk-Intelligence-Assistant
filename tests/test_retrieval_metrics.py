@@ -147,13 +147,18 @@ def test_evaluator_bm25_skips_embedding_archive(monkeypatch: pytest.MonkeyPatch)
     chunks = Path("chunks.jsonl")
     tables = Path("tables.jsonl")
     qrels = Path("queries.jsonl")
+    locators = Path("locators.jsonl")
+    reference = SimpleNamespace(read_text=lambda **_: '{"per_query": []}')
     captured: dict[str, object] = {}
     args = Namespace(
         qrels=qrels,
         chunks=chunks,
         tables=tables,
+        glossary_locators=locators,
         embeddings=Path("missing.npz"),
         output=Path("ignored.json"),
+        reference_results=reference,
+        backend="mixed",
         methods=["bm25"],
         candidate_k=-1,
         rrf_k=-1,
@@ -197,6 +202,34 @@ def test_evaluator_bm25_skips_embedding_archive(monkeypatch: pytest.MonkeyPatch)
     assert isinstance(corpus, dict)
     assert corpus["embedding_model"] is None
     assert corpus["record_order_validated"] is False
+
+
+def test_glossary_locator_gate_requires_hits_and_no_regressions() -> None:
+    query_ids = ["dev_bac_bana_expansion_2025", "dev_pnc_gsib_expansion_2025"]
+    candidate_rows = [
+        {
+            "query_id": query_id,
+            "method_key": "mixed.hybrid",
+            "metrics": {"first_relevant_rank": 1, "hit_at_5": 1, "hit_at_10": 1},
+        }
+        for query_id in query_ids
+    ]
+    reference = {
+        "per_query": [
+            {
+                "query_id": query_id,
+                "method_key": "mixed.hybrid",
+                "metrics": {"hit_at_5": 0, "hit_at_10": 0},
+            }
+            for query_id in query_ids
+        ]
+    }
+    summary = {"mixed.hybrid": {"hit_count_at_5": 27, "hit_count_at_10": 28}}
+
+    gate = evaluate_script.assess_glossary_locator_gate(candidate_rows, summary, reference)
+
+    assert gate is not None
+    assert gate["passed"] is True
 
 
 def test_evaluator_rejects_duplicate_methods(monkeypatch: pytest.MonkeyPatch) -> None:

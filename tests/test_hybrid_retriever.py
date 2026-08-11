@@ -79,6 +79,37 @@ def test_bm25_indexes_embedding_text_and_hydrates_table_evidence() -> None:
     assert result["evidence"] == result["document"]
 
 
+def test_bm25_uses_glossary_locators_and_deduplicates_parent_tables() -> None:
+    parent = record(
+        "table-description",
+        record_type="table",
+        embedding_text="Acronym table",
+        table_id="table-7",
+    )
+    locators = [
+        record(
+            "bana-locator",
+            record_type="table",
+            embedding_text="BANA stands for Bank of America National Association",
+            table_id="table-7",
+        ),
+        record(
+            "bana-duplicate-locator",
+            record_type="table",
+            embedding_text="BANA definition Bank of America National Association",
+            table_id="table-7",
+        ),
+    ]
+    tables = [{"table_id": "table-7", "document": "| BANA | Full definition |"}]
+    retriever = HybridRetriever([parent], tables=tables, lexical_records=locators)
+
+    results = retriever.search_bm25("What does BANA stand for?", limit=3)
+
+    assert [result["target_chunk_id"] for result in results] == ["table-7"]
+    assert results[0]["record_id"] == "bana-locator"
+    assert results[0]["document"] == "| BANA | Full definition |"
+
+
 def test_dense_search_applies_ticker_and_record_type_filters() -> None:
     records = [
         record("jpm-text", ticker="JPM"),

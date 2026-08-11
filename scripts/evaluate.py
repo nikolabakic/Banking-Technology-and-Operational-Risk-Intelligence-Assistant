@@ -19,6 +19,10 @@ from bankscope.evaluation.retrieval_metrics import (
     evaluate_ranking,
 )
 from bankscope.io import load_embedding_archive, read_jsonl, sha256_file
+from bankscope.retrieval.glossary_locators import (
+    GLOSSARY_LOCATOR_VERSION,
+    validate_glossary_locators,
+)
 from bankscope.retrieval.hybrid_retriever import HybridRetriever
 from bankscope.retrieval.mixed_retriever import MixedRetriever
 from bankscope.retrieval.qdrant_retriever import (
@@ -30,9 +34,11 @@ from bankscope.retrieval.qdrant_retriever import (
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CHUNKS = ROOT / "data/processed/chunks.jsonl"
 DEFAULT_TABLES = ROOT / "data/processed/tables.jsonl"
+DEFAULT_GLOSSARY_LOCATORS = ROOT / "data/processed/lexical_glossary_locators_v1.jsonl"
 DEFAULT_EMBEDDINGS = ROOT / "data/processed/embeddings.npz"
 DEFAULT_QRELS = ROOT / "data/evaluation/queries.jsonl"
-DEFAULT_OUTPUT = ROOT / "data/evaluation/results/retrieval.json"
+DEFAULT_OUTPUT = ROOT / "data/evaluation/results/retrieval-glossary-locators-v1.json"
+DEFAULT_REFERENCE_RESULTS = ROOT / "data/evaluation/results/retrieval.json"
 DEFAULT_QDRANT_PATH = ROOT / "data/processed/qdrant"
 DEFAULT_QDRANT_MANIFEST = ROOT / "data/processed/qdrant_manifest.json"
 VALID_STATUSES = {"answerable", "ambiguous", "unsupported"}
@@ -315,6 +321,54 @@ def assess_mixed_parity(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+def assess_glossary_locator_gate(
+    rows: list[dict[str, Any]],
+    summary: dict[str, dict[str, float | int]],
+    reference: dict[str, Any],
+) -> dict[str, Any] | None:
+    candidate_summary = summary.get("mixed.hybrid")
+    if candidate_summary is None:
+        return None
+
+    candidate_rows = {
+        str(row["query_id"]): row for row in rows if row.get("method_key") == "mixed.hybrid"
+    }
+    reference_rows = {
+        str(row["query_id"]): row
+        for row in reference.get("per_query", [])
+        if row.get("method_key") == "mixed.hybrid"
+    }
+    regressions: dict[str, list[str]] = {"hit_at_5": [], "hit_at_10": []}
+    for query_id in sorted(candidate_rows.keys() & reference_rows.keys()):
+        for metric in regressions:
+            if (
+                reference_rows[query_id]["metrics"].get(metric) == 1
+                and candidate_rows[query_id]["metrics"].get(metric) != 1
+            ):
+                regressions[metric].append(query_id)
+
+    glossary_queries = ("dev_bac_bana_expansion_2025", "dev_pnc_gsib_expansion_2025")
+    glossary_ranks = {
+        query_id: candidate_rows.get(query_id, {}).get("metrics", {}).get("first_relevant_rank")
+        for query_id in glossary_queries
+    }
+    checks = {
+        "mixed_hit_count_at_5": int(candidate_summary["hit_count_at_5"]) >= 27,
+        "mixed_hit_count_at_10": int(candidate_summary["hit_count_at_10"]) == 28,
+        "bana_and_gsib_in_top_5": all(
+            isinstance(rank, int) and rank <= 5 for rank in glossary_ranks.values()
+        ),
+        "no_hit_at_5_regressions": not regressions["hit_at_5"],
+        "no_hit_at_10_regressions": not regressions["hit_at_10"],
+    }
+    return {
+        "passed": all(checks.values()),
+        "checks": checks,
+        "glossary_first_relevant_ranks": glossary_ranks,
+        "regressions": regressions,
+    }
+
+
 def result_preview(result: dict[str, Any]) -> dict[str, Any]:
     return {key: result.get(key) for key in PREVIEW_FIELDS}
 
@@ -329,8 +383,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qrels", type=Path, default=DEFAULT_QRELS)
     parser.add_argument("--chunks", type=Path, default=DEFAULT_CHUNKS)
     parser.add_argument("--tables", type=Path, default=DEFAULT_TABLES)
+    parser.add_argument("--glossary-locators", type=Path, default=DEFAULT_GLOSSARY_LOCATORS)
     parser.add_argument("--embeddings", type=Path, default=DEFAULT_EMBEDDINGS)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--reference-results", type=Path, default=DEFAULT_REFERENCE_RESULTS)
     parser.add_argument("--backend", choices=(*BACKENDS, "all"), default="mixed")
     parser.add_argument("--methods", nargs="+", choices=METHODS, default=list(METHODS))
     parser.add_argument("--candidate-k", type=int, default=30)
@@ -356,7 +412,15 @@ def main() -> None:
 
     records = read_jsonl(args.chunks)
     tables = read_jsonl(args.tables)
+    glossary_locators = read_jsonl(args.glossary_locators) if "mixed" in backends else []
+    if glossary_locators:
+        validate_glossary_locators(glossary_locators, records, tables)
     queries = read_jsonl(args.qrels)
+    reference_results = (
+        json.loads(args.reference_results.read_text(encoding="utf-8"))
+        if "mixed" in backends and "hybrid" in args.methods
+        else {"per_query": []}
+    )
     chunks_sha256 = sha256_file(args.chunks)
     answerable = validate_qrels(queries, records)
     needs_vectors = any(method != "bm25" for method in args.methods)
@@ -427,7 +491,11 @@ def main() -> None:
             raise RuntimeError("Qdrant backend was not initialized.")
         retrievers["qdrant"] = qdrant_retriever
     if "mixed" in backends:
-        lexical_retriever = baseline_retriever or HybridRetriever(records, tables=tables)
+        lexical_retriever = HybridRetriever(
+            records,
+            tables=tables,
+            lexical_records=glossary_locators,
+        )
         if needs_vectors:
             if qdrant_retriever is None:
                 raise RuntimeError("Mixed dense backend was not initialized.")
@@ -500,10 +568,15 @@ def main() -> None:
         if "baseline" in backends and candidate in backends
     }
     mixed_parity = assess_mixed_parity(rows)
+    glossary_locator_gate = assess_glossary_locator_gate(rows, summary, reference_results)
     output = {
         "corpus": {
             "chunks": str(args.chunks),
             "tables": str(args.tables),
+            "glossary_locators": str(args.glossary_locators),
+            "glossary_locator_count": len(glossary_locators),
+            "glossary_locator_version": GLOSSARY_LOCATOR_VERSION,
+            "glossary_locators_sha256": sha256_file(args.glossary_locators),
             "embeddings": str(args.embeddings),
             "record_count": len(records),
             "chunks_sha256": chunks_sha256,
@@ -534,6 +607,7 @@ def main() -> None:
         "quality_gate": quality_gate,
         "backend_comparison": backend_comparison or None,
         "mixed_parity": mixed_parity,
+        "glossary_locator_gate": glossary_locator_gate,
         "per_query": rows,
     }
     write_json(args.output, output)
@@ -542,6 +616,8 @@ def main() -> None:
         print(json.dumps({"quality_gate": quality_gate}, indent=2))
     if mixed_parity is not None:
         print(json.dumps({"mixed_parity": mixed_parity}, indent=2))
+    if glossary_locator_gate is not None:
+        print(json.dumps({"glossary_locator_gate": glossary_locator_gate}, indent=2))
     print(f"Saved: {args.output}")
 
 

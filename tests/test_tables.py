@@ -93,6 +93,21 @@ def test_cover_page_commission_file_table_is_layout_only() -> None:
     assert not [chunk for chunk in chunks if chunk["record_type"] == "table"]
 
 
+@pytest.mark.parametrize("title", ["Acronyms", "A CRONYMS", "Glossary"])
+def test_acronym_and_glossary_titles_are_classified_as_glossary(title: str) -> None:
+    content = (
+        f"**{title}**\n\n"
+        "| BANA | Bank of America, National Association |\n"
+        "| --- | --- |\n"
+        "| CET1 | Common equity tier 1 |"
+    )
+
+    _, tables = build_corpus(table_page(content), make_filing(), "raw", word_count)
+
+    assert tables[0]["table_type"] == "glossary"
+    assert tables[0]["retrieval_eligible"] is True
+
+
 class MockCompletions:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail

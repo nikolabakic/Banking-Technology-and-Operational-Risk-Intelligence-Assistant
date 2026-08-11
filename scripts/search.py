@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from bankscope.io import load_embedding_archive, read_jsonl, sha256_file
+from bankscope.retrieval.glossary_locators import validate_glossary_locators
 from bankscope.retrieval.hybrid_retriever import HybridRetriever
 from bankscope.retrieval.mixed_retriever import MixedRetriever
 from bankscope.retrieval.qdrant_retriever import (
@@ -22,6 +23,7 @@ from bankscope.retrieval.qdrant_retriever import (
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CHUNKS = ROOT / "data/processed/chunks.jsonl"
 DEFAULT_TABLES = ROOT / "data/processed/tables.jsonl"
+DEFAULT_GLOSSARY_LOCATORS = ROOT / "data/processed/lexical_glossary_locators_v1.jsonl"
 DEFAULT_EMBEDDINGS = ROOT / "data/processed/embeddings.npz"
 DEFAULT_QDRANT_PATH = ROOT / "data/processed/qdrant"
 DEFAULT_QDRANT_MANIFEST = ROOT / "data/processed/qdrant_manifest.json"
@@ -42,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rrf-k", type=int, default=60)
     parser.add_argument("--chunks", type=Path, default=DEFAULT_CHUNKS)
     parser.add_argument("--tables", type=Path, default=DEFAULT_TABLES)
+    parser.add_argument("--glossary-locators", type=Path, default=DEFAULT_GLOSSARY_LOCATORS)
     parser.add_argument("--embeddings", type=Path, default=DEFAULT_EMBEDDINGS)
     parser.add_argument("--qdrant-path", type=Path, default=DEFAULT_QDRANT_PATH)
     parser.add_argument("--qdrant-manifest", type=Path, default=DEFAULT_QDRANT_MANIFEST)
@@ -115,6 +118,13 @@ def main() -> None:
         records = read_jsonl(args.chunks)
     else:
         records = []
+    glossary_locators = (
+        read_jsonl(getattr(args, "glossary_locators", DEFAULT_GLOSSARY_LOCATORS))
+        if backend == "mixed"
+        else []
+    )
+    if backend == "mixed":
+        validate_glossary_locators(glossary_locators, records, tables)
 
     if args.mode != "bm25" and backend == "baseline":
         record_ids = [str(record.get("record_id") or "") for record in records]
@@ -165,7 +175,11 @@ def main() -> None:
         )
         retriever = qdrant_retriever
     elif args.mode == "bm25":
-        retriever = HybridRetriever(records, tables=tables)
+        retriever = HybridRetriever(
+            records,
+            tables=tables,
+            lexical_records=glossary_locators,
+        )
     else:
         qdrant_retriever = QdrantRetriever(
             args.qdrant_path,
@@ -176,7 +190,7 @@ def main() -> None:
         )
         retriever = MixedRetriever(
             qdrant_retriever,
-            HybridRetriever(records, tables=tables),
+            HybridRetriever(records, tables=tables, lexical_records=glossary_locators),
         )
     try:
         results = retrieve(

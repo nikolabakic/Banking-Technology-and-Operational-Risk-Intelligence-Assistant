@@ -181,10 +181,12 @@ def classify_table(
     if looks_like_index:
         return "index"
 
+    title = extract_table_title(content) or ""
+    compact_title = re.sub(r"[^a-z]+", "", title.casefold())
     if any(
         marker in f"{header_text} {normalized_content}"
         for marker in ("glossary of terms", "term definition", "acronym definition")
-    ):
+    ) or any(marker in compact_title for marker in ("acronym", "glossary")):
         return "glossary"
 
     layout_markers = (

@@ -20,6 +20,11 @@ from bankscope.parsing.corpus import (
     validate_corpus,
 )
 from bankscope.parsing.tables import PARSER_NAME
+from bankscope.retrieval.glossary_locators import (
+    GLOSSARY_LOCATOR_VERSION,
+    build_glossary_locators,
+    validate_glossary_locators,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST_PATH = ROOT / "data/filings.json"
@@ -119,6 +124,7 @@ def main() -> None:
     output_paths = {
         "chunks": args.output_dir / "chunks.jsonl",
         "tables": args.output_dir / "tables.jsonl",
+        "glossary_locators": args.output_dir / "lexical_glossary_locators_v1.jsonl",
         "manifest": args.output_dir / "manifest.json",
     }
     existing = [path for path in output_paths.values() if path.exists()]
@@ -188,8 +194,11 @@ def main() -> None:
         print(f"{ticker}: chunks={len(chunks)}, tables={len(tables)}")
 
     validate_corpus(all_chunks, all_tables, token_count=token_count)
+    glossary_locators = build_glossary_locators(all_chunks, all_tables)
+    validate_glossary_locators(glossary_locators, all_chunks, all_tables)
     write_jsonl(output_paths["chunks"], all_chunks)
     write_jsonl(output_paths["tables"], all_tables)
+    write_jsonl(output_paths["glossary_locators"], glossary_locators)
 
     manifest = {
         "corpus_version": CORPUS_VERSION,
@@ -208,6 +217,8 @@ def main() -> None:
         "text_chunk_count": sum(chunk["record_type"] == "text" for chunk in all_chunks),
         "table_chunk_count": sum(chunk["record_type"] == "table" for chunk in all_chunks),
         "table_count": len(all_tables),
+        "glossary_locator_version": GLOSSARY_LOCATOR_VERSION,
+        "glossary_locator_count": len(glossary_locators),
         "retrieval_eligible_table_count": sum(
             bool(table["retrieval_eligible"]) for table in all_tables
         ),

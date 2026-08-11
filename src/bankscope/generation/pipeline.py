@@ -9,6 +9,7 @@ import numpy as np
 
 from bankscope.generation.answer_generator import generate_answer
 from bankscope.io import read_jsonl, sha256_file
+from bankscope.retrieval.glossary_locators import validate_glossary_locators
 from bankscope.retrieval.hybrid_retriever import HybridRetriever
 from bankscope.retrieval.mixed_retriever import MixedRetriever
 from bankscope.retrieval.qdrant_retriever import (
@@ -16,12 +17,15 @@ from bankscope.retrieval.qdrant_retriever import (
     QdrantRetriever,
     load_qdrant_manifest,
 )
+from bankscope.sec.company_registry import load_bank_registry
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CHUNKS = PROJECT_ROOT / "data/processed/chunks.jsonl"
 DEFAULT_TABLES = PROJECT_ROOT / "data/processed/tables.jsonl"
+DEFAULT_GLOSSARY_LOCATORS = PROJECT_ROOT / "data/processed/lexical_glossary_locators_v1.jsonl"
 DEFAULT_QDRANT_PATH = PROJECT_ROOT / "data/processed/qdrant"
 DEFAULT_QDRANT_MANIFEST = PROJECT_ROOT / "data/processed/qdrant_manifest.json"
+DEFAULT_BANK_REGISTRY = PROJECT_ROOT / "config/banks.yaml"
 
 
 class QueryEncoder(Protocol):
@@ -71,6 +75,7 @@ class SingleBankAnswerPipeline:
         temperature: float = 0,
         close_callback: Any | None = None,
         dense_model: dict[str, str] | None = None,
+        bank_names: dict[str, str] | None = None,
     ) -> None:
         if not generation_model.strip():
             raise ValueError("generation_model cannot be empty.")
@@ -82,6 +87,11 @@ class SingleBankAnswerPipeline:
         self._close_callback = close_callback
         self._closed = False
         self.dense_model = dict(dense_model or {})
+        self.bank_names = {
+            ticker.strip().upper(): name.strip()
+            for ticker, name in (bank_names or {}).items()
+            if ticker.strip() and name.strip()
+        }
 
     @classmethod
     def from_paths(
@@ -92,13 +102,16 @@ class SingleBankAnswerPipeline:
         temperature: float = 0,
         chunks_path: str | Path = DEFAULT_CHUNKS,
         tables_path: str | Path = DEFAULT_TABLES,
+        glossary_locators_path: str | Path = DEFAULT_GLOSSARY_LOCATORS,
         qdrant_path: str | Path = DEFAULT_QDRANT_PATH,
         qdrant_manifest_path: str | Path = DEFAULT_QDRANT_MANIFEST,
         collection_name: str = DEFAULT_COLLECTION_NAME,
         query_encoder: QueryEncoder | None = None,
+        bank_registry_path: str | Path = DEFAULT_BANK_REGISTRY,
     ) -> SingleBankAnswerPipeline:
         chunks_path = Path(chunks_path)
         tables_path = Path(tables_path)
+        glossary_locators_path = Path(glossary_locators_path)
         manifest_path = Path(qdrant_manifest_path)
         manifest = load_qdrant_manifest(manifest_path)
         dense_model = manifest.get("dense_model")
@@ -117,6 +130,10 @@ class SingleBankAnswerPipeline:
 
         tables = read_jsonl(tables_path)
         records = read_jsonl(chunks_path)
+        glossary_locators = read_jsonl(glossary_locators_path)
+        validate_glossary_locators(glossary_locators, records, tables)
+        registry = load_bank_registry(bank_registry_path)
+        bank_names = {bank.ticker: bank.legal_name for bank in registry.banks}
         encoder = query_encoder or SentenceTransformerQueryEncoder(model_name, model_revision)
         qdrant = QdrantRetriever(
             qdrant_path,
@@ -126,7 +143,10 @@ class SingleBankAnswerPipeline:
             tables_path=tables_path,
         )
         try:
-            retriever = MixedRetriever(qdrant, HybridRetriever(records, tables=tables))
+            retriever = MixedRetriever(
+                qdrant,
+                HybridRetriever(records, tables=tables, lexical_records=glossary_locators),
+            )
             return cls(
                 retriever=retriever,
                 query_encoder=encoder,
@@ -135,6 +155,7 @@ class SingleBankAnswerPipeline:
                 temperature=temperature,
                 close_callback=qdrant.close,
                 dense_model={"name": model_name, "revision": model_revision},
+                bank_names=bank_names,
             )
         except Exception:
             qdrant.close()
@@ -169,6 +190,8 @@ class SingleBankAnswerPipeline:
             raise ValueError("Question cannot be empty.")
         if not ticker:
             raise ValueError("ticker is required for the single-bank answer flow.")
+        if self.bank_names and ticker not in self.bank_names:
+            raise ValueError(f"Unknown bank ticker: {ticker}.")
         if limit <= 0:
             raise ValueError("limit must be positive.")
         if candidate_k < limit:
@@ -199,6 +222,7 @@ class SingleBankAnswerPipeline:
             client=self.client,
             model=self.generation_model,
             expected_ticker=ticker,
+            expected_bank_name=self.bank_names.get(ticker, ticker),
             expected_record_type=record_type,
             temperature=self.temperature,
         )

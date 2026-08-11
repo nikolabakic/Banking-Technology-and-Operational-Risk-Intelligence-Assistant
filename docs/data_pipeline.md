@@ -9,6 +9,7 @@ config/banks.yaml
   -> scripts/build_corpus.py
   -> data/processed/chunks.jsonl
      data/processed/tables.jsonl
+     data/processed/lexical_glossary_locators_v1.jsonl
      data/processed/manifest.json
   -> scripts/embed.py
   -> data/processed/embeddings.npz
@@ -52,6 +53,11 @@ The local description is deterministic and uses filing metadata, nearby
 introductory text, section/title, periods, units, columns and all deduplicated
 row labels. Numeric table bodies remain only in the table store.
 
+Acronym and glossary tables additionally produce lexical-only key/definition
+locators. These records are not embedded and are not added to Qdrant. BM25
+deduplicates their shared parent `table_id` before applying its result limit,
+then hydrates the selected parent to the complete Markdown table.
+
 The optional OpenAI mode appends a short synopsis to that deterministic index.
 It is explicit, records its model/source provenance and fails rather than
 silently mixing description methods. An LLM description is retrieval metadata,
@@ -74,7 +80,7 @@ result is complete only when every required entity is represented.
 
 `build_qdrant.py` imports the same frozen records and dense vectors into
 persistent Qdrant Local Mode. The default `mixed` backend uses Qdrant dense
-search, local BM25S and application RRF. This stores and queries embeddings in a
+search, local BM25S with glossary locators and application RRF. This stores and queries embeddings in a
 VectorDB while retaining the stronger measured lexical and fusion paths.
 
 The collection also has a named `sparse` vector using `Qdrant/bm25` with the IDF
@@ -89,6 +95,7 @@ descriptions from the canonical table store.
 - IDs and record order are unique and deterministic for the same raw filing
   and pinned parser version.
 - Every table description references exactly one existing table.
+- Every glossary locator references an existing table description and table.
 - Complete table Markdown is never placed in embedding text.
 - All evidence retains ticker, accession, report date, pages and source URL.
 - Generated artifacts are ignored; `data/filings.json`, evaluation qrels and

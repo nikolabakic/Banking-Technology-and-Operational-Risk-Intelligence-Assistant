@@ -22,7 +22,16 @@ def query(**changes):
 def answer(**changes):
     value = {
         "status": "supported",
+        "answer_type": "numeric",
         "answer": "JPMorgan Chase's Standardized ratio was 14.6% in 2025 [E1].",
+        "facts": {
+            "entity": "JPMorgan Chase & Co.",
+            "metric": "ratio",
+            "variant": "Standardized",
+            "period": "2025-12-31",
+            "value_text": "14.6%",
+            "unit": "percent",
+        },
         "citations": [{"target_chunk_id": "chunk-1"}],
     }
     value.update(changes)
@@ -48,6 +57,7 @@ def test_structured_answer_and_relevant_citation_match() -> None:
     }
     assert metrics["citations"]["citation_precision"] == 1.0
     assert metrics["citations"]["citation_complete"] == 1
+    assert metrics["structured_source"] == "facts"
 
 
 def test_wrong_structured_fields_and_partial_evidence_groups_fail() -> None:
@@ -60,6 +70,14 @@ def test_wrong_structured_fields_and_partial_evidence_groups_fail() -> None:
         ),
         answer(
             answer="Citigroup's Advanced ratio was 13.1 dollars in 2024 [E1] [E2].",
+            facts={
+                "entity": "Citigroup Inc.",
+                "metric": "ratio",
+                "variant": "Advanced",
+                "period": "2024",
+                "value_text": "13.1",
+                "unit": "dollars",
+            },
             citations=[
                 {"target_chunk_id": "chunk-1"},
                 {"target_chunk_id": "unrelated"},
@@ -84,13 +102,74 @@ def test_unsupported_answer_is_correct_and_clean_without_citations() -> None:
     assert metrics["citations"]["citation_complete"] == 1
 
 
+def test_old_baseline_uses_answer_text_fallback() -> None:
+    old_answer = answer()
+    old_answer.pop("facts")
+    old_answer.pop("answer_type")
+
+    metrics = evaluate_answer(query(), old_answer)
+
+    assert set(metrics["structured"].values()) == {1}
+    assert metrics["structured_source"] == "answer_text"
+
+
+def test_support_aware_citation_accepts_only_audited_alternative() -> None:
+    metrics = evaluate_answer(
+        query(),
+        answer(citations=[{"target_chunk_id": "alternative"}]),
+        citation_audit={
+            "accepted_additional_target_chunk_ids": ["alternative"],
+            "reviewed_targets": [
+                {
+                    "target_chunk_id": "alternative",
+                    "classification": "accepted_additional_evidence",
+                    "note": "A directly supporting alternative table.",
+                },
+                {
+                    "target_chunk_id": "insufficient",
+                    "classification": "relevant_but_insufficient_precision",
+                    "note": "Relevant, but does not support the exact requested value.",
+                },
+            ],
+        },
+    )
+
+    assert metrics["citations"]["citation_relevant_hit"] == 0
+    assert metrics["citations"]["citation_complete"] == 0
+    assert metrics["citations"]["citation_support_hit"] == 1
+    assert metrics["citations"]["citation_support_precision"] == 1.0
+    assert metrics["citations"]["citation_support_complete"] == 1
+
+
 def test_summary_keeps_semantic_judge_separate() -> None:
     rows = [
         {
             "metrics": evaluate_answer(query(), answer()),
+            "answer": {
+                "generation": {
+                    "request_count": 1,
+                    "usage": {
+                        "prompt_tokens": 100,
+                        "completion_tokens": 20,
+                        "total_tokens": 120,
+                    },
+                }
+            },
             "judge": {"correctness": True, "completeness": False, "groundedness": True},
         },
-        {"error": {"message": "failed"}},
+        {
+            "error": {
+                "message": "failed",
+                "generation": {
+                    "request_count": 1,
+                    "usage": {
+                        "prompt_tokens": 80,
+                        "completion_tokens": 10,
+                        "total_tokens": 90,
+                    },
+                },
+            }
+        },
     ]
 
     summary = summarize_answer_metrics(rows)
@@ -101,6 +180,9 @@ def test_summary_keeps_semantic_judge_separate() -> None:
     assert summary["status_accuracy"] == 1.0
     assert summary["semantic_correctness_rate"] == 1.0
     assert summary["semantic_completeness_rate"] == 0.0
+    assert summary["generation_request_count"] == 2
+    assert summary["generation_prompt_tokens"] == 180
+    assert summary["generation_completion_tokens"] == 30
 
 
 def test_unsupported_only_summary_has_no_supported_citation_rate() -> None:
