@@ -17,6 +17,14 @@ npm run api  # terminal 1
 npm run dev  # terminal 2
 ```
 
+On Windows, both services can also be started from the repository root with:
+
+```powershell
+.\start-app.ps1
+```
+
+Press `Ctrl+C` in that terminal to stop both services.
+
 Vite proxies `/api` to the long-lived Python answer service on port 8000.
 
 ## Current design
