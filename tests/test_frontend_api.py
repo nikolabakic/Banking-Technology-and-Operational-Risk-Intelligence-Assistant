@@ -80,9 +80,7 @@ def test_frontend_api_serves_pipeline_answers() -> None:
     try:
         request = Request(
             f"http://127.0.0.1:{server.server_port}/api/answer",
-            data=json.dumps(
-                {"question": "What was the ratio?", "session_ticker": "jpm"}
-            ).encode(),
+            data=json.dumps({"question": "What was the ratio?", "session_ticker": "jpm"}).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
         )

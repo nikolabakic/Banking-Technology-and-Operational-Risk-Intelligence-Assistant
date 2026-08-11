@@ -3,36 +3,70 @@
 BankScope is a student RAG project for searching the latest downloaded 10-K
 filings of ten U.S. banks. 
 
-## Frontend
+## Quick start
 
-The BankScope UI lives in [`frontend/`](frontend/). It uses React, TypeScript, Vite,
-Tailwind CSS, Geist and Lucide. The interface is deliberately focused on one task:
-asking filing questions and inspecting their evidence. Bank and filing selection are
-automatic, and multiple questions can be asked in the same conversation.
+Requirements:
+
+- Python 3.13 and Git
+- Node.js `^20.19.0` or `>=22.12.0` and npm
+- access to the configured OpenAI-compatible model gateway
+
+From PowerShell in the repository root:
 
 ```powershell
-cd frontend
-npm install
-npm run api  # terminal 1
-npm run dev  # terminal 2
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev,llm]"
+Copy-Item .env.example .env
+npm.cmd install --prefix frontend
 ```
 
-On Windows, both services can also be started from the repository root with:
+Set `SEC_USER_AGENT` to an application name and contact email, then populate the
+model gateway values in `.env`. Credentials belong only in `.env` or a secret
+manager; never commit them.
+
+Processed corpus and Qdrant files are local artifacts and are not included in a
+fresh clone. Generate them before starting the application:
+
+```powershell
+python scripts/download.py
+python scripts/build_corpus.py --overwrite
+python scripts/embed.py --overwrite
+python scripts/build_qdrant.py
+```
+
+Start the API and frontend together on Windows:
 
 ```powershell
 .\start-app.ps1
 ```
 
-Press `Ctrl+C` in that terminal to stop both services.
+The script uses `.venv` when present, installs frontend dependencies when needed,
+starts the API at `http://127.0.0.1:8000` and Vite at `http://localhost:5173`, and
+stops both services on `Ctrl+C`.
 
-Vite proxies `/api` to the long-lived Python answer service on port 8000.
+For separate terminals, activate `.venv` first and run:
+
+```powershell
+cd frontend
+npm.cmd run api  # terminal 1
+npm.cmd run dev  # terminal 2
+```
+
+Vite proxies `/api` to the long-lived Python answer service. `GET /api/health`
+reports readiness. `POST /api/answer` accepts a question and an optional
+`session_ticker`, then returns the structured answer, citations and hydrated
+evidence. The current question selects the bank when it names one; otherwise the
+last resolved session bank is used for a follow-up. Missing or multiple banks
+produce an `ambiguous` response before retrieval or model calls.
 
 ## Current design
 
-The active pipeline has six commands:
+The active batch pipeline uses these entry points:
 
 ```text
-download.py -> build_corpus.py -> embed.py -> search.py / evaluate.py -> answer.py
+download.py -> build_corpus.py -> embed.py -> build_qdrant.py
+                                           -> search.py / evaluate.py / answer.py
 ```
 
 - `sec2md==0.1.23` is the only active filing parser.
@@ -53,25 +87,13 @@ download.py -> build_corpus.py -> embed.py -> search.py / evaluate.py -> answer.
 - Persistent Qdrant Local Mode is available as an optional backend. Its dense,
   BM25 and native-RRF paths are also implemented, but full Qdrant hybrid did not
   pass the MRR quality gate.
+- `serve_api.py` keeps the answer pipeline loaded for the React frontend. The UI
+  supports multiple turns, session-bank inheritance and evidence inspection.
 
 The parser decision is based on the frozen 30-question comparison: sec2md
 hybrid improved Hit@1 from 8/28 to 12/28 and MRR@10 from 0.494 to 0.589 over
 the original parser pipeline. See
 [`docs/decisions/001-parser-selection.md`](docs/decisions/001-parser-selection.md).
-
-## Setup
-
-Requirements: Python 3.13, Git and a local environment file.
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-Copy-Item .env.example .env
-```
-
-Set `SEC_USER_AGENT` to an application name and a contact email. Credentials
-belong only in `.env` or a secret manager; never commit them.
 
 ## Run the pipeline
 
@@ -154,11 +176,16 @@ evidence to the configured OpenAI-compatible Chat Completions endpoint. Generati
 uses JSON mode followed by a strict Pydantic contract. Numeric answers are rendered
 locally from validated `facts`, and their exact numeric token must occur in at least
 one cited evidence document. The flow makes at most one generation request per
-question and never retries. The first generation slice intentionally requires
-`--ticker`; unsupported periods fail before the model call, while ambiguous or
-insufficient evidence produces an abstention. Custom gateways can be configured by
-the internal `model_access` package. The bank normally comes from the question;
-`--ticker` remains an optional session/evaluation fallback for compatibility.
+question and never retries. Unsupported periods fail before the model call, while
+ambiguous or insufficient evidence produces an abstention. Custom gateways can be
+configured by the internal `model_access` package. The bank normally comes from the
+question; `--ticker` remains an optional session/evaluation fallback for follow-ups
+and compatibility.
+
+The answer CLI defaults to `OPENAI_MODEL` from `.env` (currently the GPT-4o
+configuration in `.env.example`). The local UI API deliberately defaults to the
+schema-validated `AZURE_GPT_51_2025_1113` candidate; pass `--model` to either entry
+point when an explicit override is needed.
 
 `evaluate_answers.py` reuses the same long-lived answer pipeline and evaluates
 the 26 frozen questions that fit the current single-bank contract: 25 answerable
@@ -181,12 +208,12 @@ The hardened GPT-5.1 v2 frozen run completed all 26 questions without schema or
 format errors and passed every answer-quality check, including variant 9/9 and
 grounded narratives 10/10. It did not pass the overall gate because one extra PNC
 citation gives only the rounded `$440.9 billion`, not exact support for
-`$440,866 million`; the post-run citation audit is therefore 24/25. GPT-5.1 is not
-the default, and the citation issue is deferred while bank resolution and conversation
-history proceed. The frozen run must not be
-repeated without separate approval. The historical `generation.json` and v1
-candidate remain unchanged. See [`docs/generation_hardening.md`](docs/generation_hardening.md)
-for the recorded result and audit contract.
+`$440,866 million`; the post-run citation audit is therefore 24/25. GPT-5.1 is the
+local UI API default but not the answer CLI default. The citation issue remains
+deferred and the frozen run must not be repeated without separate approval. The
+historical `generation.json` and v1 candidate remain unchanged. See
+[`docs/generation_hardening.md`](docs/generation_hardening.md) for the recorded result
+and audit contract.
 
 ## Checks
 
@@ -194,10 +221,15 @@ for the recorded result and audit contract.
 python -m pytest
 python -m ruff check .
 python -m ruff format --check .
+cd frontend
+npm.cmd run lint
+npm.cmd run build
 ```
 
-`sandbox/` contains superseded code, notebooks and experiments. Nothing under
-it is imported by the active project. See [`docs/data_pipeline.md`](docs/data_pipeline.md)
+`sandbox/` contains superseded code and experiments. Nothing under it is imported
+by the active project. `notebooks/` contains reproducible experimental workflows;
+both directories are outside the Ruff quality gate. See
+[`docs/data_pipeline.md`](docs/data_pipeline.md)
 for schemas and invariants,
 [`docs/decisions/002-repository-overhaul.md`](docs/decisions/002-repository-overhaul.md)
 for the completed migration result,
@@ -206,8 +238,10 @@ for the Qdrant evaluation decision,
 [`docs/decisions/004-mixed-vector-retrieval.md`](docs/decisions/004-mixed-vector-retrieval.md)
 for the active mixed-backend decision,
 [`docs/decisions/005-generation-evaluation.md`](docs/decisions/005-generation-evaluation.md)
-for the generation-evaluation contract, and [`docs/roadmap.md`](docs/roadmap.md)
-for the next project phases.
+for the generation-evaluation contract,
+[`docs/decisions/006-automatic-bank-resolution.md`](docs/decisions/006-automatic-bank-resolution.md)
+for bank and session fallback behavior, and [`docs/roadmap.md`](docs/roadmap.md) for
+the next project phases.
 
 ## Known corpus limitations
 

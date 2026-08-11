@@ -16,28 +16,30 @@ Start the long-lived Python answer service in one terminal:
 
 ```powershell
 cd frontend
-npm run api
+npm.cmd run api
 ```
 
 Then start Vite in a second terminal:
 
 ```powershell
 cd frontend
-npm install
-npm run dev
+npm.cmd install
+npm.cmd run dev
 ```
 
 Vite proxies `/api` requests to `http://127.0.0.1:8000`. The API keeps the answer
 pipeline loaded between questions, automatically resolves the bank from each question,
 and uses the last resolved bank only as conversational context for follow-up questions.
 It defaults to the schema-validated `AZURE_GPT_51_2025_1113` generation model. Override
-it when needed with `npm run api -- --model MODEL_NAME`.
+it when needed with `npm.cmd run api -- --model MODEL_NAME`.
 
 ## Interface contract
 
-- question submit → `POST /api/answer`
-- answer status → `supported | ambiguous | unsupported`
-- source chips and evidence drawer → `citations` plus hydrated `evidence`
+- readiness check -> `GET /api/health`
+- question submit -> `POST /api/answer`
+- request body -> `question` plus optional `session_ticker`
+- answer status -> `supported | ambiguous | unsupported`
+- source chips and evidence drawer -> `citations` plus hydrated `evidence`
 - bank selection is deliberately absent; `SingleBankAnswerPipeline` resolves it automatically
 
 ## Custom logo
