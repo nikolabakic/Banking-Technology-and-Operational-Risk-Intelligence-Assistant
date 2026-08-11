@@ -14,8 +14,9 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Retrieval evaluation | Complete | Frozen 30-question baseline/Qdrant comparison and backend decision recorded |
 | Answer generation | Implemented | Single-bank answers use hydrated evidence, abstain and expose citations |
 | Generation evaluation | Complete | Reusable 26-question evaluator and first baseline record deterministic metrics, advisory judge results and two explicit query errors |
-| Generation hardening | Local retrieval gate passed | GPT-5.1 v2 JSON candidate passes the approval-gated 26-question quality gate |
-| Conversation history | Blocked by generation gate | Follow-ups work without contaminating retrieval |
+| Generation hardening | Known citation caveat | Answer checks pass; citation audit is 24/25 and the default remains unchanged |
+| Automatic bank resolution | Complete | Names, aliases and tickers resolve before retrieval; missing/multiple banks fail locally |
+| Conversation history | Pending | Follow-ups inherit the resolved session bank without contaminating retrieval |
 | Simple user interface | Pending | Local chat flow is usable by a reviewer |
 | Final report | Pending | Retrieval and generation results are reported separately |
 

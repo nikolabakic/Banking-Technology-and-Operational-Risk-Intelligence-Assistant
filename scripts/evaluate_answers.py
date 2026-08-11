@@ -211,6 +211,7 @@ def _answer_payload(output: Mapping[str, Any]) -> dict[str, Any]:
             "reason",
             "citations",
             "generation",
+            "bank_resolution",
         )
     }
 

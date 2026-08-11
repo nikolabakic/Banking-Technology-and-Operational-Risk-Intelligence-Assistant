@@ -22,7 +22,10 @@ from bankscope.retrieval.qdrant_retriever import DEFAULT_COLLECTION_NAME
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("question", help="Single-bank question to answer.")
-    parser.add_argument("--ticker", required=True, help="Required bank ticker, for example JPM.")
+    parser.add_argument(
+        "--ticker",
+        help="Optional session/evaluation fallback; normally the bank is read from the question.",
+    )
     parser.add_argument("--record-type", choices=("text", "table"))
     parser.add_argument("--limit", type=int, default=5)
     parser.add_argument("--candidate-k", type=int, default=30)

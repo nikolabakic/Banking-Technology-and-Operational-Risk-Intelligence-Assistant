@@ -57,6 +57,13 @@ def test_versioned_citation_audit_matches_frozen_queries() -> None:
     )
     accepted_tfc = audit["dev_tfc_cet1_ratio_corporation_2025"]
     assert len(accepted_tfc["accepted_additional_target_chunk_ids"]) == 2
+    assert audit["dev_jpm_standardized_cet1_requirement_2025"][
+        "accepted_additional_target_chunk_ids"
+    ] == ["a9a562bc58279de88399041989871810cec4bb84ae9ee0de59aee219c7d8785b"]
+    assert (
+        audit["dev_pnc_total_deposits_2025"]["reviewed_targets"][0]["classification"]
+        == "relevant_but_insufficient_precision"
+    )
 
 
 def test_citation_audit_requires_accepted_ids_to_have_accepted_reviews() -> None:

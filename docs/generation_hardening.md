@@ -1,7 +1,7 @@
 # Generation hardening candidate
 
-**Status: v2 local retrieval gate passed; the v2 frozen generation run is pending explicit
-approval.**
+**Status: v2 frozen generation run completed; the quality gate did not pass because one
+rounded extra citation remains outside the exact-support contract.**
 
 The candidate keeps one Chat Completions request per retrieval-supported question, with no
 retry. `AZURE_GPT_51_2025_1113` is selected explicitly through `--model`; the configured
@@ -37,6 +37,10 @@ recorded v1 run:
 - the additional BAC cyber passage and BAC `11.4%` narrative are accepted;
 - Truist Corporation Table 37 and its `10.8%` narrative are accepted;
 - Truist Bank Table 36 is accepted for `11.8%`.
+- the JPM regulatory-capital note is accepted because it directly explains the buffers included
+  in the separately table-supported `11.5%` Standardized requirement;
+- the PNC `$440.9 billion` liquidity narrative is relevant but rejected for the exact
+  `$440,866 million` answer because it is rounded.
 
 The retrieval candidate adds a versioned lexical-only glossary locator file. Locator hits are
 deduplicated by parent table ID and hydrate to the unchanged complete table evidence. The dense
@@ -49,10 +53,10 @@ GPT-4o semantic judge receives only the evidence cited by a supported narrative 
 The evaluator writes an explicit pass/fail gate with every required denominator. Filtered runs
 must use an explicit output path, so they cannot replace the complete candidate artifact.
 
-## Approval-gated run sequence
+## Recorded approval-gated run
 
-The following command must not be run without explicit approval because it makes external model
-calls. The v1 compatibility probe is not repeated.
+The following command was run once after explicit approval. It made external model calls and must
+not be repeated without a new approval. The v1 compatibility probe was not repeated.
 
 ```powershell
 python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113
@@ -68,7 +72,39 @@ The candidate passes only if all 26 questions have a result without schema/forma
 status is 26/26, value/unit/period/entity are each 15/15, variant is 9/9, every numeric answer
 has exact cited support, all narrative answers pass cited-evidence groundedness, and no citation
 falls outside the qrel/audit contract. Only then may GPT-5.1 become the default and decision 005
-and the roadmap be updated before conversation-history work begins.
+be superseded. The remaining citation issue is tracked but no longer blocks bank resolution or
+conversation-history work.
+
+## Recorded GPT-5.1 v2 run — 2026-08-11
+
+The single authorized frozen run completed all 26 questions without schema or format errors and
+wrote `generation-gpt51-json-v2.json` (SHA-256
+`bc0ae67f7306867ec5abc313359c303dc52d01f928936d679248db9a8b4bdada`). It made exactly 25
+generation requests; the unsupported-period question abstained locally. The ten separate GPT-4o
+judge calls received only cited evidence. No retry or compatibility probe was performed.
+
+All answer-quality checks passed:
+
+- status: 26/26;
+- value, unit, period, and entity: 15/15 each;
+- variant: 9/9;
+- exact numeric cited support: 15/15;
+- narrative correctness, completeness, and groundedness: 10/10 each;
+- generation budget: 25/25 requests.
+
+The frozen artifact reports citation-contract precision for 23/25 supported answers against the
+pre-run audit-v2 hash. Post-run manual review accepted the new JPM buffer note and rejected the
+new PNC liquidity narrative: the latter reports only the rounded `$440.9 billion`, not the exact
+`$440,866 million`. The updated audit-v2 SHA-256 is
+`b8716ca3f1f4663b041161150b25a3a6cb73740f3ec82d09b6315aa5db23367a`. The audited result is
+therefore 24/25, so the overall gate still fails. The gateway exposed response IDs and zero
+reasoning tokens, but not input/output/total token counts. Mean generation latency was 2.801
+seconds across the 25 requests (70.019 seconds total).
+
+GPT-5.1 remains a candidate, and the application default and decision 005 remain unchanged.
+The rounded extra-citation issue is deferred and does not block product work. A new frozen run
+requires separate
+approval; this result is not iteratively tuned or overwritten.
 
 ## Recorded GPT-5.1 run — 2026-08-11
 
@@ -110,5 +146,5 @@ The formal mixed-hybrid frozen run is recorded separately in
 - no Hit@5 or Hit@10 regressions against the historical mixed result;
 - the historical chunks, embeddings and Qdrant hashes are unchanged.
 
-Prompt/schema v4, unit rendering and citation audit v2 are locally implemented. No v2 generation
-or semantic-judge API calls have been made.
+Prompt/schema v4, unit rendering and citation audit v2 are locally implemented. The single v2
+generation run and its cited-evidence semantic judging are recorded above.

@@ -13,9 +13,11 @@ BankScope je studentski RAG projekat za pretragu najnovijih lokalno preuzetih
 6. meri kvalitet retrieval-a na unapred označenim pitanjima;
 7. generiše proverljiv odgovor iz hidriranih dokaza, uz citate ili abstention.
 
-Retrieval i prvi single-bank generation tok sada rade. Hardening generisanih
-odgovora je implementiran lokalno, ali GPT-5.1 probe i frozen baseline još čekaju
-izričito odobrenje. Conversation history počinje tek ako novi quality gate prođe.
+Retrieval i prvi single-bank generation tok sada rade. GPT-5.1 v2 frozen baseline
+je završen bez schema/format grešaka i prošao je sve answer-quality provere, ali
+gate ostaje neuspešan zbog jednog zaokruženog dodatnog citata. GPT-5.1 zato nije
+default; taj citation problem je odložen, dok se nastavlja razvoj bank resolvera,
+conversation history-ja i UI-ja.
 
 ## 2. Najvažnija mentalna slika
 
@@ -521,10 +523,12 @@ zato nije prošao definisani MRR prag.
 
 Sledeće faze su:
 
-1. approval-gated GPT-5.1 compatibility probe i jedan frozen generation run;
-2. conversation history bez kontaminacije retrieval query-ja, samo ako gate prođe;
-3. jednostavan lokalni chat UI;
-4. odvojeno izveštavanje retrieval i generation kvaliteta.
+1. deterministički prepoznati banku iz naziva, aliasa ili tickera pre retrieval-a;
+2. conversation history koji nasleđuje banku iz sesije bez kontaminacije retrieval query-ja;
+3. jednostavan lokalni chat UI bez ručnog izbora banke;
+4. kasnije rešiti suvišne, nedovoljno precizne citate i eventualno ponoviti frozen run
+   samo uz posebno odobrenje;
+5. odvojeno izveštavanje retrieval i generation kvaliteta.
 
 ## 11. Kako pokrenuti projekat
 
@@ -543,7 +547,7 @@ python scripts/build_corpus.py --overwrite
 python scripts/embed.py --overwrite
 python scripts/build_qdrant.py
 python scripts/search.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
-python scripts/answer.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
+python scripts/answer.py "How does JPMorgan Chase define cybersecurity risk?"
 python scripts/evaluate.py
 python scripts/evaluate_answers.py
 ```
@@ -596,6 +600,8 @@ prvim bezbednim single-bank generation tokom i implementiranim evaluatorom.
 `scripts/` pokreće pipeline, `src/` nosi validiranu logiku, `data/` čuva izvore i
 artefakte, `tests/` štiti ugovore, a `sandbox/` čuva istoriju van runtime-a.
 Prvi generation baseline je zabeležen nad 26 in-scope pitanja: 24 su evaluirana,
-a dve model-format/citation greške su sačuvane kao eksplicitni rezultati. Lokalni
-hardening kandidat sada čeka odobren GPT-5.1 probe i jedan frozen run. Conversation
-history dolazi tek posle uspešnog quality gate-a.
+a dve model-format/citation greške su sačuvane kao eksplicitni rezultati. GPT-5.1
+v2 kandidat je zatim završio svih 26 pitanja i prošao sve answer-quality provere,
+ali je post-run citation audit ostao na 24/25 zbog jednog zaokruženog dodatnog
+dokaza. Default model ostaje nepromenjen, citation problem je odložen, a razvoj
+bank resolvera, conversation history-ja i UI-ja može da se nastavi.

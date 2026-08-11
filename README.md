@@ -23,6 +23,9 @@ download.py -> build_corpus.py -> embed.py -> search.py / evaluate.py -> answer.
 - The default mixed backend retrieves dense candidates from persistent Qdrant,
   retrieves lexical candidates with BM25S and combines both rankings with
   application reciprocal-rank fusion (RRF).
+- Answer requests resolve a configured bank deterministically from its legal name,
+  common alias or ticker before retrieval. Missing or multiple banks return an
+  `ambiguous` result without embedding, retrieval or model calls.
 - Persistent Qdrant Local Mode is available as an optional backend. Its dense,
   BM25 and native-RRF paths are also implemented, but full Qdrant hybrid did not
   pass the MRR quality gate.
@@ -56,7 +59,7 @@ python scripts/build_corpus.py --overwrite
 python scripts/embed.py --overwrite
 python scripts/build_qdrant.py
 python scripts/search.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
-python scripts/answer.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
+python scripts/answer.py "How does JPMorgan Chase define cybersecurity risk?"
 python scripts/evaluate.py
 python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113
 ```
@@ -130,7 +133,8 @@ one cited evidence document. The flow makes at most one generation request per
 question and never retries. The first generation slice intentionally requires
 `--ticker`; unsupported periods fail before the model call, while ambiguous or
 insufficient evidence produces an abstention. Custom gateways can be configured by
-the internal `model_access` package.
+the internal `model_access` package. The bank normally comes from the question;
+`--ticker` remains an optional session/evaluation fallback for compatibility.
 
 `evaluate_answers.py` reuses the same long-lived answer pipeline and evaluates
 the 26 frozen questions that fit the current single-bank contract: 25 answerable
@@ -149,19 +153,16 @@ status accuracy was 100%, exact expected-value accuracy was 86.7%, relevant
 citation hit rate was 87.0%, and all eight advisory semantic judgements passed.
 See decision 005 for denominators and caveats; retrieval metrics remain separate.
 
-The hardened GPT-5.1 candidate is implemented but is not yet the default. The
-v1 compatibility probe has already passed; the v2 frozen run still requires
-separate explicit approval:
-
-```powershell
-python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113
-```
-
-The command writes `generation-gpt51-json-v2.json`; the historical
-`generation.json` and v1 candidate remain unchanged. The default output path is reserved for the
-GPT-5.1 candidate, preventing an accidental run under a differently configured
-default model. See [`docs/generation_hardening.md`](docs/generation_hardening.md)
-for the gate and audit contract.
+The hardened GPT-5.1 v2 frozen run completed all 26 questions without schema or
+format errors and passed every answer-quality check, including variant 9/9 and
+grounded narratives 10/10. It did not pass the overall gate because one extra PNC
+citation gives only the rounded `$440.9 billion`, not exact support for
+`$440,866 million`; the post-run citation audit is therefore 24/25. GPT-5.1 is not
+the default, and the citation issue is deferred while bank resolution and conversation
+history proceed. The frozen run must not be
+repeated without separate approval. The historical `generation.json` and v1
+candidate remain unchanged. See [`docs/generation_hardening.md`](docs/generation_hardening.md)
+for the recorded result and audit contract.
 
 ## Checks
 

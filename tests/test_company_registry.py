@@ -16,6 +16,16 @@ def test_bank_company_normalizes_ticker() -> None:
     assert bank.ticker == "JPM"
 
 
+def test_bank_company_normalizes_and_rejects_duplicate_aliases() -> None:
+    with pytest.raises(ValidationError, match="duplirane aliase"):
+        BankCompany(
+            ticker="USB",
+            cik="0000036104",
+            legal_name="U.S. Bancorp",
+            aliases=("U.S. Bank", "US Bank"),
+        )
+
+
 def test_registry_rejects_duplicate_ticker() -> None:
     banks = (
         BankCompany(ticker="JPM", cik="0000019617", legal_name="JPMorgan"),
@@ -23,6 +33,26 @@ def test_registry_rejects_duplicate_ticker() -> None:
     )
 
     with pytest.raises(ValidationError, match="duplirane tickere"):
+        BankRegistry(version=1, banks=banks)
+
+
+def test_registry_rejects_alias_owned_by_two_banks() -> None:
+    banks = (
+        BankCompany(
+            ticker="JPM",
+            cik="0000019617",
+            legal_name="JPMorgan Chase & Co.",
+            aliases=("Shared Bank",),
+        ),
+        BankCompany(
+            ticker="BAC",
+            cik="0000070858",
+            legal_name="Bank of America Corporation",
+            aliases=("shared-bank",),
+        ),
+    )
+
+    with pytest.raises(ValidationError, match="Normalizovani alias"):
         BankRegistry(version=1, banks=banks)
 
 

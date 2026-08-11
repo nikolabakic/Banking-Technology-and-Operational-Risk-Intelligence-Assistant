@@ -17,6 +17,7 @@ from bankscope.retrieval.qdrant_retriever import (
     QdrantRetriever,
     load_qdrant_manifest,
 )
+from bankscope.sec.bank_resolver import BankResolution, resolve_bank
 from bankscope.sec.company_registry import load_bank_registry
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -76,6 +77,7 @@ class SingleBankAnswerPipeline:
         close_callback: Any | None = None,
         dense_model: dict[str, str] | None = None,
         bank_names: dict[str, str] | None = None,
+        bank_aliases: dict[str, tuple[str, ...]] | None = None,
     ) -> None:
         if not generation_model.strip():
             raise ValueError("generation_model cannot be empty.")
@@ -91,6 +93,11 @@ class SingleBankAnswerPipeline:
             ticker.strip().upper(): name.strip()
             for ticker, name in (bank_names or {}).items()
             if ticker.strip() and name.strip()
+        }
+        self.bank_aliases = {
+            ticker.strip().upper(): tuple(alias.strip() for alias in aliases if alias.strip())
+            for ticker, aliases in (bank_aliases or {}).items()
+            if ticker.strip()
         }
 
     @classmethod
@@ -133,7 +140,9 @@ class SingleBankAnswerPipeline:
         glossary_locators = read_jsonl(glossary_locators_path)
         validate_glossary_locators(glossary_locators, records, tables)
         registry = load_bank_registry(bank_registry_path)
-        bank_names = {bank.ticker: bank.legal_name for bank in registry.banks}
+        enabled_banks = [bank for bank in registry.banks if bank.enabled]
+        bank_names = {bank.ticker: bank.legal_name for bank in enabled_banks}
+        bank_aliases = {bank.ticker: bank.aliases for bank in enabled_banks}
         encoder = query_encoder or SentenceTransformerQueryEncoder(model_name, model_revision)
         qdrant = QdrantRetriever(
             qdrant_path,
@@ -156,6 +165,7 @@ class SingleBankAnswerPipeline:
                 close_callback=qdrant.close,
                 dense_model={"name": model_name, "revision": model_revision},
                 bank_names=bank_names,
+                bank_aliases=bank_aliases,
             )
         except Exception:
             qdrant.close()
@@ -176,7 +186,7 @@ class SingleBankAnswerPipeline:
         self,
         question: str,
         *,
-        ticker: str,
+        ticker: str | None = None,
         record_type: str | None = None,
         limit: int = 5,
         candidate_k: int = 30,
@@ -185,19 +195,24 @@ class SingleBankAnswerPipeline:
         if self._closed:
             raise RuntimeError("The answer pipeline is closed.")
         question = question.strip()
-        ticker = ticker.strip().upper()
         if not question:
             raise ValueError("Question cannot be empty.")
-        if not ticker:
-            raise ValueError("ticker is required for the single-bank answer flow.")
-        if self.bank_names and ticker not in self.bank_names:
-            raise ValueError(f"Unknown bank ticker: {ticker}.")
         if limit <= 0:
             raise ValueError("limit must be positive.")
         if candidate_k < limit:
             raise ValueError("candidate_k must be at least limit.")
         if rrf_k <= 0:
             raise ValueError("rrf_k must be positive.")
+
+        resolution = resolve_bank(
+            question,
+            bank_names=self.bank_names,
+            bank_aliases=self.bank_aliases,
+            session_ticker=ticker,
+        )
+        if resolution.status != "resolved":
+            return self._ambiguous_bank_run(question, resolution)
+        resolved_ticker = str(resolution.ticker)
 
         started = perf_counter()
         query_vector = self.query_encoder.encode(question)
@@ -210,7 +225,7 @@ class SingleBankAnswerPipeline:
             limit=limit,
             candidate_k=candidate_k,
             rrf_k=rrf_k,
-            ticker=ticker,
+            ticker=resolved_ticker,
             record_type=record_type,
         )
         retrieval_latency_ms = (perf_counter() - started) * 1000
@@ -221,15 +236,16 @@ class SingleBankAnswerPipeline:
             evidence,
             client=self.client,
             model=self.generation_model,
-            expected_ticker=ticker,
-            expected_bank_name=self.bank_names.get(ticker, ticker),
+            expected_ticker=resolved_ticker,
+            expected_bank_name=self.bank_names.get(resolved_ticker, resolved_ticker),
             expected_record_type=record_type,
             temperature=self.temperature,
         )
         generation_latency_ms = (perf_counter() - started) * 1000
         output = {
             "question": question,
-            "ticker": ticker,
+            "ticker": resolved_ticker,
+            "bank_resolution": resolution.as_dict(),
             "retrieval": {
                 "backend": "mixed",
                 "mode": "hybrid",
@@ -243,4 +259,50 @@ class SingleBankAnswerPipeline:
             embedding_latency_ms=embedding_latency_ms,
             retrieval_latency_ms=retrieval_latency_ms,
             generation_latency_ms=generation_latency_ms,
+        )
+
+    def _ambiguous_bank_run(self, question: str, resolution: BankResolution) -> AnswerRun:
+        if resolution.status == "multiple":
+            names = [self.bank_names.get(ticker, ticker) for ticker in resolution.detected_tickers]
+            answer = (
+                "Trenutno mogu da odgovorim za jednu banku po pitanju. "
+                f"Pronašao sam {', '.join(names)}; navedite jednu banku."
+            )
+            reason_code = "multiple_banks_identified"
+            reason = "Pitanje pominje više podržanih banaka."
+        else:
+            answer = (
+                "Nisam mogao da odredim na koju banku se pitanje odnosi. "
+                "Navedite naziv ili ticker, na primer 'JPMorgan Chase' ili 'JPM'."
+            )
+            reason_code = "bank_not_identified"
+            reason = "Pitanje ne sadrži prepoznat naziv ili ticker podržane banke."
+        output = {
+            "question": question,
+            "ticker": None,
+            "bank_resolution": resolution.as_dict(),
+            "retrieval": {
+                "backend": "mixed",
+                "mode": "hybrid",
+                "evidence_count": 0,
+            },
+            "status": "ambiguous",
+            "answer_type": "narrative",
+            "answer": answer,
+            "facts": None,
+            "reason": reason,
+            "reason_code": reason_code,
+            "citations": [],
+            "generation": {
+                "model": self.generation_model,
+                "final_status": "ambiguous",
+                "request_count": 0,
+            },
+        }
+        return AnswerRun(
+            output=output,
+            evidence=[],
+            embedding_latency_ms=0.0,
+            retrieval_latency_ms=0.0,
+            generation_latency_ms=0.0,
         )
