@@ -116,3 +116,7 @@ artifacts/
 sandbox/local_data/
 
 HF_token.py
+
+# Frontend dependencies and Vite output
+node_modules/
+frontend/dist/

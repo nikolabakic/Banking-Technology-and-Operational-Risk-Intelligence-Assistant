@@ -3,6 +3,22 @@
 BankScope is a student RAG project for searching the latest downloaded 10-K
 filings of ten U.S. banks. 
 
+## Frontend
+
+The BankScope UI lives in [`frontend/`](frontend/). It uses React, TypeScript, Vite,
+Tailwind CSS, Geist and Lucide. The interface is deliberately focused on one task:
+asking filing questions and inspecting their evidence. Bank and filing selection are
+automatic, and multiple questions can be asked in the same conversation.
+
+```powershell
+cd frontend
+npm install
+npm run api  # terminal 1
+npm run dev  # terminal 2
+```
+
+Vite proxies `/api` to the long-lived Python answer service on port 8000.
+
 ## Current design
 
 The active pipeline has six commands:

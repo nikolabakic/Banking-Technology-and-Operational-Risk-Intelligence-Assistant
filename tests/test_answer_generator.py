@@ -4,7 +4,11 @@ from typing import Any
 
 import pytest
 
-from bankscope.generation.answer_generator import GenerationValidationError, generate_answer
+from bankscope.generation.answer_generator import (
+    GenerationValidationError,
+    _question_language,
+    generate_answer,
+)
 
 
 class MockCompletions:
@@ -101,6 +105,8 @@ def test_numeric_answer_uses_json_mode_facts_and_verified_citation() -> None:
     assert "max_tokens" not in call
     assert "temperature" not in call
     assert "Expected bank: JPMorgan Chase & Co." in call["messages"][1]["content"]
+    assert "REQUIRED OUTPUT LANGUAGE: English" in call["messages"][0]["content"]
+    assert "Required output language: English" in call["messages"][1]["content"]
     assert "never a JSON array or list" in call["messages"][0]["content"]
     assert "metric must contain only the base measure" in call["messages"][0]["content"]
     assert '"variant":"Standardized"' in call["messages"][0]["content"]
@@ -116,6 +122,19 @@ def test_numeric_answer_uses_json_mode_facts_and_verified_citation() -> None:
         "input_tokens": 100,
         "output_tokens": 20,
     }
+
+
+@pytest.mark.parametrize(
+    ("question", "language"),
+    [
+        ("What were Citigroup's material cybersecurity risks in 2025?", "English"),
+        ("Koji su glavni operativni rizici banke?", "Serbian"),
+        ("Који су главни оперативни ризици банке?", "Serbian"),
+        ("¿Cuáles fueron los riesgos de ciberseguridad del banco?", "Spanish"),
+    ],
+)
+def test_question_language_is_determined_before_generation(question: str, language: str) -> None:
+    assert _question_language(question) == language
 
 
 def test_narrative_answer_keeps_natural_text_and_adds_valid_markers() -> None:
