@@ -115,8 +115,10 @@ artifacts/
 
 # Local archive of generated data kept outside the active pipeline
 sandbox/local_data/
+.tmp/
+pytest-cache-files-*/
+pytest-plan-check/
 
-HF_token.py
 
 # Frontend dependencies and Vite output
 node_modules/
