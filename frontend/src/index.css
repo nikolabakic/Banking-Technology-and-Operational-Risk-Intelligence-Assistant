@@ -70,8 +70,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 .ui-scrollbar-horizontal { flex-direction: column; height: 9px; border-top: 1px solid transparent; }
 .ui-scroll-thumb { position: relative; flex: 1; border-radius: 999px; background: rgba(104, 142, 188, .42); }
 
-.ui-dialog-overlay, .ui-sheet-overlay { position: fixed; z-index: 100; inset: 0; background: rgba(3, 18, 40, .58); backdrop-filter: blur(5px); animation: fade-in .18s ease; }
-.ui-dialog-content { position: fixed; z-index: 101; top: 50%; left: 50%; width: min(calc(100vw - 32px), 440px); padding: 24px; border: 1px solid rgba(189, 210, 235, .82); border-radius: 16px; background: #fafdff; box-shadow: 0 24px 70px rgba(3, 25, 55, .3); transform: translate(-50%, -50%); animation: dialog-in .18s ease; }
+.ui-dialog-overlay { position: fixed; z-index: 1000; inset: 0; background: rgba(3, 18, 40, .58); backdrop-filter: blur(5px); animation: fade-in .18s ease; }
+.ui-sheet-overlay { position: fixed; z-index: 100; inset: 0; background: rgba(3, 18, 40, .58); backdrop-filter: blur(5px); animation: fade-in .18s ease; }
+.ui-dialog-content { position: fixed; z-index: 1001; top: 50%; left: 50%; width: min(calc(100vw - 32px), 440px); padding: 24px; border: 1px solid rgba(189, 210, 235, .82); border-radius: 16px; background: #fafdff; box-shadow: 0 24px 70px rgba(3, 25, 55, .3); transform: translate(-50%, -50%); animation: dialog-in .18s ease; }
 .ui-dialog-close, .ui-sheet-close { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 9px; color: #60718c; background: transparent; cursor: pointer; }
 .ui-dialog-close { position: absolute; top: 14px; right: 14px; }
 .ui-dialog-close:hover, .ui-sheet-close:hover { color: #153f73; background: #e5f0fc; }
@@ -104,23 +105,27 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 .workspace { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 12px; height: calc(100dvh - 68px); padding: 0 12px 12px; }
 .workspace-main { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid rgba(210, 229, 250, .52); border-radius: 20px; background: var(--blue-50); box-shadow: 0 22px 60px rgba(0, 20, 51, .24); }
 .thread-sidebar, .mobile-sidebar { display: flex; flex-direction: column; min-height: 0; color: #dceaff; }
-.thread-sidebar { height: 100%; }
+.thread-sidebar { position: relative; z-index: 2; height: 100%; }
 .sidebar-heading { padding: 8px 4px 12px; }
 .sidebar-new { width: 100%; color: white; border-color: rgba(190, 219, 252, .2); background: rgba(255, 255, 255, .1); box-shadow: none; }
 .sidebar-new:hover { border-color: rgba(190, 219, 252, .32); background: rgba(255, 255, 255, .16); }
-.thread-scroll { flex: 1; min-height: 0; }
-.thread-list { padding: 7px 4px 14px; }
+.thread-scroll { flex: 1; min-width: 0; min-height: 0; }
+.thread-scroll .ui-scroll-viewport > div { display: block !important; width: 100%; min-width: 0; }
+.thread-list { width: 100%; min-width: 0; padding: 7px 4px 14px; box-sizing: border-box; }
 .thread-label { display: block; padding: 0 9px 9px; color: #84acd9; text-transform: uppercase; letter-spacing: .09em; font-size: 9px; font-weight: 750; }
-.thread-item { display: flex; align-items: center; min-width: 0; margin-bottom: 3px; border: 1px solid transparent; border-radius: 10px; transition: background .14s ease, border-color .14s ease; }
+.thread-item { position: relative; display: flex; width: 100%; min-width: 0; max-width: 100%; align-items: center; margin-bottom: 3px; overflow: hidden; border: 1px solid transparent; border-radius: 10px; box-sizing: border-box; transition: background .14s ease, border-color .14s ease; }
 .thread-item:hover { background: rgba(255,255,255,.08); }
 .thread-item.active { border-color: rgba(176, 211, 250, .17); background: rgba(255,255,255,.14); box-shadow: inset 3px 0 0 #65aafd; }
-.thread-open { display: flex; flex: 1; align-items: center; gap: 9px; min-width: 0; height: 42px; padding: 0 8px 0 10px; border: 0; color: #bad1eb; background: transparent; text-align: left; font-size: 11px; cursor: pointer; }
+.thread-open { display: flex; width: 100%; min-width: 0; height: 42px; align-items: center; gap: 9px; padding: 0 68px 0 10px; overflow: hidden; border: 0; color: #bad1eb; background: transparent; text-align: left; font-size: 11px; cursor: pointer; }
 .thread-open svg { flex: 0 0 auto; color: #6fa7e4; }
-.thread-open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-open span { display: block; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-item.active .thread-open { color: white; font-weight: 650; }
-.thread-menu { width: 32px; height: 32px; margin-right: 4px; color: #a9c6e7; opacity: 0; }
-.thread-item:hover .thread-menu, .thread-item:focus-within .thread-menu, .thread-item.active .thread-menu { opacity: 1; }
-.thread-menu:hover { color: white; background: rgba(255,255,255,.1); }
+.thread-actions { position: absolute; z-index: 3; top: 50%; right: 3px; display: flex; width: 60px; opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(-50%); transition: opacity .14s ease, visibility .14s ease; }
+.thread-item:hover .thread-actions,
+.thread-item:focus-within .thread-actions { opacity: 1; visibility: visible; pointer-events: auto; }
+.thread-actions button { width: 28px; height: 28px; color: #a9c6e7; }
+.thread-actions button:hover { color: white; background: rgba(255,255,255,.12); }
+.thread-actions .thread-delete:hover { color: #ffd4d4; background: rgba(197, 45, 45, .25); }
 .thread-empty { display: grid; place-items: center; padding: 26px 14px; color: #80a4cd; text-align: center; }
 .thread-empty p { margin: 9px 0 0; font-size: 10px; line-height: 1.4; }
 .thread-skeletons { display: grid; gap: 7px; padding: 3px; }
@@ -187,7 +192,20 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 .assistant-heading strong { color: #17375f; font-size: 12px; }
 .assistant-heading small { margin-top: 2px; color: #7b8da5; font-size: 9.5px; }
 .answer-body, .thinking-card, .error-card { margin: 15px 0 0 42px; }
-.answer-text { color: #314966; white-space: pre-wrap; font-size: 13.5px; line-height: 1.78; }
+.answer-text { color: #314966; font-size: 12.5px; line-height: 1.68; }
+.answer-prose { white-space: pre-wrap; }
+.answer-prose:empty { display: none; }
+.answer-table-scroll { max-width: 100%; margin: 10px 0; overflow-x: auto; border: 1px solid #cbdced; border-radius: 8px; background: rgba(255,255,255,.78); }
+.answer-table-scroll table { width: 100%; min-width: 440px; border-collapse: collapse; font-size: 10.5px; line-height: 1.35; }
+.answer-table-scroll th, .answer-table-scroll td { padding: 6px 8px; border-right: 1px solid #d9e5f1; border-bottom: 1px solid #d9e5f1; text-align: left; vertical-align: top; }
+.answer-table-scroll th:last-child, .answer-table-scroll td:last-child { border-right: 0; }
+.answer-table-scroll thead th { color: #173f70; background: #dfeeff; font-weight: 750; white-space: nowrap; }
+.answer-table-scroll tbody tr:nth-child(even) { background: #f2f7fd; }
+.answer-table-scroll tbody tr:last-child td { border-bottom: 0; }
+.context-chunk .answer-text { color: #405670; font-family: Georgia, serif; font-size: 11px; line-height: 1.55; }
+.context-chunk .answer-table-scroll { margin: 6px 0 2px; background: white; }
+.context-chunk .answer-table-scroll table { min-width: 420px; font-family: "Geist Variable", "Segoe UI", sans-serif; font-size: 9.5px; white-space: normal; }
+.context-chunk .answer-table-scroll th, .context-chunk .answer-table-scroll td { padding: 5px 6px; }
 .citation { display: inline-grid; place-items: center; min-width: 24px; height: 20px; margin: 0 2px; padding: 0 6px; border: 1px solid #c1dcf8; border-radius: 6px; color: #0f5fb8; background: #e2f0ff; font-size: 9px; font-weight: 780; vertical-align: 1px; cursor: pointer; transition: .13s ease; }
 .citation:hover { color: white; border-color: var(--blue-600); background: var(--blue-600); transform: translateY(-1px); }
 .answer-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; color: #8190a4; font-size: 9.5px; }

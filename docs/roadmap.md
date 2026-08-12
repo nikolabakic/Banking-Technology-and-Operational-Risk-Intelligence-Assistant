@@ -21,6 +21,7 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Citation context | Complete | Persisted citations reopen canonical narrative/table evidence and fail closed after corpus changes |
 | Local product interface | Complete | Routed chat history supports create, reopen, rename, delete and source inspection |
 | Experimentation foundation | Implemented | FastAPI contracts, structured local logs and isolated quality gates support future experiments |
+| Multi-bank questions | Future consideration | One question can explicitly select two or more indexed banks, retrieve evidence independently for each bank, produce a clearly structured comparison or synthesis, and preserve bank-specific citations without mixing evidence between entities |
 | External tools and function calling | Future consideration | Assess web search, calculator and document lookup integrations to extend the assistant's capabilities |
 
 ## Acceptance gates
@@ -58,3 +59,10 @@ banks. There is no deployment or final-report deadline. New ideas are added as
 isolated experiments and become defaults only when their own tests and relevant
 evaluation gates justify the change. Authentication, multi-user infrastructure
 and cloud persistence remain outside the active scope.
+
+Multi-bank questions are not part of the current single-bank generation path.
+The future experiment should support prompts such as comparing CET1 ratios or
+operational-risk disclosures across several named banks in one request. Bank
+resolution, retrieval and evidence validation must remain isolated per bank;
+the final response may compare or synthesize the results only after every claim
+can be traced to citations belonging to the correct bank.

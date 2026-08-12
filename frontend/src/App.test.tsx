@@ -100,15 +100,82 @@ describe("persistent chat workspace", () => {
     renderThread();
     await screen.findByText(response.question);
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: `Conversation actions for ${thread.title}` }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    fireEvent.click(screen.getByRole("button", { name: `Rename ${thread.title}` }));
     fireEvent.change(screen.getByRole("textbox", { name: "Conversation title" }), { target: { value: "Renamed" } });
     fireEvent.click(screen.getByRole("button", { name: "Save title" }));
     await waitFor(() => expect(mocks.renameThread).toHaveBeenCalledWith(thread.id, "Renamed"));
 
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "Conversation actions for Renamed" }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Renamed" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete conversation" }));
     await waitFor(() => expect(mocks.deleteThread).toHaveBeenCalledWith(thread.id));
+  });
+
+  it("keeps actions available when a generated conversation title is very long", async () => {
+    const longTitle = "What are the most important operational, technology, cyber security, third-party and resilience risks disclosed by JPMorgan Chase?";
+    mocks.listThreads.mockResolvedValue([{ ...thread, title: longTitle }]);
+    mocks.loadThread.mockResolvedValue({ thread: { ...thread, title: longTitle }, turns: [turn] });
+
+    renderThread();
+    await screen.findByText(response.question);
+
+    fireEvent.click(screen.getByRole("button", { name: `Rename ${longTitle}` }));
+    expect(screen.getByRole("textbox", { name: "Conversation title" })).toHaveValue(longTitle);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getByRole("button", { name: `Delete ${longTitle}` }));
+    expect(screen.getByRole("button", { name: "Delete conversation" })).toBeInTheDocument();
+  });
+
+  it("renders markdown tables semantically and keeps citations interactive", async () => {
+    const tableResponse = {
+      ...response,
+      answer: "| Risk | Description |\n| --- | --- |\n| Operational | Failed processes [E1] |\n| Cyber | Security incidents |",
+    };
+    mocks.loadThread.mockResolvedValue({
+      thread,
+      turns: [{ ...turn, response: tableResponse }],
+    });
+
+    renderThread();
+
+    const table = await screen.findByRole("table");
+    expect(table).toHaveTextContent("Risk");
+    expect(table).toHaveTextContent("Operational");
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "E1" }));
+    expect(await screen.findByText("Canonical operational risk evidence.")).toBeInTheDocument();
+  });
+
+  it("renders filing tables in the evidence viewer instead of raw markdown", async () => {
+    mocks.loadCitationContext.mockResolvedValue({
+      ...context,
+      chunks: [{
+        ...context.chunks[0],
+        document: "**JPMorgan Chase & Co.**\n\n**Consolidated balance sheets**\n\n| December 31, (in millions) | 2025 | 2024 |\n| --- | --- | --- |\n| Total assets | $ 4,424,900 | $ 4,002,814 |",
+      }],
+    });
+
+    renderThread();
+    await screen.findByText(response.question);
+    fireEvent.click(screen.getByRole("button", { name: "E1" }));
+
+    expect(await screen.findByRole("table")).toHaveTextContent("Total assets");
+    expect(screen.getByText("JPMorgan Chase & Co.").tagName).toBe("STRONG");
+    expect(screen.queryByText("| --- | --- | --- |", { exact: true })).not.toBeInTheDocument();
+  });
+
+  it("keeps new conversation and corpus status only in the header", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(mocks.listThreads).toHaveBeenCalled());
+    expect(screen.getAllByRole("button", { name: /New conversation/i })).toHaveLength(1);
+    expect(screen.getAllByText("Corpus ready")).toHaveLength(1);
+    expect(screen.getByText("BankScope")).toBeInTheDocument();
+    expect(screen.queryByText("Banking risk intelligence")).not.toBeInTheDocument();
+    expect(screen.queryByText("Evidence corpus ready")).not.toBeInTheDocument();
   });
 });

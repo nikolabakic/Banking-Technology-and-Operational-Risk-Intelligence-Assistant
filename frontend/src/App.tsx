@@ -9,7 +9,6 @@ import {
   FileSearch,
   Menu,
   MessageSquare,
-  MoreHorizontal,
   Pencil,
   Plus,
   Send,
@@ -37,7 +36,6 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -155,15 +153,10 @@ function ThreadList({ threads, activeId, loading, onOpen, onRename, onDelete }: 
               <MessageSquare size={15} />
               <span>{thread.title}</span>
             </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="thread-menu" aria-label={`Conversation actions for ${thread.title}`}><MoreHorizontal size={16} /></Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuItem onSelect={() => onRename(thread)}><Pencil size={14} /> Rename</DropdownMenuItem>
-                <DropdownMenuItem destructive onSelect={() => onDelete(thread)}><Trash2 size={14} /> Delete</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="thread-actions">
+              <Button variant="ghost" size="icon" onClick={() => onRename(thread)} aria-label={`Rename ${thread.title}`} title="Rename conversation"><Pencil size={14} /></Button>
+              <Button variant="ghost" size="icon" className="thread-delete" onClick={() => onDelete(thread)} aria-label={`Delete ${thread.title}`} title="Delete conversation"><Trash2 size={14} /></Button>
+            </div>
           </div>
         ))}
       </div>
@@ -171,11 +164,10 @@ function ThreadList({ threads, activeId, loading, onOpen, onRename, onDelete }: 
   );
 }
 
-function ThreadSidebar({ threads, activeId, loading, onNew, onOpen, onRename, onDelete, mobile = false }: {
+function ThreadSidebar({ threads, activeId, loading, onOpen, onRename, onDelete, mobile = false }: {
   threads: ThreadSummary[];
   activeId: string | null;
   loading: boolean;
-  onNew: () => void;
   onOpen: (id: string) => void;
   onRename: (thread: ThreadSummary) => void;
   onDelete: (thread: ThreadSummary) => void;
@@ -185,31 +177,79 @@ function ThreadSidebar({ threads, activeId, loading, onNew, onOpen, onRename, on
     <>
       <div className="sidebar-heading">
         {mobile && <Brand />}
-        <Button className="sidebar-new" onClick={onNew}><Plus size={16} /> New conversation</Button>
       </div>
       <ThreadList {...{ threads, activeId, loading, onOpen, onRename, onDelete }} />
-      <div className="sidebar-footer">
-        <span className="status-dot" />
-        <div><strong>Evidence corpus ready</strong><small>10 banks indexed locally</small></div>
-      </div>
     </>
   );
   return mobile ? <div className="mobile-sidebar">{content}</div> : <aside className="thread-sidebar">{content}</aside>;
 }
 
-function AnswerText({ response, onSource }: { response: AnswerResponse; onSource: (index: number) => void }) {
-  const parts = response.answer.split(/(\[E\d+\])/g);
+function MarkdownContent({ text, response, onSource }: { text: string; response?: AnswerResponse; onSource?: (index: number) => void }) {
+  const renderInline = (value: string, keyPrefix: string) => value.split(/(\*\*[^*]+\*\*|\[E\d+\])/g).map((part, index) => {
+    const label = /^\[(E\d+)\]$/.exec(part)?.[1];
+    const citationIndex = label && response ? response.citations.findIndex((item) => item.label === label) : -1;
+    if (citationIndex >= 0 && onSource) {
+      return <button key={`${keyPrefix}-${index}`} className="citation" onClick={() => onSource(citationIndex)} title={`Open source ${label}`}>{label}</button>;
+    }
+    if (/^\*\*[^*]+\*\*$/.test(part)) return <strong key={`${keyPrefix}-${index}`}>{part.slice(2, -2)}</strong>;
+    return <span key={`${keyPrefix}-${index}`}>{part}</span>;
+  });
+
+  const splitRow = (line: string) => {
+    const escapedPipe = "\u0000";
+    const normalized = line.trim().replace(/\\\|/g, escapedPipe).replace(/^\||\|$/g, "");
+    return normalized.split("|").map((cell) => cell.trim().split(escapedPipe).join("|"));
+  };
+  const lines = text.split(/\r?\n/);
+  const blocks: Array<{ type: "text"; value: string } | { type: "table"; rows: string[][] }> = [];
+  let textLines: string[] = [];
+  const flushText = () => {
+    if (textLines.length) blocks.push({ type: "text", value: textLines.join("\n") });
+    textLines = [];
+  };
+  for (let index = 0; index < lines.length;) {
+    const header = splitRow(lines[index]);
+    const separator = index + 1 < lines.length ? splitRow(lines[index + 1]) : [];
+    const isTable = header.length > 1 && separator.length === header.length
+      && separator.every((cell) => /^:?-{3,}:?$/.test(cell));
+    if (!isTable) {
+      textLines.push(lines[index]);
+      index += 1;
+      continue;
+    }
+    flushText();
+    const rows = [header];
+    index += 2;
+    while (index < lines.length && lines[index].includes("|")) {
+      const row = splitRow(lines[index]);
+      if (row.length !== header.length) break;
+      rows.push(row);
+      index += 1;
+    }
+    blocks.push({ type: "table", rows });
+  }
+  flushText();
+
   return (
     <div className="answer-text">
-      {parts.map((part, index) => {
-        const label = /^\[(E\d+)\]$/.exec(part)?.[1];
-        const citationIndex = label ? response.citations.findIndex((item) => item.label === label) : -1;
-        return citationIndex >= 0 ? (
-          <button key={`${part}-${index}`} className="citation" onClick={() => onSource(citationIndex)} title={`Open source ${label}`}>{label}</button>
-        ) : <span key={`${part}-${index}`}>{part}</span>;
-      })}
+      {blocks.map((block, blockIndex) => block.type === "text" ? (
+        <div className="answer-prose" key={`text-${blockIndex}`}>{renderInline(block.value, `text-${blockIndex}`)}</div>
+      ) : (
+        <div className="answer-table-scroll" key={`table-${blockIndex}`}>
+          <table>
+            <thead><tr>{block.rows[0].map((cell, cellIndex) => <th key={cellIndex}>{renderInline(cell, `th-${blockIndex}-${cellIndex}`)}</th>)}</tr></thead>
+            <tbody>{block.rows.slice(1).map((row, rowIndex) => (
+              <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{renderInline(cell, `td-${blockIndex}-${rowIndex}-${cellIndex}`)}</td>)}</tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ))}
     </div>
   );
+}
+
+function AnswerText({ response, onSource }: { response: AnswerResponse; onSource: (index: number) => void }) {
+  return <MarkdownContent text={response.answer} response={response} onSource={onSource} />;
 }
 
 function AssistantTurn({ turn, copied, onCopy, onSource }: {
@@ -313,7 +353,7 @@ function SourcePanel({ source, onChange, onClose }: { source: OpenSource; onChan
             {context?.chunks.map((chunk) => (
               <section className={`context-chunk ${chunk.role}`} key={`${chunk.target_chunk_id}-${chunk.role}`}>
                 <small>{chunk.role === "anchor" ? "Cited evidence" : `${chunk.role} context`}</small>
-                <pre>{chunk.document}</pre>
+                <MarkdownContent text={chunk.document} />
               </section>
             ))}
             {(context?.source_url || citation.source_url) && (
@@ -453,8 +493,14 @@ export default function App() {
   };
 
   const beginRename = (thread: ThreadSummary) => {
+    setMobileNavOpen(false);
     setRenameTarget(thread);
     setRenameValue(thread.title);
+  };
+
+  const beginDelete = (thread: ThreadSummary) => {
+    setMobileNavOpen(false);
+    setDeleteTarget(thread);
   };
 
   const handleRename = async (event: FormEvent) => {
@@ -501,7 +547,7 @@ export default function App() {
 
   const historyLoading = Boolean(activeThreadId && loadedThreadId !== activeThreadId);
   const showWelcome = !activeThreadId || (!historyLoading && turns.length === 0);
-  const sidebarProps = { threads, activeId: activeThreadId, loading: threadsLoading, onNew: newConversation, onOpen: openThread, onRename: beginRename, onDelete: setDeleteTarget };
+  const sidebarProps = { threads, activeId: activeThreadId, loading: threadsLoading, onOpen: openThread, onRename: beginRename, onDelete: beginDelete };
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -525,7 +571,7 @@ export default function App() {
             ) : showWelcome ? (
               <main className="welcome">
                 <section className="welcome-content">
-                  <div className="eyebrow"><Sparkles size={14} /> Banking risk intelligence</div>
+                  <div className="eyebrow"><Sparkles size={14} /> BankScope</div>
                   <h1>Ask any question.<br /><span>Follow the evidence.</span></h1>
                   <p>Ask questions across the latest indexed 10-K filings from 10 leading U.S. banks. Every answer is grounded in verifiable filing evidence.</p>
                   <Composer value={question} onChange={setQuestion} onSubmit={ask} onStop={stopGenerating} loading={loading} />
