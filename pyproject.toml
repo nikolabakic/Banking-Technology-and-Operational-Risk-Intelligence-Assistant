@@ -19,6 +19,8 @@ dependencies = [
     "numpy>=2.0,<3.0",
     "sentence-transformers>=5.0,<6.0",
     "qdrant-client[fastembed]>=1.18,<1.19",
+    "fastapi>=0.116,<1.0",
+    "uvicorn>=0.35,<1.0",
 ]
 
 [project.optional-dependencies]

@@ -11,13 +11,14 @@ BankScope je studentski RAG projekat za pretragu najnovijih lokalno preuzetih
 4. indeksira embeddinge u lokalnom Qdrant-u;
 5. pretražuje korpus dense, BM25 ili hybrid metodom;
 6. meri kvalitet retrieval-a na unapred označenim pitanjima;
-7. generiše proverljiv odgovor iz hidriranih dokaza, uz citate ili abstention.
+7. generiše proverljiv odgovor iz hidriranih dokaza, uz citate ili abstention;
+8. čuva lokalne razgovore i prikazuje proverljive izvore kroz web interfejs.
 
 Retrieval i prvi single-bank generation tok sada rade. GPT-5.1 v2 frozen baseline
 je završen bez schema/format grešaka i prošao je sve answer-quality provere, ali
 gate ostaje neuspešan zbog jednog zaokruženog dodatnog citata. GPT-5.1 zato nije
-default; taj citation problem je odložen, dok se nastavlja razvoj bank resolvera,
-conversation history-ja i UI-ja.
+default; taj citation problem ostaje poznato ograničenje. Automatski bank resolver,
+trajna istorija razgovora i lokalni UI su implementirani.
 
 ## 2. Najvažnija mentalna slika
 
@@ -51,6 +52,12 @@ scripts/download.py
               +------------------+------------------+
               v                                     v
       scripts/search.py                    scripts/evaluate.py
+              |
+              v
+      scripts/serve_api.py <----> artifacts/chat.db
+              |
+              v
+        frontend/ (React)
 ```
 
 `scripts/` sadrži komande koje korisnik pokrece. `src/bankscope/` sadrži
@@ -97,6 +104,11 @@ kao stvarna aplikacija i da se slucajno ne importuje kod direktno iz root-a.
 Izvršne komande pipeline-a: download, izgradnja korpusa, embedding, Qdrant,
 pretraga i evaluacija. One orkestriraju funkcije iz `src/` i rade sa fajlovima.
 
+### `frontend/`
+
+Lokalni React/Vite interfejs. Koristi rute za razgovore, obnavlja istoriju posle
+refresh-a, prikazuje streaming faze obrade i otvara canonical kontekst citata.
+
 ### `data/`
 
 Podaci kroz sve faze pipeline-a. Mali ugovori (`filings.json` i evaluaciona
@@ -137,7 +149,8 @@ Ovaj kod cuva istoriju odluka, ali može imati zastarele putanje i zavisnosti.
 ### `artifacts/`
 
 Lokalni test i transportni artefakti, na primer pytest Qdrant direktorijumi i
-Colab bundle. Nije deo aktivnog izvornog koda.
+Colab bundle. Tu se podrazumevano nalazi i lokalna SQLite baza razgovora
+`chat.db`. Nije deo aktivnog izvornog koda niti se prati u Git-u.
 
 ### `experiments/`
 
@@ -165,6 +178,13 @@ Centralizuje konfiguraciju okruženja pomocu Pydantic Settings-a.
 - brzina SEC poziva mora biti veca od nule i najviše 10 zahteva u sekundi;
 - `SecretStr` sprecava slucajno prikazivanje OpenAI kljuca;
 - `get_settings()` je keširan, pa se konfiguracija cita samo jednom po procesu.
+
+### `api.py` i `chat/`
+
+`api.py` definiše FastAPI ugovor za health, razgovore, poruke, SSE odgovore i
+kontekst citata. `chat/store.py` atomski čuva niti, poruke, citate i server-owned
+bank kontekst u SQLite-u. `chat/sources.py` ponovo učitava canonical narativni
+kontekst ili celu tabelu i odbija citat ako se hash korpusa promenio.
 
 ### `sec/company_registry.py`
 
@@ -351,6 +371,12 @@ prosleđuje samo hidrirane dokaze Chat Completions-kompatibilnom modelu. Pre API
 proverava entitet, tip dokaza i traženi period. Izlaz je JSON sa statusom
 `supported`, `ambiguous` ili `unsupported`; citati se prihvataju samo ako pokazuju
 na prosleđeni dokaz, a filing, stranica i URL se grade iz lokalnih metapodataka.
+
+### `scripts/serve_api.py`
+
+Jednom učitava retrieval/generation pipeline i pokreće lokalni FastAPI servis.
+Strukturisani logovi beleže request ID, rutu, status i trajanje, ali ne beleže
+tekst pitanja, odgovora ni dokaza.
 
 ### `scripts/smoke_qdrant.py`
 

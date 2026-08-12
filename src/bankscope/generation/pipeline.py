@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -39,9 +40,9 @@ class SentenceTransformerQueryEncoder:
     def __init__(self, model_name: str, model_revision: str) -> None:
         from sentence_transformers import SentenceTransformer
 
-        model_options = (
-            {} if model_revision.strip().lower() == "unknown" else {"revision": model_revision}
-        )
+        model_options: dict[str, Any] = {"local_files_only": True}
+        if model_revision.strip().lower() != "unknown":
+            model_options["revision"] = model_revision
         self.model = SentenceTransformer(model_name, **model_options)
 
     def encode(self, text: str) -> np.ndarray:
@@ -143,7 +144,6 @@ class SingleBankAnswerPipeline:
         enabled_banks = [bank for bank in registry.banks if bank.enabled]
         bank_names = {bank.ticker: bank.legal_name for bank in enabled_banks}
         bank_aliases = {bank.ticker: bank.aliases for bank in enabled_banks}
-        encoder = query_encoder or SentenceTransformerQueryEncoder(model_name, model_revision)
         qdrant = QdrantRetriever(
             qdrant_path,
             tables,
@@ -152,6 +152,9 @@ class SingleBankAnswerPipeline:
             tables_path=tables_path,
         )
         try:
+            # Open the exclusive local store before loading the comparatively slow
+            # embedding model, so a second BankScope process fails immediately.
+            encoder = query_encoder or SentenceTransformerQueryEncoder(model_name, model_revision)
             retriever = MixedRetriever(
                 qdrant,
                 HybridRetriever(records, tables=tables, lexical_records=glossary_locators),
@@ -191,6 +194,7 @@ class SingleBankAnswerPipeline:
         limit: int = 5,
         candidate_k: int = 30,
         rrf_k: int = 60,
+        on_progress: Callable[[str, Mapping[str, Any]], None] | None = None,
     ) -> AnswerRun:
         if self._closed:
             raise RuntimeError("The answer pipeline is closed.")
@@ -204,6 +208,8 @@ class SingleBankAnswerPipeline:
         if rrf_k <= 0:
             raise ValueError("rrf_k must be positive.")
 
+        if on_progress is not None:
+            on_progress("resolving_bank", {"message": "Identifying the bank..."})
         resolution = resolve_bank(
             question,
             bank_names=self.bank_names,
@@ -214,10 +220,17 @@ class SingleBankAnswerPipeline:
             return self._ambiguous_bank_run(question, resolution)
         resolved_ticker = str(resolution.ticker)
 
+        if on_progress is not None:
+            on_progress(
+                "embedding",
+                {"message": "Encoding the question...", "ticker": resolved_ticker},
+            )
         started = perf_counter()
         query_vector = self.query_encoder.encode(question)
         embedding_latency_ms = (perf_counter() - started) * 1000
 
+        if on_progress is not None:
+            on_progress("retrieving", {"message": "Searching indexed filings..."})
         started = perf_counter()
         evidence = self.retriever.search_hybrid(
             question,
@@ -230,6 +243,11 @@ class SingleBankAnswerPipeline:
         )
         retrieval_latency_ms = (perf_counter() - started) * 1000
 
+        if on_progress is not None:
+            on_progress(
+                "generating",
+                {"message": "Generating a grounded answer...", "evidence_count": len(evidence)},
+            )
         started = perf_counter()
         answer = generate_answer(
             question,
@@ -242,6 +260,8 @@ class SingleBankAnswerPipeline:
             temperature=self.temperature,
         )
         generation_latency_ms = (perf_counter() - started) * 1000
+        if on_progress is not None:
+            on_progress("validating", {"message": "Validating the grounded answer..."})
         output = {
             "question": question,
             "ticker": resolved_ticker,

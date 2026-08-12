@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 from qdrant_client import QdrantClient, models
 
 from bankscope.io import sha256_file, write_jsonl
@@ -123,5 +124,12 @@ def test_persistent_qdrant_search_filters_and_table_hydration(tmp_path) -> None:
             "jpm-risk",
             "jpm-table-description",
         }
+
+        with pytest.raises(RuntimeError, match="another process is using it"):
+            QdrantRetriever(
+                qdrant_path,
+                [{"table_id": "table-1", "document": "table"}],
+                manifest_path=manifest_path,
+            )
     finally:
         retriever.close()

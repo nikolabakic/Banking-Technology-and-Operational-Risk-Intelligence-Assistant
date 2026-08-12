@@ -1,7 +1,7 @@
 # BankScope frontend
 
-Focused question-and-answer interface for the BankScope banking technology and
-operational-risk assistant.
+Focused question-and-answer interface for exploring the latest indexed 10-K
+filings from 10 leading U.S. banks, with answers grounded in verifiable filing evidence.
 
 ## Stack
 
@@ -27,20 +27,32 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-Vite proxies `/api` requests to `http://127.0.0.1:8000`. The API keeps the answer
-pipeline loaded between questions, automatically resolves the bank from each question,
-and uses the last resolved bank only as conversational context for follow-up questions.
-It defaults to the schema-validated `AZURE_GPT_51_2025_1113` generation model. Override
-it when needed with `npm.cmd run api -- --model MODEL_NAME`.
+Vite proxies `/api` requests to `http://127.0.0.1:8000`. FastAPI keeps the answer
+pipeline loaded, while SQLite persists threads, messages, bank context and citations.
+The browser receives live pipeline stages over SSE. Historical sources are resolved
+from the active canonical corpus when opened instead of being duplicated in the chat
+database. The service defaults to `AZURE_GPT_51_2025_1113`; override it with
+`npm.cmd run api -- --model MODEL_NAME`.
 
 ## Interface contract
 
 - readiness check -> `GET /api/health`
-- question submit -> `POST /api/answer`
-- request body -> `question` plus optional `session_ticker`
+- thread CRUD -> `/api/threads` and `/api/threads/{thread_id}`
+- persisted history -> `GET /api/threads/{thread_id}/messages`
+- streamed question -> `POST /api/threads/{thread_id}/stream`
+- source context -> `GET /api/citations/{citation_id}/context`
+- compatibility question -> `POST /api/answer`
 - answer status -> `supported | ambiguous | unsupported`
-- source chips and evidence drawer -> `citations` plus hydrated `evidence`
+- source chips carry persisted citation IDs; the drawer hydrates canonical evidence on demand
 - bank selection is deliberately absent; `SingleBankAnswerPipeline` resolves it automatically
+
+## Checks
+
+```powershell
+npm.cmd run lint
+npm.cmd test
+npm.cmd run build
+```
 
 ## Custom logo
 

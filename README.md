@@ -35,6 +35,10 @@ python scripts/embed.py --overwrite
 python scripts/build_qdrant.py
 ```
 
+The answer service deliberately loads the query model from the local Hugging Face
+cache without a network fallback. Running `embed.py` first downloads the pinned
+model revision; startup then fails quickly and clearly if that local model is missing.
+
 Start the API and frontend together on Windows:
 
 ```powershell
@@ -42,8 +46,10 @@ Start the API and frontend together on Windows:
 ```
 
 The script uses `.venv` when present, installs frontend dependencies when needed,
-starts the API at `http://127.0.0.1:8000` and Vite at `http://localhost:5173`, and
-stops both services on `Ctrl+C`.
+starts the API at `http://127.0.0.1:8000`, waits for its health check before
+starting Vite at `http://localhost:5173`, and stops both services on `Ctrl+C`.
+Because embedded Qdrant permits only one process to open its local storage, stop
+an earlier BankScope Python process before launching a second application instance.
 
 For separate terminals, activate `.venv` first and run:
 
@@ -53,12 +59,15 @@ npm.cmd run api  # terminal 1
 npm.cmd run dev  # terminal 2
 ```
 
-Vite proxies `/api` to the long-lived Python answer service. `GET /api/health`
-reports readiness. `POST /api/answer` accepts a question and an optional
-`session_ticker`, then returns the structured answer, citations and hydrated
-evidence. The current question selects the bank when it names one; otherwise the
-last resolved session bank is used for a follow-up. Missing or multiple banks
-produce an `ambiguous` response before retrieval or model calls.
+Vite proxies `/api` to the long-lived local FastAPI service. `GET /api/health`
+reports readiness. The browser creates a persistent thread and streams each turn
+through `POST /api/threads/{thread_id}/stream`. SQLite stores threads, structured
+messages and citation metadata in `data/local/bankscope_chat.db`; canonical filing
+evidence remains in the processed corpus and is loaded only when a citation is
+opened. The current question selects the bank when it names one; otherwise the
+server-owned thread ticker supplies follow-up context across refreshes and restarts.
+Missing or multiple banks produce an `ambiguous` response before retrieval or model
+calls. The original stateless `POST /api/answer` remains available for compatibility.
 
 ## Current design
 
@@ -87,8 +96,9 @@ download.py -> build_corpus.py -> embed.py -> build_qdrant.py
 - Persistent Qdrant Local Mode is available as an optional backend. Its dense,
   BM25 and native-RRF paths are also implemented, but full Qdrant hybrid did not
   pass the MRR quality gate.
-- `serve_api.py` keeps the answer pipeline loaded for the React frontend. The UI
-  supports multiple turns, session-bank inheritance and evidence inspection.
+- `serve_api.py` keeps the answer pipeline loaded behind FastAPI. The routed React
+  UI supports durable conversations, server-side session-bank inheritance, live
+  pipeline stages and canonical evidence inspection.
 
 The parser decision is based on the frozen 30-question comparison: sec2md
 hybrid improved Hit@1 from 8/28 to 12/28 and MRR@10 from 0.494 to 0.589 over
@@ -155,6 +165,7 @@ data/evaluation/results/generation.json generation metrics, answers and provenan
 data/evaluation/results/generation-gpt51-json-v1.json hardened candidate baseline
 data/evaluation/results/retrieval-glossary-locators-v1.json v2 retrieval gate result
 data/evaluation/results/generation-gpt51-json-v2.json reserved v2 generation result
+data/local/bankscope_chat.db local thread/message/citation history
 ```
 
 Table descriptions are deterministic by default. GPT-4o descriptions are an
@@ -223,6 +234,7 @@ python -m ruff check .
 python -m ruff format --check .
 cd frontend
 npm.cmd run lint
+npm.cmd test
 npm.cmd run build
 ```
 

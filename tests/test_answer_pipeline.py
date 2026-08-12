@@ -1,8 +1,32 @@
+import sys
 from types import SimpleNamespace
 
 import numpy as np
 
-from bankscope.generation.pipeline import SingleBankAnswerPipeline
+from bankscope.generation.pipeline import (
+    SentenceTransformerQueryEncoder,
+    SingleBankAnswerPipeline,
+)
+
+
+def test_query_encoder_loads_pinned_model_from_local_cache(monkeypatch) -> None:
+    captured = {}
+
+    class FakeSentenceTransformer:
+        def __init__(self, name, **options):
+            captured.update({"name": name, **options})
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        SimpleNamespace(SentenceTransformer=FakeSentenceTransformer),
+    )
+    SentenceTransformerQueryEncoder("model-name", "model-revision")
+    assert captured == {
+        "name": "model-name",
+        "revision": "model-revision",
+        "local_files_only": True,
+    }
 
 
 class MockEncoder:

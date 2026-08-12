@@ -75,7 +75,15 @@ class QdrantRetriever:
             if sha256_file(table_path) != expected_table_hash:
                 raise ValueError("tables.jsonl does not match the Qdrant manifest.")
 
-        self.client = QdrantClient(path=str(self.path))
+        try:
+            self.client = QdrantClient(path=str(self.path))
+        except RuntimeError as error:
+            if "already accessed by another instance" not in str(error):
+                raise
+            raise RuntimeError(
+                f"Cannot open local Qdrant storage at {self.path}: another process is using it. "
+                "Stop the previous BankScope/API Python process and start the application again."
+            ) from error
         try:
             info = self.client.get_collection(self.collection_name)
             if info.points_count != int(self.manifest["point_count"]):

@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+    [ValidateRange(1, 600)]
+    [int]$ApiStartupTimeoutSeconds = 300
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -43,12 +46,42 @@ $processes = @()
 
 try {
     Write-Host "Pokrecem BankScope API na http://127.0.0.1:8000 ..." -ForegroundColor Cyan
-    $processes += Start-Process `
+    $apiProcess = Start-Process `
         -FilePath $python `
         -ArgumentList "`"$apiScript`"" `
         -WorkingDirectory $projectRoot `
         -PassThru `
         -NoNewWindow
+    $processes += $apiProcess
+
+    Write-Host "Cekam da API ucita modele i prijavi da je spreman ..." -ForegroundColor Yellow
+    $apiDeadline = (Get-Date).AddSeconds($ApiStartupTimeoutSeconds)
+    $apiReady = $false
+    while ((Get-Date) -lt $apiDeadline) {
+        Start-Sleep -Milliseconds 500
+        $apiProcess.Refresh()
+        if ($apiProcess.HasExited) {
+            throw "BankScope API se ugasio tokom pokretanja (exit code $($apiProcess.ExitCode)). Proveri poruku iznad."
+        }
+
+        try {
+            $health = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:8000/api/health" `
+                -Method Get `
+                -TimeoutSec 2 `
+                -ErrorAction Stop
+            if ($health.status -eq "ready") {
+                $apiReady = $true
+                break
+            }
+        } catch {
+            # API jos uvek ucitava lokalne modele i indekse.
+        }
+    }
+
+    if (-not $apiReady) {
+        throw "BankScope API nije postao spreman za $ApiStartupTimeoutSeconds sekundi."
+    }
 
     Write-Host "Pokrecem frontend na http://localhost:5173 ..." -ForegroundColor Cyan
     $processes += Start-Process `
@@ -63,6 +96,7 @@ try {
     while ($true) {
         Start-Sleep -Milliseconds 500
         foreach ($process in $processes) {
+            $process.Refresh()
             if ($process.HasExited) {
                 throw "Proces $($process.Id) se neocekivano ugasio (exit code $($process.ExitCode))."
             }

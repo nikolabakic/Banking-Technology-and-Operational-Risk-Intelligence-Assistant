@@ -16,11 +16,12 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Generation evaluation | Complete | Reusable 26-question evaluator and first baseline record deterministic metrics, advisory judge results and two explicit query errors |
 | Generation hardening | Known citation caveat | Answer checks pass; citation audit is 24/25, the CLI default is unchanged and the UI API uses the validated GPT-5.1 candidate |
 | Automatic bank resolution | Complete | Names, aliases and tickers resolve before retrieval; missing/multiple banks fail locally |
-| Conversation context | Complete | Follow-ups inherit the last resolved session bank without contaminating retrieval |
-| Simple user interface | Complete | Local chat flow supports multiple turns, bank resolution and evidence inspection |
-| Application stabilization | Complete | Documentation matches the active UI/API flow and all quality gates pass |
+| Durable local conversations | Complete | SQLite threads survive refresh/restart and retain server-owned bank context |
+| Streaming progress | Complete | The UI receives real bank-resolution, embedding, retrieval, generation and validation stages |
+| Citation context | Complete | Persisted citations reopen canonical narrative/table evidence and fail closed after corpus changes |
+| Local product interface | Complete | Routed chat history supports create, reopen, rename, delete and source inspection |
+| Experimentation foundation | Implemented | FastAPI contracts, structured local logs and isolated quality gates support future experiments |
 | External tools and function calling | Future consideration | Assess web search, calculator and document lookup integrations to extend the assistant's capabilities |
-| Final report | Pending | Retrieval and generation results are reported separately |
 
 ## Acceptance gates
 
@@ -52,7 +53,8 @@ recorded in `docs/decisions/006-automatic-bank-resolution.md`.
 
 ## Scope boundary
 
-The baseline is a clear student RAG assistant for ten banks. Multi-agent
-orchestration, knowledge graphs, fine-tuning, production observability and
-support for hundreds of banks are outside scope unless evaluation identifies a
-specific need.
+The active product remains a local single-user student RAG assistant for ten
+banks. There is no deployment or final-report deadline. New ideas are added as
+isolated experiments and become defaults only when their own tests and relevant
+evaluation gates justify the change. Authentication, multi-user infrastructure
+and cloud persistence remain outside the active scope.
