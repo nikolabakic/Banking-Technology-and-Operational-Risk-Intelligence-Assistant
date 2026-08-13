@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -9,6 +9,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from bankscope.generation.answer_generator import generate_answer
+from bankscope.generation.contextualizer import contextualize_question
 from bankscope.io import read_jsonl, sha256_file
 from bankscope.retrieval.glossary_locators import validate_glossary_locators
 from bankscope.retrieval.hybrid_retriever import HybridRetriever
@@ -190,6 +191,7 @@ class SingleBankAnswerPipeline:
         question: str,
         *,
         ticker: str | None = None,
+        conversation_history: Sequence[Mapping[str, str]] = (),
         record_type: str | None = None,
         limit: int = 5,
         candidate_k: int = 30,
@@ -208,16 +210,43 @@ class SingleBankAnswerPipeline:
         if rrf_k <= 0:
             raise ValueError("rrf_k must be positive.")
 
+        standalone_question = question
+        contextualization_model: str | None = None
+        contextualization_latency_ms = 0.0
+        if conversation_history:
+            if on_progress is not None:
+                on_progress(
+                    "contextualizing",
+                    {"message": "Resolving the follow-up question..."},
+                )
+            contextualization = contextualize_question(
+                question,
+                conversation_history,
+                client=self.client,
+                model=self.generation_model,
+                session_ticker=ticker,
+            )
+            standalone_question = contextualization.standalone_question
+            contextualization_model = contextualization.model
+            contextualization_latency_ms = contextualization.latency_ms
+        contextualization_payload = {
+            "applied": bool(conversation_history),
+            "history_turns": len(conversation_history) // 2,
+            "standalone_question": standalone_question,
+            "model": contextualization_model,
+            "latency_ms": contextualization_latency_ms,
+        }
+
         if on_progress is not None:
             on_progress("resolving_bank", {"message": "Identifying the bank..."})
         resolution = resolve_bank(
-            question,
+            standalone_question,
             bank_names=self.bank_names,
             bank_aliases=self.bank_aliases,
             session_ticker=ticker,
         )
         if resolution.status != "resolved":
-            return self._ambiguous_bank_run(question, resolution)
+            return self._ambiguous_bank_run(question, resolution, contextualization_payload)
         resolved_ticker = str(resolution.ticker)
 
         if on_progress is not None:
@@ -226,14 +255,14 @@ class SingleBankAnswerPipeline:
                 {"message": "Encoding the question...", "ticker": resolved_ticker},
             )
         started = perf_counter()
-        query_vector = self.query_encoder.encode(question)
+        query_vector = self.query_encoder.encode(standalone_question)
         embedding_latency_ms = (perf_counter() - started) * 1000
 
         if on_progress is not None:
             on_progress("retrieving", {"message": "Searching indexed filings..."})
         started = perf_counter()
         evidence = self.retriever.search_hybrid(
-            question,
+            standalone_question,
             query_vector,
             limit=limit,
             candidate_k=candidate_k,
@@ -258,6 +287,7 @@ class SingleBankAnswerPipeline:
             expected_bank_name=self.bank_names.get(resolved_ticker, resolved_ticker),
             expected_record_type=record_type,
             temperature=self.temperature,
+            resolved_question=standalone_question,
         )
         generation_latency_ms = (perf_counter() - started) * 1000
         if on_progress is not None:
@@ -265,6 +295,7 @@ class SingleBankAnswerPipeline:
         output = {
             "question": question,
             "ticker": resolved_ticker,
+            "contextualization": contextualization_payload,
             "bank_resolution": resolution.as_dict(),
             "retrieval": {
                 "backend": "mixed",
@@ -281,7 +312,12 @@ class SingleBankAnswerPipeline:
             generation_latency_ms=generation_latency_ms,
         )
 
-    def _ambiguous_bank_run(self, question: str, resolution: BankResolution) -> AnswerRun:
+    def _ambiguous_bank_run(
+        self,
+        question: str,
+        resolution: BankResolution,
+        contextualization: Mapping[str, Any],
+    ) -> AnswerRun:
         if resolution.status == "multiple":
             names = [self.bank_names.get(ticker, ticker) for ticker in resolution.detected_tickers]
             answer = (
@@ -300,6 +336,7 @@ class SingleBankAnswerPipeline:
         output = {
             "question": question,
             "ticker": None,
+            "contextualization": dict(contextualization),
             "bank_resolution": resolution.as_dict(),
             "retrieval": {
                 "backend": "mixed",

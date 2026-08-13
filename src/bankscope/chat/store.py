@@ -13,6 +13,8 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 DEFAULT_THREAD_TITLE = "New conversation"
+DEFAULT_MEMORY_MAX_TURNS = 4
+DEFAULT_MEMORY_MAX_CHARS = 12_000
 
 
 def _now() -> str:
@@ -199,6 +201,53 @@ class ChatStore:
                 turn["response"] = assistant["payload"]
             turns.append(turn)
         return turns
+
+    def conversation_history(
+        self,
+        thread_id: str,
+        *,
+        max_turns: int = DEFAULT_MEMORY_MAX_TURNS,
+        max_chars: int = DEFAULT_MEMORY_MAX_CHARS,
+    ) -> list[dict[str, str]]:
+        """Return bounded, completed turn pairs for one thread's model context."""
+        if max_turns <= 0:
+            raise ValueError("max_turns must be positive.")
+        if max_chars <= 0:
+            raise ValueError("max_chars must be positive.")
+
+        messages = self.list_messages(thread_id)
+        completed_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for index in range(0, len(messages), 2):
+            user = messages[index]
+            assistant = messages[index + 1] if index + 1 < len(messages) else None
+            if (
+                user["role"] == "user"
+                and assistant is not None
+                and assistant["role"] == "assistant"
+                and assistant["status"] == "complete"
+            ):
+                completed_pairs.append((user, assistant))
+
+        selected: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        used_chars = 0
+        for user, assistant in reversed(completed_pairs):
+            pair_chars = len(user["content"]) + len(assistant["content"])
+            if pair_chars + used_chars > max_chars:
+                break
+            selected.append((user, assistant))
+            used_chars += pair_chars
+            if len(selected) == max_turns:
+                break
+
+        history: list[dict[str, str]] = []
+        for user, assistant in reversed(selected):
+            history.extend(
+                [
+                    {"role": "user", "content": user["content"]},
+                    {"role": "assistant", "content": assistant["content"]},
+                ]
+            )
+        return history
 
     def append_answer_turn(
         self,

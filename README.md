@@ -66,8 +66,12 @@ messages and citation metadata in `data/local/bankscope_chat.db`; canonical fili
 evidence remains in the processed corpus and is loaded only when a citation is
 opened. The current question selects the bank when it names one; otherwise the
 server-owned thread ticker supplies follow-up context across refreshes and restarts.
-Missing or multiple banks produce an `ambiguous` response before retrieval or model
-calls. The original stateless `POST /api/answer` remains available for compatibility.
+After the first turn, up to four completed turns from that SQLite thread rewrite the
+latest message as a standalone retrieval question. Error turns and other threads are
+excluded; prior assistant text can resolve references but never serves as filing
+evidence. Missing or multiple banks produce an `ambiguous` response before retrieval
+or answer generation. The original stateless `POST /api/answer` remains available for
+compatibility.
 
 ## Current design
 
@@ -93,6 +97,8 @@ download.py -> build_corpus.py -> embed.py -> build_qdrant.py
 - Answer requests resolve a configured bank deterministically from its legal name,
   common alias or ticker before retrieval. Missing or multiple banks return an
   `ambiguous` result without embedding, retrieval or model calls.
+- Thread follow-ups are contextualized before bank resolution and retrieval from four
+  bounded, completed SQLite turns. The original question remains persisted and displayed.
 - Persistent Qdrant Local Mode is available as an optional backend. Its dense,
   BM25 and native-RRF paths are also implemented, but full Qdrant hybrid did not
   pass the MRR quality gate.
@@ -118,6 +124,7 @@ python scripts/search.py "How does JPMorgan Chase define cybersecurity risk?" --
 python scripts/answer.py "How does JPMorgan Chase define cybersecurity risk?"
 python scripts/evaluate.py
 python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113
+python scripts/evaluate_conversation_memory.py --model AZURE_GPT_51_2025_1113
 ```
 
 The default search uses Qdrant for dense retrieval and BM25S plus application
@@ -165,6 +172,7 @@ data/evaluation/results/generation.json generation metrics, answers and provenan
 data/evaluation/results/generation-gpt51-json-v1.json hardened candidate baseline
 data/evaluation/results/retrieval-glossary-locators-v1.json v2 retrieval gate result
 data/evaluation/results/generation-gpt51-json-v2.json reserved v2 generation result
+data/evaluation/results/conversation-memory-v1.json conversational retrieval gate result
 data/local/bankscope_chat.db local thread/message/citation history
 ```
 
@@ -252,8 +260,10 @@ for the active mixed-backend decision,
 [`docs/decisions/005-generation-evaluation.md`](docs/decisions/005-generation-evaluation.md)
 for the generation-evaluation contract,
 [`docs/decisions/006-automatic-bank-resolution.md`](docs/decisions/006-automatic-bank-resolution.md)
-for bank and session fallback behavior, and [`docs/roadmap.md`](docs/roadmap.md) for
-the next project phases.
+for bank and session fallback behavior,
+[`docs/decisions/007-short-term-conversation-memory.md`](docs/decisions/007-short-term-conversation-memory.md)
+for thread-scoped contextualized retrieval, and [`docs/roadmap.md`](docs/roadmap.md)
+for the next project phases.
 
 ## Known corpus limitations
 

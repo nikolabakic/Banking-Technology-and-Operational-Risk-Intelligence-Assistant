@@ -49,6 +49,41 @@ def test_chat_store_errors_do_not_replace_session_bank(tmp_path) -> None:
     )
     assert store.get_thread(thread["id"])["session_ticker"] == "JPM"
     assert store.list_turns(thread["id"])[1]["error_code"] == "pipeline_failed"
+    assert store.conversation_history(thread["id"]) == [
+        {"role": "user", "content": "JPM question"},
+        {"role": "assistant", "content": "Answer [E1]"},
+    ]
+
+
+def test_conversation_history_is_thread_scoped_and_bounded_by_complete_pairs(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    first = store.create_thread()
+    second = store.create_thread()
+    for index in range(6):
+        output = answer()
+        output["answer"] = f"Answer {index} [E1]"
+        store.append_answer_turn(first["id"], f"Question {index}", output, corpus_hash="hash-1")
+    store.append_answer_turn(second["id"], "Other thread", answer("BAC"), corpus_hash="hash-1")
+
+    history = store.conversation_history(first["id"])
+
+    assert [item["content"] for item in history] == [
+        "Question 2",
+        "Answer 2 [E1]",
+        "Question 3",
+        "Answer 3 [E1]",
+        "Question 4",
+        "Answer 4 [E1]",
+        "Question 5",
+        "Answer 5 [E1]",
+    ]
+    assert all(item["content"] != "Other thread" for item in history)
+    assert store.conversation_history(first["id"], max_chars=23) == [
+        {"role": "user", "content": "Question 5"},
+        {"role": "assistant", "content": "Answer 5 [E1]"},
+    ]
+    assert store.conversation_history(first["id"], max_chars=22) == []
 
 
 def test_chat_store_cascade_deletes_messages_and_citations(tmp_path) -> None:

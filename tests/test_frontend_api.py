@@ -14,10 +14,17 @@ from scripts.serve_api import PROJECT_ROOT, _json_default, _project_path, _valid
 
 class FakePipeline:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str | None]] = []
+        self.calls: list[tuple[str, str | None, list[dict[str, str]]]] = []
 
-    def answer(self, question: str, *, ticker: str | None = None, on_progress=None):
-        self.calls.append((question, ticker))
+    def answer(
+        self,
+        question: str,
+        *,
+        ticker: str | None = None,
+        conversation_history=(),
+        on_progress=None,
+    ):
+        self.calls.append((question, ticker, list(conversation_history)))
         if on_progress:
             on_progress("resolving_bank", {"message": "Identifying the bank..."})
             on_progress("retrieving", {"message": "Searching indexed filings..."})
@@ -95,7 +102,15 @@ def test_thread_answer_persists_messages_and_server_side_session(api) -> None:
         f"/api/threads/{thread['id']}/answers", json={"question": "What about the framework?"}
     )
     assert second.status_code == 200
-    assert pipeline.calls == [("What did JPM report?", None), ("What about the framework?", "JPM")]
+    assert pipeline.calls[0] == ("What did JPM report?", None, [])
+    assert pipeline.calls[1] == (
+        "What about the framework?",
+        "JPM",
+        [
+            {"role": "user", "content": "What did JPM report?"},
+            {"role": "assistant", "content": "Grounded answer [E1]"},
+        ],
+    )
 
     history = client.get(f"/api/threads/{thread['id']}/messages").json()
     assert len(history["messages"]) == 4
@@ -121,7 +136,7 @@ def test_compatibility_answer_keeps_existing_contract(api) -> None:
     assert response.status_code == 200
     assert response.json()["answer"] == "Grounded answer [E1]"
     assert response.json()["evidence"][0]["score"] == 0.75
-    assert pipeline.calls == [("What was the ratio?", "JPM")]
+    assert pipeline.calls == [("What was the ratio?", "JPM", [])]
 
 
 def test_stream_emits_progress_answer_and_done(api) -> None:
@@ -179,8 +194,10 @@ def test_citation_context_hydrates_persisted_source(tmp_path) -> None:
 
 def test_validation_error_is_stable_and_persisted(tmp_path) -> None:
     class InvalidPipeline:
-        def answer(self, question: str, *, ticker=None, on_progress=None):
-            raise GenerationValidationError("invalid_schema", "Invalid model response.")
+        def answer(self, question: str, *, ticker=None, conversation_history=(), on_progress=None):
+            raise GenerationValidationError(
+                "contextualization_invalid_schema", "Invalid contextualization response."
+            )
 
     store = ChatStore(tmp_path / "chat.db")
     store.initialize()
@@ -194,6 +211,7 @@ def test_validation_error_is_stable_and_persisted(tmp_path) -> None:
     thread = client.post("/api/threads", json={}).json()
     response = client.post(f"/api/threads/{thread['id']}/answers", json={"question": "Question"})
     assert response.status_code == 422
-    assert response.json()["code"] == "invalid_schema"
+    assert response.json()["code"] == "contextualization_invalid_schema"
     turns = client.get(f"/api/threads/{thread['id']}/messages").json()["turns"]
     assert turns[0]["state"] == "error"
+    assert turns[0]["error_code"] == "contextualization_invalid_schema"

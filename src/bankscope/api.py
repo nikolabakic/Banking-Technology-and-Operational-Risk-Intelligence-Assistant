@@ -80,11 +80,13 @@ class AppServices:
         on_progress: Callable[[str, Mapping[str, Any]], None] | None = None,
     ) -> tuple[dict[str, Any], int]:
         thread = self.store.get_thread(thread_id)
+        conversation_history = self.store.conversation_history(thread_id)
         try:
             with self.pipeline_lock:
                 run = self.pipeline.answer(
                     question,
                     ticker=thread["session_ticker"],
+                    conversation_history=conversation_history,
                     on_progress=on_progress,
                 )
             turn = self.store.append_answer_turn(

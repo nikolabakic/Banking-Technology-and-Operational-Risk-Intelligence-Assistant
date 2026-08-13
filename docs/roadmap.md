@@ -17,6 +17,7 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Generation hardening | Known citation caveat | Answer checks pass; citation audit is 24/25, the CLI default is unchanged and the UI API uses the validated GPT-5.1 candidate |
 | Automatic bank resolution | Complete | Names, aliases and tickers resolve before retrieval; missing/multiple banks fail locally |
 | Durable local conversations | Complete | SQLite threads survive refresh/restart and retain server-owned bank context |
+| Short-term conversation memory | Implemented | Four bounded, completed turns from the current SQLite thread contextualize retrieval; the 8-case gate improved Hit@5 from 6/8 to 8/8 with all isolation controls passing |
 | Streaming progress | Complete | The UI receives real bank-resolution, embedding, retrieval, generation and validation stages |
 | Citation context | Complete | Persisted citations reopen canonical narrative/table evidence and fail closed after corpus changes |
 | Local product interface | Complete | Routed chat history supports create, reopen, rename, delete and source inspection |
@@ -51,6 +52,8 @@ generation-evaluation scope and its first measured baseline are recorded in
 candidate and its still-pending approval gate are described in
 `docs/generation_hardening.md`. Automatic bank resolution and session fallback are
 recorded in `docs/decisions/006-automatic-bank-resolution.md`.
+Short-term conversation memory and its measured retrieval gate are recorded in
+`docs/decisions/007-short-term-conversation-memory.md`.
 
 ## Scope boundary
 
