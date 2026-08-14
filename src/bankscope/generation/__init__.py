@@ -6,10 +6,11 @@ from bankscope.generation.answer_generator import (
     NumericFacts,
     generate_answer,
 )
-from bankscope.generation.pipeline import AnswerRun, SingleBankAnswerPipeline
+from bankscope.generation.pipeline import AnswerRun, BankAnswerPipeline, SingleBankAnswerPipeline
 
 __all__ = [
     "AnswerRun",
+    "BankAnswerPipeline",
     "GPT51_CANDIDATE_MODEL",
     "GenerationValidationError",
     "NumericFacts",

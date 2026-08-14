@@ -213,6 +213,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 .answer-actions { display: flex; gap: 2px; margin-top: 7px; }
 .answer-actions .ui-button { padding-inline: 7px; color: #71829a; }
 .answer-actions .ui-button:hover { color: #175da8; }
+.comparison-results { display: grid; gap: 10px; margin-top: 16px; }
+.comparison-card { padding: 13px 14px; border: 1px solid #cfdfef; border-radius: 12px; background: rgba(255,255,255,.7); }
+.comparison-card-unsupported, .comparison-card-ambiguous { border-color: #e4d7bb; background: #fffaf0; }
+.comparison-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.comparison-card-heading > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.comparison-card-heading strong { overflow: hidden; color: #203c5e; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.comparison-card > .ui-button { margin: 7px 0 -4px -7px; color: #71829a; }
 .thinking-card { display: flex; align-items: flex-start; gap: 12px; max-width: 650px; padding: 16px; border: 1px solid #cfdfef; border-radius: 12px; background: rgba(255,255,255,.56); }
 .spinner { flex: 0 0 auto; width: 15px; height: 15px; margin-top: 1px; border: 2px solid #c8dbef; border-top-color: var(--blue-600); border-radius: 50%; animation: spin .7s linear infinite; }
 .thinking-card > div { display: grid; width: 100%; gap: 9px; }

@@ -7,7 +7,7 @@ from typing import Literal
 
 from bankscope.sec.company_registry import normalize_bank_text
 
-ResolutionStatus = Literal["resolved", "missing", "multiple"]
+ResolutionStatus = Literal["resolved", "missing", "multiple", "too_many"]
 ResolutionSource = Literal["question", "session"]
 
 
@@ -17,14 +17,18 @@ class BankResolution:
     source: ResolutionSource | None
     ticker: str | None
     detected_tickers: tuple[str, ...]
+    tickers: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "status": self.status,
             "source": self.source,
             "ticker": self.ticker,
             "detected_tickers": list(self.detected_tickers),
         }
+        if len(self.tickers) > 1 or self.status == "too_many":
+            payload["tickers"] = list(self.tickers)
+        return payload
 
 
 def _contains_phrase(question: str, phrase: str) -> bool:
@@ -41,12 +45,17 @@ def resolve_bank(
     bank_names: Mapping[str, str],
     bank_aliases: Mapping[str, Sequence[str]] | None = None,
     session_ticker: str | None = None,
+    session_tickers: Sequence[str] = (),
+    max_banks: int = 4,
 ) -> BankResolution:
-    """Resolve exactly one configured bank without fuzzy matching or model calls."""
+    """Resolve one comparison scope without fuzzy matching or model calls."""
+
+    if max_banks < 2:
+        raise ValueError("max_banks must be at least 2.")
 
     normalized_question = normalize_bank_text(question)
     aliases = bank_aliases or {}
-    detected: set[str] = set()
+    detected_positions: dict[str, int] = {}
 
     for raw_ticker, legal_name in bank_names.items():
         ticker = raw_ticker.strip().upper()
@@ -54,39 +63,79 @@ def resolve_bank(
         identifiers.update(normalize_bank_text(value) for value in aliases.get(ticker, ()))
         if ticker != "C":
             identifiers.add(normalize_bank_text(ticker))
-        if any(
-            identifier and _contains_phrase(normalized_question, identifier)
+        positions = [
+            normalized_question.find(identifier)
             for identifier in identifiers
-        ):
-            detected.add(ticker)
+            if identifier and _contains_phrase(normalized_question, identifier)
+        ]
+        if positions:
+            detected_positions[ticker] = min(position for position in positions if position >= 0)
 
     if "C" in bank_names and _mentions_c_ticker(question):
-        detected.add("C")
+        match = re.search(r"(?i)(?:\$c\b|\bticker\s*[:#-]?\s*c\b)", question)
+        detected_positions["C"] = match.start() if match else len(question)
 
-    detected_tickers = tuple(sorted(detected))
+    detected_tickers = tuple(
+        ticker for ticker, _ in sorted(detected_positions.items(), key=lambda item: item[1])
+    )
     if len(detected_tickers) == 1:
         return BankResolution(
             status="resolved",
             source="question",
             ticker=detected_tickers[0],
             detected_tickers=detected_tickers,
+            tickers=detected_tickers,
         )
-    if len(detected_tickers) > 1:
+    if 2 <= len(detected_tickers) <= max_banks:
         return BankResolution(
             status="multiple",
-            source=None,
+            source="question",
             ticker=None,
             detected_tickers=detected_tickers,
+            tickers=detected_tickers,
+        )
+    if len(detected_tickers) > max_banks:
+        return BankResolution(
+            status="too_many",
+            source="question",
+            ticker=None,
+            detected_tickers=detected_tickers,
+            tickers=detected_tickers,
         )
 
-    fallback = (session_ticker or "").strip().upper()
-    if fallback:
-        if fallback not in bank_names:
-            raise ValueError(f"Unknown bank ticker: {fallback}.")
+    fallback_values = tuple(
+        dict.fromkeys(
+            value.strip().upper()
+            for value in (session_tickers or ((session_ticker,) if session_ticker else ()))
+            if value and value.strip()
+        )
+    )
+    if fallback_values:
+        unknown = [ticker for ticker in fallback_values if ticker not in bank_names]
+        if unknown:
+            raise ValueError(f"Unknown bank ticker(s): {', '.join(unknown)}.")
+        if len(fallback_values) > max_banks:
+            return BankResolution(
+                status="too_many",
+                source="session",
+                ticker=None,
+                detected_tickers=(),
+                tickers=fallback_values,
+            )
+        if len(fallback_values) > 1:
+            return BankResolution(
+                status="multiple",
+                source="session",
+                ticker=None,
+                detected_tickers=(),
+                tickers=fallback_values,
+            )
+        fallback = fallback_values[0]
         return BankResolution(
             status="resolved",
             source="session",
             ticker=fallback,
             detected_tickers=(),
+            tickers=(fallback,),
         )
     return BankResolution(status="missing", source=None, ticker=None, detected_tickers=())

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_THREAD_TITLE = "New conversation"
 DEFAULT_MEMORY_MAX_TURNS = 4
 DEFAULT_MEMORY_MAX_CHARS = 12_000
@@ -63,6 +63,7 @@ class ChatStore:
                         id TEXT PRIMARY KEY,
                         title TEXT NOT NULL,
                         session_ticker TEXT,
+                        session_tickers_json TEXT NOT NULL DEFAULT '[]',
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL
                     );
@@ -91,17 +92,36 @@ class ChatStore:
                     );
                     CREATE INDEX ix_message_citations_message
                         ON message_citations(message_id, citation_index);
-                    PRAGMA user_version = 1;
+                    PRAGMA user_version = 2;
                     """
                 )
+                connection.commit()
+            elif version == 1:
+                connection.execute(
+                    "ALTER TABLE chat_threads ADD COLUMN "
+                    "session_tickers_json TEXT NOT NULL DEFAULT '[]'"
+                )
+                connection.execute(
+                    """UPDATE chat_threads
+                       SET session_tickers_json = '["' || session_ticker || '"]'
+                       WHERE session_ticker IS NOT NULL AND session_ticker != ''"""
+                )
+                connection.execute("PRAGMA user_version = 2")
                 connection.commit()
 
     @staticmethod
     def _thread(row: sqlite3.Row) -> dict[str, Any]:
+        raw_tickers = json.loads(row["session_tickers_json"] or "[]")
+        session_tickers = [
+            str(value).strip().upper() for value in raw_tickers if str(value).strip()
+        ]
+        if not session_tickers and row["session_ticker"]:
+            session_tickers = [str(row["session_ticker"]).strip().upper()]
         return {
             "id": row["id"],
             "title": row["title"],
             "session_ticker": row["session_ticker"],
+            "session_tickers": session_tickers,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -268,6 +288,17 @@ class ChatStore:
             citation["citation_id"] = citation_id
             citations.append(citation)
         response["citations"] = citations
+        citations_by_label = {str(item.get("label") or ""): item for item in citations}
+        bank_results: list[dict[str, Any]] = []
+        for raw_result in response.get("bank_results") or []:
+            result = dict(raw_result)
+            result["citations"] = [
+                citations_by_label.get(str(item.get("label") or ""), dict(item))
+                for item in result.get("citations") or []
+            ]
+            bank_results.append(result)
+        if bank_results:
+            response["bank_results"] = bank_results
 
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -320,11 +351,26 @@ class ChatStore:
             title = thread["title"]
             if title == DEFAULT_THREAD_TITLE:
                 title = _title_from_question(question)
-            ticker = str(response.get("ticker") or "").strip().upper() or thread["session_ticker"]
+            response_tickers = [
+                str(value).strip().upper()
+                for value in response.get("tickers") or []
+                if str(value).strip()
+            ]
+            response_ticker = str(response.get("ticker") or "").strip().upper()
+            if response_tickers:
+                session_tickers = list(dict.fromkeys(response_tickers))
+            elif response_ticker:
+                session_tickers = [response_ticker]
+            else:
+                session_tickers = json.loads(thread["session_tickers_json"] or "[]")
+                if not session_tickers and thread["session_ticker"]:
+                    session_tickers = [str(thread["session_ticker"]).strip().upper()]
+            ticker = session_tickers[0] if len(session_tickers) == 1 else None
             connection.execute(
                 """UPDATE chat_threads
-                   SET title = ?, session_ticker = ?, updated_at = ? WHERE id = ?""",
-                (title, ticker, now, thread_id),
+                   SET title = ?, session_ticker = ?, session_tickers_json = ?, updated_at = ?
+                   WHERE id = ?""",
+                (title, ticker, _json(session_tickers), now, thread_id),
             )
             connection.commit()
         return {

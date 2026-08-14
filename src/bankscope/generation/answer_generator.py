@@ -485,6 +485,7 @@ def generate_answer(
     expected_record_type: str | None = None,
     temperature: float = 0,
     resolved_question: str | None = None,
+    comparison_scope: bool = False,
 ) -> dict[str, Any]:
     """Generate one fail-closed answer using only hydrated retrieval evidence."""
     question = question.strip()
@@ -546,6 +547,12 @@ def generate_answer(
         "source. The application will render supported numeric answers from facts. Required "
         f"Pydantic JSON schema: {schema_text}"
     )
+    if comparison_scope:
+        instructions += (
+            " This is one bank-specific stage of a comparison. Answer only for the expected "
+            "bank, even when the user question names other banks. Do not compare banks or treat "
+            "missing evidence for another bank as a reason to abstain."
+        )
     prompt = (
         f"Prompt version: {ANSWER_PROMPT_VERSION}\n"
         f"Required output language: {answer_language}\n"

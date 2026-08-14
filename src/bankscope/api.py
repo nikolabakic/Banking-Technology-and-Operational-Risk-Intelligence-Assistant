@@ -40,6 +40,7 @@ def jsonable(value: object) -> Any:
 class QuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4_000)
     session_ticker: str | None = None
+    session_tickers: list[str] = Field(default_factory=list, max_length=4)
 
     @field_validator("question")
     @classmethod
@@ -55,6 +56,14 @@ class QuestionRequest(BaseModel):
         if value is None:
             return None
         return value.strip().upper() or None
+
+    @field_validator("session_tickers")
+    @classmethod
+    def normalize_tickers(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(value.strip().upper() for value in values if value.strip()))
+        if len(normalized) != len(values):
+            raise ValueError("session_tickers must contain unique, non-empty tickers.")
+        return normalized
 
 
 class ThreadRequest(BaseModel):
@@ -86,6 +95,7 @@ class AppServices:
                 run = self.pipeline.answer(
                     question,
                     ticker=thread["session_ticker"],
+                    tickers=thread["session_tickers"],
                     conversation_history=conversation_history,
                     on_progress=on_progress,
                 )
@@ -294,7 +304,11 @@ def create_app(services: AppServices) -> FastAPI:
     def compatibility_answer(body: QuestionRequest) -> JSONResponse:
         try:
             with services.pipeline_lock:
-                run = services.pipeline.answer(body.question, ticker=body.session_ticker)
+                run = services.pipeline.answer(
+                    body.question,
+                    ticker=body.session_ticker,
+                    tickers=body.session_tickers,
+                )
             return JSONResponse(content=jsonable({**run.output, "evidence": run.evidence}))
         except GenerationValidationError as error:
             return JSONResponse(

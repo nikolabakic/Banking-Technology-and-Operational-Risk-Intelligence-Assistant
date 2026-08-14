@@ -16,13 +16,18 @@ def registry_maps() -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
     )
 
 
-def resolve(question: str, session_ticker: str | None = None):
+def resolve(
+    question: str,
+    session_ticker: str | None = None,
+    session_tickers: tuple[str, ...] = (),
+):
     bank_names, bank_aliases = registry_maps()
     return resolve_bank(
         question,
         bank_names=bank_names,
         bank_aliases=bank_aliases,
         session_ticker=session_ticker,
+        session_tickers=session_tickers,
     )
 
 
@@ -69,8 +74,24 @@ def test_resolution_priority_and_session_fallback() -> None:
     assert switched.ticker == "C"
     assert switched.source == "question"
     assert multiple.status == "multiple"
+    assert multiple.source == "question"
     assert multiple.ticker is None
     assert multiple.detected_tickers == ("C", "JPM")
+    assert multiple.tickers == ("C", "JPM")
+
+
+def test_resolves_comparison_session_and_rejects_more_than_four_banks() -> None:
+    inherited = resolve("What about 2024?", session_tickers=("BAC", "C", "JPM"))
+    switched = resolve("What did Wells Fargo report?", session_tickers=("BAC", "C"))
+    too_many = resolve("Compare JPMorgan, Bank of America, Citi, Wells Fargo and Goldman Sachs.")
+
+    assert inherited.status == "multiple"
+    assert inherited.source == "session"
+    assert inherited.tickers == ("BAC", "C", "JPM")
+    assert switched.status == "resolved"
+    assert switched.tickers == ("WFC",)
+    assert too_many.status == "too_many"
+    assert too_many.tickers == ("JPM", "BAC", "C", "WFC", "GS")
 
 
 def test_frozen_questions_cover_single_multiple_and_missing_resolution() -> None:

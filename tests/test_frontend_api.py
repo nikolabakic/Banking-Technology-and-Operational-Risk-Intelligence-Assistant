@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from bankscope.api import AppServices, create_app
+from bankscope.api import AppServices, QuestionRequest, create_app
 from bankscope.chat import ChatStore, CitationSourceResolver
 from bankscope.generation.answer_generator import GenerationValidationError
 from scripts.serve_api import PROJECT_ROOT, _json_default, _project_path, _validated_request
@@ -14,17 +14,18 @@ from scripts.serve_api import PROJECT_ROOT, _json_default, _project_path, _valid
 
 class FakePipeline:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str | None, list[dict[str, str]]]] = []
+        self.calls = []
 
     def answer(
         self,
         question: str,
         *,
         ticker: str | None = None,
+        tickers=(),
         conversation_history=(),
         on_progress=None,
     ):
-        self.calls.append((question, ticker, list(conversation_history)))
+        self.calls.append((question, ticker, list(tickers), list(conversation_history)))
         if on_progress:
             on_progress("resolving_bank", {"message": "Identifying the bank..."})
             on_progress("retrieving", {"message": "Searching indexed filings..."})
@@ -63,6 +64,10 @@ def test_frontend_api_validates_question_and_normalizes_session_ticker() -> None
     assert _validated_request(
         {"question": "  What was JPMorgan's CET1 ratio?  ", "session_ticker": " jpm "}
     ) == ("What was JPMorgan's CET1 ratio?", "JPM")
+    request = QuestionRequest.model_validate(
+        {"question": "Compare", "session_tickers": [" bac ", "c"]}
+    )
+    assert request.session_tickers == ["BAC", "C"]
 
 
 def test_frontend_api_resolves_config_paths_from_project_root() -> None:
@@ -102,10 +107,11 @@ def test_thread_answer_persists_messages_and_server_side_session(api) -> None:
         f"/api/threads/{thread['id']}/answers", json={"question": "What about the framework?"}
     )
     assert second.status_code == 200
-    assert pipeline.calls[0] == ("What did JPM report?", None, [])
+    assert pipeline.calls[0] == ("What did JPM report?", None, [], [])
     assert pipeline.calls[1] == (
         "What about the framework?",
         "JPM",
+        ["JPM"],
         [
             {"role": "user", "content": "What did JPM report?"},
             {"role": "assistant", "content": "Grounded answer [E1]"},
@@ -136,7 +142,7 @@ def test_compatibility_answer_keeps_existing_contract(api) -> None:
     assert response.status_code == 200
     assert response.json()["answer"] == "Grounded answer [E1]"
     assert response.json()["evidence"][0]["score"] == 0.75
-    assert pipeline.calls == [("What was the ratio?", "JPM", [])]
+    assert pipeline.calls == [("What was the ratio?", "JPM", [], [])]
 
 
 def test_stream_emits_progress_answer_and_done(api) -> None:
@@ -194,7 +200,15 @@ def test_citation_context_hydrates_persisted_source(tmp_path) -> None:
 
 def test_validation_error_is_stable_and_persisted(tmp_path) -> None:
     class InvalidPipeline:
-        def answer(self, question: str, *, ticker=None, conversation_history=(), on_progress=None):
+        def answer(
+            self,
+            question: str,
+            *,
+            ticker=None,
+            tickers=(),
+            conversation_history=(),
+            on_progress=None,
+        ):
             raise GenerationValidationError(
                 "contextualization_invalid_schema", "Invalid contextualization response."
             )

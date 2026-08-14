@@ -14,20 +14,44 @@ export type Citation = {
   source_url?: string;
 };
 
+export type NumericFacts = {
+  entity: string;
+  metric: string;
+  variant: string | null;
+  period: string;
+  value_text: string;
+  unit: string;
+};
+
+export type BankResult = {
+  ticker: string;
+  bank_name: string;
+  status: "supported" | "ambiguous" | "unsupported";
+  answer_type: "numeric" | "narrative";
+  answer: string;
+  facts: NumericFacts | null;
+  reason: string;
+  citations: Citation[];
+};
+
 export type AnswerResponse = {
   question: string;
+  mode?: "comparison";
   ticker: string | null;
-  status: "supported" | "ambiguous" | "unsupported";
+  tickers?: string[];
+  status: "supported" | "partial" | "ambiguous" | "unsupported";
   answer_type: "numeric" | "narrative";
   answer: string;
   reason: string;
   citations: Citation[];
+  bank_results?: BankResult[];
 };
 
 export type ThreadSummary = {
   id: string;
   title: string;
   session_ticker: string | null;
+  session_tickers: string[];
   created_at: string;
   updated_at: string;
 };

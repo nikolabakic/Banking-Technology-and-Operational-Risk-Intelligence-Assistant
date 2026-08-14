@@ -23,6 +23,7 @@ const thread: ThreadSummary = {
   id: "11111111-1111-4111-8111-111111111111",
   title: "JPM operational risk",
   session_ticker: "JPM",
+  session_tickers: ["JPM"],
   created_at: "2026-08-12T10:00:00Z",
   updated_at: "2026-08-12T10:01:00Z",
 };
@@ -162,6 +163,60 @@ describe("persistent chat workspace", () => {
     expect(await screen.findByRole("table")).toHaveTextContent("Total assets");
     expect(screen.getByText("JPMorgan Chase & Co.").tagName).toBe("STRONG");
     expect(screen.queryByText("| --- | --- | --- |", { exact: true })).not.toBeInTheDocument();
+  });
+
+  it("renders a comparison summary, bank cards, partial status and bank sources", async () => {
+    const bacCitation = {
+      ...response.citations[0],
+      citation_id: "44444444-4444-4444-8444-444444444444",
+      label: "E2",
+      ticker: "BAC",
+      target_chunk_id: "chunk-2",
+    };
+    const comparisonResponse: AnswerResponse = {
+      ...response,
+      mode: "comparison",
+      ticker: null,
+      tickers: ["JPM", "BAC"],
+      status: "partial",
+      answer: "JPM is supported [E1]; BAC lacks sufficient evidence.",
+      citations: [response.citations[0], bacCitation],
+      bank_results: [
+        {
+          ticker: "JPM",
+          bank_name: "JPMorgan Chase & Co.",
+          status: "supported",
+          answer_type: "narrative",
+          answer: "JPM uses a risk framework [E1]",
+          facts: null,
+          reason: "Supported",
+          citations: [response.citations[0]],
+        },
+        {
+          ticker: "BAC",
+          bank_name: "Bank of America Corporation",
+          status: "unsupported",
+          answer_type: "narrative",
+          answer: "Insufficient evidence.",
+          facts: null,
+          reason: "No evidence",
+          citations: [],
+        },
+      ],
+    };
+    mocks.loadThread.mockResolvedValue({
+      thread: { ...thread, session_ticker: null, session_tickers: ["JPM", "BAC"] },
+      turns: [{ ...turn, response: comparisonResponse }],
+    });
+
+    renderThread();
+
+    expect(await screen.findByText("JPMorgan Chase & Co.")).toBeInTheDocument();
+    expect(screen.getByText("Bank of America Corporation")).toBeInTheDocument();
+    expect(screen.getAllByText("partial")).toHaveLength(1);
+    expect(screen.getByText("JPM vs BAC")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "E1" })[0]);
+    expect(await screen.findByText("Canonical operational risk evidence.")).toBeInTheDocument();
   });
 
   it("keeps new conversation and corpus status only in the header", async () => {

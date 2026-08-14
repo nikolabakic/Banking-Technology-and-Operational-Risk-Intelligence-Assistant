@@ -49,6 +49,7 @@ const stageLabels: Record<string, string> = {
   embedding: "Encoding the question…",
   retrieving: "Searching indexed filings…",
   generating: "Generating a grounded answer…",
+  synthesizing: "Synthesizing the bank comparison…",
   validating: "Validating citations and answer structure…",
 };
 
@@ -252,6 +253,36 @@ function AnswerText({ response, onSource }: { response: AnswerResponse; onSource
   return <MarkdownContent text={response.answer} response={response} onSource={onSource} />;
 }
 
+function ComparisonResults({ response, onSource }: {
+  response: AnswerResponse;
+  onSource: (index: number) => void;
+}) {
+  if (response.mode !== "comparison" || !response.bank_results?.length) return null;
+  return (
+    <div className="comparison-results" aria-label="Bank comparison details">
+      {response.bank_results.map((result) => {
+        const sourceIndexes = result.citations
+          .map((citation) => response.citations.findIndex((item) => item.label === citation.label))
+          .filter((index) => index >= 0);
+        return (
+          <section className={`comparison-card comparison-card-${result.status}`} key={result.ticker}>
+            <div className="comparison-card-heading">
+              <div><Badge>{result.ticker}</Badge><strong>{result.bank_name}</strong></div>
+              <Badge variant={result.status === "supported" ? "success" : "outline"}>{result.status}</Badge>
+            </div>
+            <MarkdownContent text={result.answer} response={response} onSource={onSource} />
+            {sourceIndexes.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => onSource(sourceIndexes[0])}>
+                <FileSearch size={14} /> {sourceIndexes.length} {sourceIndexes.length === 1 ? "source" : "sources"}
+              </Button>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function AssistantTurn({ turn, copied, onCopy, onSource }: {
   turn: Turn;
   copied: boolean;
@@ -279,8 +310,12 @@ function AssistantTurn({ turn, copied, onCopy, onSource }: {
       {turn.state === "answered" && turn.response && (
         <div className="answer-body">
           <AnswerText response={turn.response} onSource={(index) => onSource(turn.response!, index)} />
+          <ComparisonResults response={turn.response} onSource={(index) => onSource(turn.response!, index)} />
           <div className="answer-meta">
             {turn.response.ticker && <Badge variant="secondary">{turn.response.ticker} detected</Badge>}
+            {turn.response.tickers && turn.response.tickers.length > 1 && (
+              <Badge variant="secondary">{turn.response.tickers.join(" vs ")}</Badge>
+            )}
             <span>{turn.response.citations.length} {turn.response.citations.length === 1 ? "source" : "sources"}</span>
             <span className="meta-separator" />
             <span>{turn.response.status}</span>

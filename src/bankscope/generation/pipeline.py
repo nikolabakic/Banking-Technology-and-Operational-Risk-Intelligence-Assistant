@@ -8,7 +8,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from bankscope.generation.answer_generator import generate_answer
+from bankscope.generation.answer_generator import CITATION_PATTERN, generate_answer
+from bankscope.generation.comparison_generator import synthesize_comparison
 from bankscope.generation.contextualizer import contextualize_question
 from bankscope.io import read_jsonl, sha256_file
 from bankscope.retrieval.glossary_locators import validate_glossary_locators
@@ -65,8 +66,8 @@ class AnswerRun:
     generation_latency_ms: float
 
 
-class SingleBankAnswerPipeline:
-    """Reusable mixed-retrieval and grounded-generation pipeline for one bank."""
+class BankAnswerPipeline:
+    """Reusable grounded-answer pipeline for single-bank and comparison questions."""
 
     def __init__(
         self,
@@ -117,7 +118,7 @@ class SingleBankAnswerPipeline:
         collection_name: str = DEFAULT_COLLECTION_NAME,
         query_encoder: QueryEncoder | None = None,
         bank_registry_path: str | Path = DEFAULT_BANK_REGISTRY,
-    ) -> SingleBankAnswerPipeline:
+    ) -> BankAnswerPipeline:
         chunks_path = Path(chunks_path)
         tables_path = Path(tables_path)
         glossary_locators_path = Path(glossary_locators_path)
@@ -180,7 +181,7 @@ class SingleBankAnswerPipeline:
             self._close_callback()
         self._closed = True
 
-    def __enter__(self) -> SingleBankAnswerPipeline:
+    def __enter__(self) -> BankAnswerPipeline:
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -191,6 +192,7 @@ class SingleBankAnswerPipeline:
         question: str,
         *,
         ticker: str | None = None,
+        tickers: Sequence[str] = (),
         conversation_history: Sequence[Mapping[str, str]] = (),
         record_type: str | None = None,
         limit: int = 5,
@@ -225,6 +227,7 @@ class SingleBankAnswerPipeline:
                 client=self.client,
                 model=self.generation_model,
                 session_ticker=ticker,
+                session_tickers=tickers,
             )
             standalone_question = contextualization.standalone_question
             contextualization_model = contextualization.model
@@ -244,9 +247,22 @@ class SingleBankAnswerPipeline:
             bank_names=self.bank_names,
             bank_aliases=self.bank_aliases,
             session_ticker=ticker,
+            session_tickers=tickers,
         )
-        if resolution.status != "resolved":
+        if resolution.status in {"missing", "too_many"}:
             return self._ambiguous_bank_run(question, resolution, contextualization_payload)
+        if resolution.status == "multiple":
+            return self._comparison_run(
+                question,
+                standalone_question,
+                resolution,
+                contextualization_payload,
+                record_type=record_type,
+                limit=limit,
+                candidate_k=candidate_k,
+                rrf_k=rrf_k,
+                on_progress=on_progress,
+            )
         resolved_ticker = str(resolution.ticker)
 
         if on_progress is not None:
@@ -312,13 +328,197 @@ class SingleBankAnswerPipeline:
             generation_latency_ms=generation_latency_ms,
         )
 
+    @staticmethod
+    def _relabel_bank_result(
+        result: Mapping[str, Any], next_index: int
+    ) -> tuple[dict[str, Any], int]:
+        output = dict(result)
+        mapping: dict[str, str] = {}
+        citations: list[dict[str, Any]] = []
+        for raw in result.get("citations") or []:
+            citation = dict(raw)
+            old_label = str(citation.get("label") or "").strip().upper()
+            new_label = f"E{next_index}"
+            next_index += 1
+            mapping[old_label] = new_label
+            citation["label"] = new_label
+            citations.append(citation)
+        output["citations"] = citations
+        answer = str(output.get("answer") or "")
+        output["answer"] = CITATION_PATTERN.sub(
+            lambda match: f"[{mapping.get(match.group(1), match.group(1))}]", answer
+        )
+        return output, next_index
+
+    def _comparison_run(
+        self,
+        question: str,
+        standalone_question: str,
+        resolution: BankResolution,
+        contextualization: Mapping[str, Any],
+        *,
+        record_type: str | None,
+        limit: int,
+        candidate_k: int,
+        rrf_k: int,
+        on_progress: Callable[[str, Mapping[str, Any]], None] | None,
+    ) -> AnswerRun:
+        selected_tickers = resolution.tickers
+        if on_progress is not None:
+            on_progress(
+                "embedding",
+                {"message": "Encoding the comparison question...", "tickers": selected_tickers},
+            )
+        started = perf_counter()
+        query_vector = self.query_encoder.encode(standalone_question)
+        embedding_latency_ms = (perf_counter() - started) * 1000
+
+        all_evidence: list[dict[str, Any]] = []
+        bank_results: list[dict[str, Any]] = []
+        per_bank_retrieval: list[dict[str, Any]] = []
+        retrieval_latency_ms = 0.0
+        bank_generation_latency_ms = 0.0
+        next_citation_index = 1
+        for ticker in selected_tickers:
+            bank_name = self.bank_names.get(ticker, ticker)
+            if on_progress is not None:
+                on_progress(
+                    "retrieving",
+                    {
+                        "message": f"Searching {ticker} filing evidence...",
+                        "ticker": ticker,
+                    },
+                )
+            started = perf_counter()
+            evidence = self.retriever.search_hybrid(
+                standalone_question,
+                query_vector,
+                limit=limit,
+                candidate_k=candidate_k,
+                rrf_k=rrf_k,
+                ticker=ticker,
+                record_type=record_type,
+            )
+            elapsed = (perf_counter() - started) * 1000
+            retrieval_latency_ms += elapsed
+            all_evidence.extend(evidence)
+            per_bank_retrieval.append(
+                {"ticker": ticker, "evidence_count": len(evidence), "latency_ms": elapsed}
+            )
+
+            if on_progress is not None:
+                on_progress(
+                    "generating",
+                    {
+                        "message": f"Generating the {ticker} answer...",
+                        "ticker": ticker,
+                        "evidence_count": len(evidence),
+                    },
+                )
+            started = perf_counter()
+            answer = generate_answer(
+                question,
+                evidence,
+                client=self.client,
+                model=self.generation_model,
+                expected_ticker=ticker,
+                expected_bank_name=bank_name,
+                expected_record_type=record_type,
+                temperature=self.temperature,
+                resolved_question=standalone_question,
+                comparison_scope=True,
+            )
+            bank_generation_latency_ms += (perf_counter() - started) * 1000
+            relabeled, next_citation_index = self._relabel_bank_result(answer, next_citation_index)
+            bank_results.append({"ticker": ticker, "bank_name": bank_name, **relabeled})
+
+        supported_count = sum(result["status"] == "supported" for result in bank_results)
+        if supported_count == len(bank_results):
+            status = "supported"
+        elif supported_count:
+            status = "partial"
+        else:
+            status = "unsupported"
+
+        if on_progress is not None and supported_count:
+            on_progress(
+                "synthesizing",
+                {"message": "Synthesizing the bank comparison...", "tickers": selected_tickers},
+            )
+        started = perf_counter()
+        synthesis = synthesize_comparison(
+            question,
+            bank_results,
+            client=self.client,
+            model=self.generation_model,
+            resolved_question=standalone_question,
+        )
+        synthesis_latency_ms = (perf_counter() - started) * 1000
+        generation_latency_ms = bank_generation_latency_ms + synthesis_latency_ms
+        if on_progress is not None:
+            on_progress("validating", {"message": "Validating the bank comparison..."})
+
+        citations = [
+            dict(citation) for result in bank_results for citation in result.get("citations") or []
+        ]
+        generation_request_count = sum(
+            int((result.get("generation") or {}).get("request_count") or 0)
+            for result in bank_results
+        ) + int(synthesis["generation"].get("request_count") or 0)
+        output = {
+            "question": question,
+            "mode": "comparison",
+            "ticker": None,
+            "tickers": list(selected_tickers),
+            "contextualization": dict(contextualization),
+            "bank_resolution": resolution.as_dict(),
+            "retrieval": {
+                "backend": "mixed",
+                "mode": "hybrid",
+                "evidence_count": len(all_evidence),
+                "per_bank": per_bank_retrieval,
+            },
+            "status": status,
+            "answer_type": "narrative",
+            "answer": synthesis["answer"],
+            "facts": None,
+            "reason": (
+                "All selected banks have grounded answers."
+                if status == "supported"
+                else "Only some selected banks have grounded answers."
+                if status == "partial"
+                else "No selected bank has sufficient evidence."
+            ),
+            "citations": citations,
+            "bank_results": bank_results,
+            "generation": {
+                **synthesis["generation"],
+                "request_count": generation_request_count,
+                "bank_request_count": generation_request_count
+                - int(synthesis["generation"].get("request_count") or 0),
+                "synthesis_request_count": int(synthesis["generation"].get("request_count") or 0),
+                "final_status": status,
+            },
+        }
+        return AnswerRun(
+            output=output,
+            evidence=all_evidence,
+            embedding_latency_ms=embedding_latency_ms,
+            retrieval_latency_ms=retrieval_latency_ms,
+            generation_latency_ms=generation_latency_ms,
+        )
+
     def _ambiguous_bank_run(
         self,
         question: str,
         resolution: BankResolution,
         contextualization: Mapping[str, Any],
     ) -> AnswerRun:
-        if resolution.status == "multiple":
+        if resolution.status == "too_many":
+            answer = "Možete porediti najviše četiri podržane banke u jednom pitanju."
+            reason_code = "too_many_banks_identified"
+            reason = "Pitanje pominje više od četiri podržane banke."
+        elif resolution.status == "multiple":
             names = [self.bank_names.get(ticker, ticker) for ticker in resolution.detected_tickers]
             answer = (
                 "Trenutno mogu da odgovorim za jednu banku po pitanju. "
@@ -363,3 +563,7 @@ class SingleBankAnswerPipeline:
             retrieval_latency_ms=0.0,
             generation_latency_ms=0.0,
         )
+
+
+# Backward-compatible import for existing scripts and third-party callers.
+SingleBankAnswerPipeline = BankAnswerPipeline

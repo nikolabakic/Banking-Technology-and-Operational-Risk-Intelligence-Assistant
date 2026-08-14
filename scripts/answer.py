@@ -1,4 +1,4 @@
-"""Answer one single-bank question from hydrated mixed-retrieval evidence."""
+"""Answer one single-bank or comparison question from hydrated retrieval evidence."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from bankscope.config.settings import get_settings
-from bankscope.generation import SingleBankAnswerPipeline
+from bankscope.generation import BankAnswerPipeline
 from bankscope.generation.pipeline import (
     DEFAULT_CHUNKS,
     DEFAULT_GLOSSARY_LOCATORS,
@@ -21,7 +21,7 @@ from bankscope.retrieval.qdrant_retriever import DEFAULT_COLLECTION_NAME
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("question", help="Single-bank question to answer.")
+    parser.add_argument("question", help="Single-bank or 2-4 bank comparison question.")
     parser.add_argument(
         "--ticker",
         help="Optional session/evaluation fallback; normally the bank is read from the question.",
@@ -52,7 +52,7 @@ def main() -> None:
     settings = get_settings()
     generation_model = args.model or settings.openai_model
     llm_client = create_openai_client(settings)
-    with SingleBankAnswerPipeline.from_paths(
+    with BankAnswerPipeline.from_paths(
         client=llm_client,
         generation_model=generation_model,
         temperature=settings.llm_temperature,

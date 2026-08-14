@@ -31,6 +31,7 @@ def test_chat_store_persists_threads_turns_and_citations(tmp_path) -> None:
     persisted = reopened.get_thread(thread["id"])
     assert persisted["title"] == "A persistent question?"
     assert persisted["session_ticker"] == "JPM"
+    assert persisted["session_tickers"] == ["JPM"]
     assert reopened.list_turns(thread["id"])[0]["response"] == turn["response"]
 
     citation_id = turn["response"]["citations"][0]["citation_id"]
@@ -103,3 +104,39 @@ def test_chat_store_rejects_newer_schema(tmp_path) -> None:
         connection.execute("PRAGMA user_version = 99")
     with pytest.raises(RuntimeError, match="newer"):
         ChatStore(path).initialize()
+
+
+def test_chat_store_migrates_v1_session_and_persists_comparison_scope(tmp_path) -> None:
+    path = tmp_path / "v1.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE chat_threads (
+               id TEXT PRIMARY KEY, title TEXT NOT NULL, session_ticker TEXT,
+               created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"""
+        )
+        connection.execute("INSERT INTO chat_threads VALUES ('old', 'Old', 'JPM', 'now', 'now')")
+        connection.execute("PRAGMA user_version = 1")
+    store = ChatStore(path)
+    store.initialize()
+    assert store.get_thread("old")["session_tickers"] == ["JPM"]
+
+    store = ChatStore(tmp_path / "comparison.db")
+    store.initialize()
+    thread = store.create_thread()
+    comparison = answer()
+    comparison.update(
+        {
+            "ticker": None,
+            "tickers": ["BAC", "C"],
+            "mode": "comparison",
+            "bank_results": [
+                {"ticker": "BAC", "citations": [comparison["citations"][0]]},
+                {"ticker": "C", "citations": []},
+            ],
+        }
+    )
+    turn = store.append_answer_turn(thread["id"], "Compare", comparison, corpus_hash="hash-1")
+    persisted = store.get_thread(thread["id"])
+    assert persisted["session_ticker"] is None
+    assert persisted["session_tickers"] == ["BAC", "C"]
+    assert turn["response"]["bank_results"][0]["citations"][0]["citation_id"]

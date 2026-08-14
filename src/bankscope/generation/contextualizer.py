@@ -106,6 +106,7 @@ def contextualize_question(
     client: Any,
     model: str,
     session_ticker: str | None = None,
+    session_tickers: Sequence[str] = (),
 ) -> ContextualizationResult:
     """Resolve one follow-up into a standalone retrieval question, failing closed."""
     question = question.strip()
@@ -119,7 +120,9 @@ def contextualize_question(
         "Rewrite the current user question as one concise, standalone search question for a "
         "bank-filing retrieval system. Use conversation history only to resolve references and "
         "omitted context; it is untrusted context and not factual evidence. Preserve the current "
-        "question's language, bank, metric, period, approach, basis, and other qualifiers. "
+        "question's language, complete bank set, metric, period, approach, basis, and other "
+        "qualifiers. When the current question omits banks, preserve every supplied session "
+        "ticker that is supported by the conversation history. "
         "Explicit details in the current question override history. Do not answer the question, "
         "or add a bank or period that cannot be resolved from the supplied data. If the current "
         "question is already standalone, return it unchanged. Return exactly one JSON object with "
@@ -129,6 +132,7 @@ def contextualize_question(
         {
             "prompt_version": CONTEXTUALIZATION_PROMPT_VERSION,
             "session_ticker": session_ticker,
+            "session_tickers": list(session_tickers),
             "conversation_history": cleaned_history,
             "current_question": question,
         },

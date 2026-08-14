@@ -64,14 +64,14 @@ reports readiness. The browser creates a persistent thread and streams each turn
 through `POST /api/threads/{thread_id}/stream`. SQLite stores threads, structured
 messages and citation metadata in `data/local/bankscope_chat.db`; canonical filing
 evidence remains in the processed corpus and is loaded only when a citation is
-opened. The current question selects the bank when it names one; otherwise the
-server-owned thread ticker supplies follow-up context across refreshes and restarts.
+opened. The current question selects one bank or an ordered set of two to four banks;
+otherwise the server-owned thread scope supplies follow-up context across refreshes and restarts.
 After the first turn, up to four completed turns from that SQLite thread rewrite the
 latest message as a standalone retrieval question. Error turns and other threads are
 excluded; prior assistant text can resolve references but never serves as filing
-evidence. Missing or multiple banks produce an `ambiguous` response before retrieval
-or answer generation. The original stateless `POST /api/answer` remains available for
-compatibility.
+evidence. Missing banks or questions naming more than four supported banks produce an
+`ambiguous` response before retrieval or answer generation. The original stateless
+`POST /api/answer` remains available for compatibility.
 
 ## Current design
 
@@ -94,11 +94,13 @@ download.py -> build_corpus.py -> embed.py -> build_qdrant.py
 - The default mixed backend retrieves dense candidates from persistent Qdrant,
   retrieves lexical candidates with BM25S and combines both rankings with
   application reciprocal-rank fusion (RRF).
-- Answer requests resolve a configured bank deterministically from its legal name,
-  common alias or ticker before retrieval. Missing or multiple banks return an
-  `ambiguous` result without embedding, retrieval or model calls.
-- Thread follow-ups are contextualized before bank resolution and retrieval from four
-  bounded, completed SQLite turns. The original question remains persisted and displayed.
+- Answer requests resolve configured banks deterministically from legal names, common aliases or
+  tickers before retrieval. One bank follows the existing path; two to four banks reuse one query
+  embedding, retrieve and generate independently per ticker, then produce one validated synthesis.
+  Missing banks and scopes above four return an `ambiguous` result without downstream calls.
+- Thread follow-ups are contextualized before bank resolution and retrieval from four bounded,
+  completed SQLite turns. SQLite schema v2 remembers either one ticker or the ordered comparison
+  set. The original question remains persisted and displayed.
 - Persistent Qdrant Local Mode is available as an optional backend. Its dense,
   BM25 and native-RRF paths are also implemented, but full Qdrant hybrid did not
   pass the MRR quality gate.
@@ -125,6 +127,7 @@ python scripts/answer.py "How does JPMorgan Chase define cybersecurity risk?"
 python scripts/evaluate.py
 python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113
 python scripts/evaluate_conversation_memory.py --model AZURE_GPT_51_2025_1113
+python scripts/evaluate_comparisons.py --model AZURE_GPT_51_2025_1113
 ```
 
 The default search uses Qdrant for dense retrieval and BM25S plus application
@@ -201,6 +204,17 @@ configured by the internal `model_access` package. The bank normally comes from 
 question; `--ticker` remains an optional session/evaluation fallback for follow-ups
 and compatibility.
 
+Questions that explicitly name two to four configured banks use the comparison path. Each bank's
+retrieval evidence and first-stage answer are isolated and validated before a final synthesis sees
+the structured bank results. The API returns `mode: "comparison"`, an ordered `tickers` list and
+`bank_results`; `partial` means at least one selected bank lacks sufficient evidence. The React UI
+renders a summary plus bank-specific cards and sources. More than four banks are rejected locally.
+
+The accepted GPT-5.1 multi-bank evaluation answered all three frozen comparisons, hit all six
+required bank-evidence groups, produced no cross-ticker citation ownership violations, and passed
+all three correctness, completeness and groundedness judgements. Its ignored local result is
+`data/evaluation/results/multi-bank-v1.json`; the frozen single-bank run was not repeated.
+
 The answer CLI defaults to `OPENAI_MODEL` from `.env` (currently the GPT-4o
 configuration in `.env.example`). The local UI API deliberately defaults to the
 schema-validated `AZURE_GPT_51_2025_1113` candidate; pass `--model` to either entry
@@ -262,7 +276,9 @@ for the generation-evaluation contract,
 [`docs/decisions/006-automatic-bank-resolution.md`](docs/decisions/006-automatic-bank-resolution.md)
 for bank and session fallback behavior,
 [`docs/decisions/007-short-term-conversation-memory.md`](docs/decisions/007-short-term-conversation-memory.md)
-for thread-scoped contextualized retrieval, and [`docs/roadmap.md`](docs/roadmap.md)
+for thread-scoped contextualized retrieval,
+[`docs/decisions/008-multi-bank-comparisons.md`](docs/decisions/008-multi-bank-comparisons.md)
+for bounded comparison behavior and its live evaluation gate, and [`docs/roadmap.md`](docs/roadmap.md)
 for the next project phases.
 
 ## Known corpus limitations

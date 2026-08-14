@@ -21,7 +21,7 @@ if str(SRC_ROOT) not in sys.path:
 from bankscope.api import AppServices, QuestionRequest, create_app  # noqa: E402
 from bankscope.chat import ChatStore, CitationSourceResolver  # noqa: E402
 from bankscope.config.settings import get_settings  # noqa: E402
-from bankscope.generation import SingleBankAnswerPipeline  # noqa: E402
+from bankscope.generation import BankAnswerPipeline  # noqa: E402
 from bankscope.generation.answer_generator import GPT51_CANDIDATE_MODEL  # noqa: E402
 from bankscope.generation.pipeline import (  # noqa: E402
     DEFAULT_CHUNKS,
@@ -111,7 +111,7 @@ def build_services(args: argparse.Namespace) -> AppServices:
     chunks = _project_path(args.chunks)
     tables = _project_path(args.tables)
     settings = get_settings()
-    pipeline = SingleBankAnswerPipeline.from_paths(
+    pipeline = BankAnswerPipeline.from_paths(
         client=create_openai_client(settings),
         generation_model=args.model or GPT51_CANDIDATE_MODEL,
         temperature=settings.llm_temperature,
