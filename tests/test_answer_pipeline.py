@@ -143,18 +143,7 @@ class EmptyRetriever(MockRetriever):
 class PartialCompletions(ComparisonCompletions):
     def create(self, **kwargs):
         if "concise comparison" in kwargs["messages"][0]["content"]:
-            self.calls.append(kwargs)
-            message = SimpleNamespace(
-                content=(
-                    '{"claims":['
-                    '{"text":"JPM reported 14.6% [E1].","tickers":["JPM"],'
-                    '"citation_ids":["E1"]},'
-                    '{"text":"BAC lacks sufficient evidence.","tickers":["BAC"],'
-                    '"citation_ids":[]}]}'
-                ),
-                refusal=None,
-            )
-            return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
+            raise AssertionError("Partial comparisons must not call the synthesis model.")
         return super().create(**kwargs)
 
 
@@ -314,7 +303,17 @@ def test_comparison_returns_partial_or_all_unsupported_without_unvalidated_facts
         "supported",
         "unsupported",
     ]
-    assert partial.output["generation"]["request_count"] == 2
+    assert partial.output["answer"].startswith(
+        "A complete comparison cannot be made because the supplied evidence is insufficient "
+        "for Bank of America Corporation."
+    )
+    assert "Available supported results:" in partial.output["answer"]
+    assert "JPMorgan Chase & Co. (JPM):" in partial.output["answer"]
+    assert "JPMorgan Chase & Co. — ratio — 2025: 14.6 percent [E1]" in partial.output["answer"]
+    assert partial.output["generation"]["request_count"] == 1
+    assert partial.output["generation"]["bank_request_count"] == 1
+    assert partial.output["generation"]["synthesis_request_count"] == 0
+    assert len(client.chat.completions.calls) == 1
 
     empty_client = SimpleNamespace(chat=SimpleNamespace(completions=MockCompletions()))
     unsupported = SingleBankAnswerPipeline(

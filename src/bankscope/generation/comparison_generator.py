@@ -15,7 +15,7 @@ from bankscope.generation.answer_generator import (
     _request_options,
 )
 
-COMPARISON_PROMPT_VERSION = "generation-comparison-synthesis-v1"
+COMPARISON_PROMPT_VERSION = "generation-comparison-synthesis-v2-partial"
 COMPARISON_SCHEMA_VERSION = "generation-comparison-schema-v1"
 
 
@@ -128,6 +128,58 @@ def synthesize_comparison(
                 "request_count": 0,
                 "latency_ms": 0.0,
                 "final_status": "unsupported",
+            },
+        }
+
+    unsupported = [result for result in bank_results if result.get("status") != "supported"]
+    if unsupported:
+        language = _question_language(question)
+        unsupported_names = ", ".join(
+            str(result.get("bank_name") or result.get("ticker") or "Unknown bank")
+            for result in unsupported
+        )
+        introduction, heading = {
+            "Serbian": (
+                "Potpuno poređenje nije moguće jer dostavljeni dokazi nisu dovoljni za "
+                f"{unsupported_names}.",
+                "Dostupni podržani rezultati:",
+            ),
+            "Spanish": (
+                "No se puede realizar una comparación completa porque la evidencia disponible "
+                f"es insuficiente para {unsupported_names}.",
+                "Resultados respaldados disponibles:",
+            ),
+        }.get(
+            language,
+            (
+                "A complete comparison cannot be made because the supplied evidence is "
+                f"insufficient for {unsupported_names}.",
+                "Available supported results:",
+            ),
+        )
+        sections = [
+            f"{result.get('bank_name') or result.get('ticker')} ({result.get('ticker')}): "
+            f"{result.get('answer')}"
+            for result in supported
+        ]
+        citation_ids = list(
+            dict.fromkeys(
+                str(citation.get("label") or "").strip().upper()
+                for result in supported
+                for citation in result.get("citations") or []
+                if str(citation.get("label") or "").strip()
+            )
+        )
+        return {
+            "answer": f"{introduction}\n\n{heading}\n\n" + "\n\n".join(sections),
+            "citation_ids": citation_ids,
+            "generation": {
+                "model": model,
+                "prompt_version": COMPARISON_PROMPT_VERSION,
+                "schema_version": COMPARISON_SCHEMA_VERSION,
+                "request_count": 0,
+                "latency_ms": 0.0,
+                "final_status": "partial",
             },
         }
 

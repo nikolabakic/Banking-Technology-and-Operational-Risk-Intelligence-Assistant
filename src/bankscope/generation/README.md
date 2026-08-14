@@ -41,13 +41,17 @@ abstention rather than an invented answer.
 
 For comparisons, each bank is retrieved and generated independently. Final synthesis sees
 structured bank results, not a mixed evidence pool. Status is `partial` when at least one selected
-bank is unsupported; citation ownership remains tied to its bank result.
+bank is unsupported; citation ownership remains tied to its bank result. Partial comparisons skip
+the synthesis model and deterministically state which banks lack evidence before presenting the
+already validated supported bank answers. This prevents a synthesis from implying a relationship
+between banks when one side has no grounded result.
 
 ## Model calls and failure modes
 
 - Contextualization is skipped when there is no usable history.
 - Single-bank generation makes at most one answer request and does not retry.
-- Comparison adds one synthesis request after its per-bank calls.
+- A fully supported comparison adds one synthesis request after its per-bank calls; partial and
+  fully unsupported comparisons do not.
 - Model-specific request options are explicit; responses pass strict Pydantic validation.
 - Unsupported requested years can fail before a model call.
 
@@ -55,4 +59,3 @@ Changes require generator, pipeline, contextualizer, comparison, evaluator, and 
 tests plus the relevant frozen live gate before a default changes.
 
 [Package architecture](../README.md) · [Evaluation](../evaluation/README.md)
-
