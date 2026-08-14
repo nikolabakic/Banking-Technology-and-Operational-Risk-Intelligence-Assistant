@@ -87,8 +87,9 @@ describe("persistent chat workspace", () => {
   });
 
   it("restores a saved thread and opens its canonical citation source", async () => {
-    renderThread();
+    const { container } = renderThread();
     expect(await screen.findByText(response.question)).toBeInTheDocument();
+    expect(container.querySelector(".assistant-mark img")).toHaveAttribute("src", "/brand/bankscope-target.svg");
     fireEvent.click(screen.getByRole("button", { name: "E1" }));
     expect(await screen.findByText("Canonical operational risk evidence.")).toBeInTheDocument();
     expect(mocks.loadCitationContext).toHaveBeenCalledWith(
@@ -140,8 +141,11 @@ describe("persistent chat workspace", () => {
     renderThread();
 
     const table = await screen.findByRole("table");
+    const tableRegion = screen.getByRole("region", { name: "Scrollable data table" });
     expect(table).toHaveTextContent("Risk");
     expect(table).toHaveTextContent("Operational");
+    expect(tableRegion).toContainElement(table);
+    expect(tableRegion).toHaveAttribute("tabindex", "0");
     expect(screen.getAllByRole("row")).toHaveLength(3);
     fireEvent.click(screen.getByRole("button", { name: "E1" }));
     expect(await screen.findByText("Canonical operational risk evidence.")).toBeInTheDocument();
@@ -219,6 +223,60 @@ describe("persistent chat workspace", () => {
     expect(await screen.findByText("Canonical operational risk evidence.")).toBeInTheDocument();
   });
 
+  it("maps every answer status to a consistent semantic badge", async () => {
+    const statusResponse: AnswerResponse = {
+      ...response,
+      mode: "comparison",
+      ticker: null,
+      tickers: ["JPM", "BAC", "C"],
+      status: "partial",
+      bank_results: [
+        {
+          ticker: "JPM",
+          bank_name: "JPMorgan Chase & Co.",
+          status: "supported",
+          answer_type: "narrative",
+          answer: "Supported answer.",
+          facts: null,
+          reason: "Supported",
+          citations: [],
+        },
+        {
+          ticker: "BAC",
+          bank_name: "Bank of America Corporation",
+          status: "ambiguous",
+          answer_type: "narrative",
+          answer: "Ambiguous answer.",
+          facts: null,
+          reason: "Ambiguous",
+          citations: [],
+        },
+        {
+          ticker: "C",
+          bank_name: "Citigroup Inc.",
+          status: "unsupported",
+          answer_type: "narrative",
+          answer: "Unsupported answer.",
+          facts: null,
+          reason: "Unsupported",
+          citations: [],
+        },
+      ],
+    };
+    mocks.loadThread.mockResolvedValue({
+      thread: { ...thread, session_ticker: null, session_tickers: ["JPM", "BAC", "C"] },
+      turns: [{ ...turn, response: statusResponse }],
+    });
+
+    const { container } = renderThread();
+    await screen.findByText("Citigroup Inc.");
+
+    expect(container.querySelector('[data-status="supported"]')).toHaveClass("ui-badge-success");
+    expect(container.querySelector('[data-status="partial"]')).toHaveClass("ui-badge-warning");
+    expect(container.querySelector('[data-status="ambiguous"]')).toHaveClass("ui-badge-warning");
+    expect(container.querySelector('[data-status="unsupported"]')).toHaveClass("ui-badge-danger");
+  });
+
   it("keeps new conversation and corpus status only in the header", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -229,6 +287,7 @@ describe("persistent chat workspace", () => {
     await waitFor(() => expect(mocks.listThreads).toHaveBeenCalled());
     expect(screen.getAllByRole("button", { name: /New conversation/i })).toHaveLength(1);
     expect(screen.getAllByText("Corpus ready")).toHaveLength(1);
+    expect(screen.getByRole("img", { name: "BankScope" })).toHaveAttribute("src", "/brand/bankscope-wordmark.svg");
     expect(screen.getByText("BankScope")).toBeInTheDocument();
     expect(screen.queryByText("Banking risk intelligence")).not.toBeInTheDocument();
     expect(screen.queryByText("Evidence corpus ready")).not.toBeInTheDocument();

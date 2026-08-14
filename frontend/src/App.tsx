@@ -43,6 +43,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type OpenSource = { response: AnswerResponse; index: number };
+type AnswerStatus = AnswerResponse["status"];
+
+const statusVariants: Record<AnswerStatus, "success" | "warning" | "danger"> = {
+  supported: "success",
+  partial: "warning",
+  ambiguous: "warning",
+  unsupported: "danger",
+};
 
 const stageLabels: Record<string, string> = {
   resolving_bank: "Identifying the bank…",
@@ -56,10 +64,13 @@ const stageLabels: Record<string, string> = {
 function Brand() {
   return (
     <div className="brand" aria-label="BankScope home">
-      <span className="brand-mark">B</span>
-      <span>bankscope</span>
+      <img className="brand-wordmark" src="/brand/bankscope-wordmark.svg" alt="BankScope" />
     </div>
   );
+}
+
+function StatusBadge({ status }: { status: AnswerStatus }) {
+  return <Badge variant={statusVariants[status]} data-status={status}>{status}</Badge>;
 }
 
 function Composer({ value, onChange, onSubmit, onStop, loading, compact = false }: {
@@ -236,7 +247,7 @@ function MarkdownContent({ text, response, onSource }: { text: string; response?
       {blocks.map((block, blockIndex) => block.type === "text" ? (
         <div className="answer-prose" key={`text-${blockIndex}`}>{renderInline(block.value, `text-${blockIndex}`)}</div>
       ) : (
-        <div className="answer-table-scroll" key={`table-${blockIndex}`}>
+        <div className="answer-table-scroll" key={`table-${blockIndex}`} role="region" aria-label="Scrollable data table" tabIndex={0}>
           <table>
             <thead><tr>{block.rows[0].map((cell, cellIndex) => <th key={cellIndex}>{renderInline(cell, `th-${blockIndex}-${cellIndex}`)}</th>)}</tr></thead>
             <tbody>{block.rows.slice(1).map((row, rowIndex) => (
@@ -268,7 +279,7 @@ function ComparisonResults({ response, onSource }: {
           <section className={`comparison-card comparison-card-${result.status}`} key={result.ticker}>
             <div className="comparison-card-heading">
               <div><Badge>{result.ticker}</Badge><strong>{result.bank_name}</strong></div>
-              <Badge variant={result.status === "supported" ? "success" : "outline"}>{result.status}</Badge>
+              <StatusBadge status={result.status} />
             </div>
             <MarkdownContent text={result.answer} response={response} onSource={onSource} />
             {sourceIndexes.length > 0 && (
@@ -292,7 +303,7 @@ function AssistantTurn({ turn, copied, onCopy, onSource }: {
   return (
     <article className="assistant-turn">
       <div className="assistant-heading">
-        <span className="assistant-mark"><Sparkles size={15} /></span>
+        <span className="assistant-mark" aria-hidden="true"><img src="/brand/bankscope-target.svg" alt="" /></span>
         <div>
           <strong>BankScope</strong>
           <small>{turn.state === "loading" ? turn.status || "Preparing the answer…" : "Grounded in indexed filings"}</small>
@@ -318,7 +329,7 @@ function AssistantTurn({ turn, copied, onCopy, onSource }: {
             )}
             <span>{turn.response.citations.length} {turn.response.citations.length === 1 ? "source" : "sources"}</span>
             <span className="meta-separator" />
-            <span>{turn.response.status}</span>
+            <StatusBadge status={turn.response.status} />
           </div>
           <div className="answer-actions">
             <Button variant="ghost" size="sm" onClick={onCopy}><Copy size={14} /> {copied ? "Copied" : "Copy"}</Button>

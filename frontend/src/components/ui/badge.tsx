@@ -3,7 +3,16 @@ import type * as React from "react";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva("ui-badge", {
-  variants: { variant: { default: "ui-badge-default", secondary: "ui-badge-secondary", outline: "ui-badge-outline", success: "ui-badge-success" } },
+  variants: {
+    variant: {
+      default: "ui-badge-default",
+      secondary: "ui-badge-secondary",
+      outline: "ui-badge-outline",
+      success: "ui-badge-success",
+      warning: "ui-badge-warning",
+      danger: "ui-badge-danger",
+    },
+  },
   defaultVariants: { variant: "default" },
 });
 

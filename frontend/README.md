@@ -54,7 +54,8 @@ npm.cmd test
 npm.cmd run build
 ```
 
-## Custom logo
+## Brand assets
 
-`Brand` in `src/App.tsx` currently uses a temporary `B` tile. When the final logo is
-ready, add it under `public/` and replace the `.brand-mark` element with an image.
+The header wordmark, assistant target and favicon mark are served from `public/brand/`.
+Their editable SVG sources live at the repository root and can be regenerated from
+the PDF-compatible Illustrator source with `node ../scripts/export_logo_from_ai.mjs`.
