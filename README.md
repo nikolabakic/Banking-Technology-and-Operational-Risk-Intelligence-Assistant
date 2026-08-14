@@ -1,15 +1,34 @@
 # BankScope RAG Assistant
 
-BankScope is a student RAG project for searching the latest downloaded 10-K
-filings of ten U.S. banks. 
+BankScope is a local, single-user research assistant for exploring the latest downloaded
+10-K filings of ten U.S. banks. It combines deterministic SEC acquisition, structure-aware
+corpus construction, dense and lexical retrieval, evidence-grounded answer generation,
+conversation memory, and a React interface.
+
+This repository is organized as a set of documented functional areas. Start here for the
+system view, then follow the linked README files for module-level APIs, invariants, and safe
+change guidance.
+
+## What the system does
+
+- downloads configured bank filings from SEC EDGAR;
+- parses narrative text and complete tables with `sec2md==0.1.23`;
+- builds bounded retrieval records while preserving canonical evidence;
+- stores dense vectors in local Qdrant and lexical records in BM25S;
+- fuses dense and lexical rankings with reciprocal-rank fusion (RRF);
+- answers single-bank and two-to-four-bank comparison questions with citations;
+- contextualizes bounded conversation history without treating prior answers as evidence;
+- persists local threads and citation metadata in SQLite;
+- evaluates retrieval, generation, conversation memory, and comparisons separately.
 
 ## Quick start
 
 Requirements:
 
-- Python 3.13 and Git
-- Node.js `^20.19.0` or `>=22.12.0` and npm
-- access to the configured OpenAI-compatible model gateway
+- Python 3.13 and Git;
+- Node.js `^20.19.0` or `>=22.12.0` and npm;
+- access to the configured OpenAI-compatible model gateway;
+- a SEC-compliant application name and contact email.
 
 From PowerShell in the repository root:
 
@@ -21,12 +40,7 @@ Copy-Item .env.example .env
 npm.cmd install --prefix frontend
 ```
 
-Set `SEC_USER_AGENT` to an application name and contact email, then populate the
-model gateway values in `.env`. Credentials belong only in `.env` or a secret
-manager; never commit them.
-
-Processed corpus and Qdrant files are local artifacts and are not included in a
-fresh clone. Generate them before starting the application:
+Populate `.env`, then build the local data products:
 
 ```powershell
 python scripts/download.py
@@ -35,9 +49,9 @@ python scripts/embed.py --overwrite
 python scripts/build_qdrant.py
 ```
 
-The answer service deliberately loads the query model from the local Hugging Face
-cache without a network fallback. Running `embed.py` first downloads the pinned
-model revision; startup then fails quickly and clearly if that local model is missing.
+The processed corpus and Qdrant index are generated locally and are not included in a fresh
+clone. `embed.py` also populates the pinned query model in the local Hugging Face cache; API
+startup deliberately has no network fallback for that model.
 
 Start the API and frontend together on Windows:
 
@@ -45,13 +59,11 @@ Start the API and frontend together on Windows:
 .\start-app.ps1
 ```
 
-The script uses `.venv` when present, installs frontend dependencies when needed,
-starts the API at `http://127.0.0.1:8000`, waits for its health check before
-starting Vite at `http://localhost:5173`, and stops both services on `Ctrl+C`.
-Because embedded Qdrant permits only one process to open its local storage, stop
-an earlier BankScope Python process before launching a second application instance.
+The API is served at `http://127.0.0.1:8000` and Vite at `http://localhost:5173`. Embedded
+Qdrant permits one process to own its local storage, so stop an earlier BankScope Python
+process before launching another application instance.
 
-For separate terminals, activate `.venv` first and run:
+For separate terminals:
 
 ```powershell
 cd frontend
@@ -59,70 +71,96 @@ npm.cmd run api  # terminal 1
 npm.cmd run dev  # terminal 2
 ```
 
-Vite proxies `/api` to the long-lived local FastAPI service. `GET /api/health`
-reports readiness. The browser creates a persistent thread and streams each turn
-through `POST /api/threads/{thread_id}/stream`. SQLite stores threads, structured
-messages and citation metadata in `data/local/bankscope_chat.db`; canonical filing
-evidence remains in the processed corpus and is loaded only when a citation is
-opened. The current question selects one bank or an ordered set of two to four banks;
-otherwise the server-owned thread scope supplies follow-up context across refreshes and restarts.
-After the first turn, up to four completed turns from that SQLite thread rewrite the
-latest message as a standalone retrieval question. Error turns and other threads are
-excluded; prior assistant text can resolve references but never serves as filing
-evidence. Missing banks or questions naming more than four supported banks produce an
-`ambiguous` response before retrieval or answer generation. The original stateless
-`POST /api/answer` remains available for compatibility.
+See [scripts/README.md](scripts/README.md) for every command and
+[frontend/README.md](frontend/README.md) for the browser/API development workflow.
 
-## Current design
+## Architecture
 
-The active batch pipeline uses these entry points:
+### Offline data pipeline
 
-```text
-download.py -> build_corpus.py -> embed.py -> build_qdrant.py
-                                           -> search.py / evaluate.py / answer.py
+```mermaid
+flowchart LR
+    Registry[config/banks.yaml] --> Download[scripts/download.py]
+    Download --> Manifest[data/filings.json]
+    Download --> Raw[data/raw/sec]
+    Manifest --> Corpus[scripts/build_corpus.py]
+    Raw --> Corpus
+    Corpus --> Chunks[chunks.jsonl]
+    Corpus --> Tables[tables.jsonl]
+    Corpus --> Locators[glossary locators]
+    Chunks --> Embed[scripts/embed.py]
+    Embed --> Vectors[embeddings.npz]
+    Chunks --> Index[scripts/build_qdrant.py]
+    Tables --> Index
+    Vectors --> Index
+    Index --> Qdrant[local Qdrant + manifest]
 ```
 
-- `sec2md==0.1.23` is the only active filing parser.
-- Narrative text is split into bounded, overlapping chunks.
-- A parser-emitted table is never split again. The complete Markdown table is
-  stored once in `tables.jsonl`.
-- Each retrieval-relevant table gets one compact description in `chunks.jsonl`.
-  A table hit is resolved back to the complete table before evidence is shown.
-- Acronym and glossary tables additionally get small lexical-only definition
-  locators. They share the parent table target ID, are deduplicated before the
-  output limit and always hydrate back to the complete table.
-- The default mixed backend retrieves dense candidates from persistent Qdrant,
-  retrieves lexical candidates with BM25S and combines both rankings with
-  application reciprocal-rank fusion (RRF).
-- Answer requests resolve configured banks deterministically from legal names, common aliases or
-  tickers before retrieval. One bank follows the existing path; two to four banks reuse one query
-  embedding, retrieve and generate independently per ticker, then produce one validated synthesis.
-  Missing banks and scopes above four return an `ambiguous` result without downstream calls.
-- Thread follow-ups are contextualized before bank resolution and retrieval from four bounded,
-  completed SQLite turns. SQLite schema v2 remembers either one ticker or the ordered comparison
-  set. The original question remains persisted and displayed.
-- Persistent Qdrant Local Mode is available as an optional backend. Its dense,
-  BM25 and native-RRF paths are also implemented, but full Qdrant hybrid did not
-  pass the MRR quality gate.
-- `serve_api.py` keeps the answer pipeline loaded behind FastAPI. The routed React
-  UI supports durable conversations, server-side session-bank inheritance, live
-  pipeline stages and canonical evidence inspection.
+Narrative records are bounded and may overlap. Parser-emitted tables are never split again:
+retrieval searches one compact description, then hydrates the hit back to the complete table.
+Glossary locators are lexical-only records that point to the same canonical table ID.
 
-The parser decision is based on the frozen 30-question comparison: sec2md
-hybrid improved Hit@1 from 8/28 to 12/28 and MRR@10 from 0.494 to 0.589 over
-the original parser pipeline. See
-[`docs/decisions/001-parser-selection.md`](docs/decisions/001-parser-selection.md).
+### Online question and answer flow
 
-## Run the pipeline
+```mermaid
+flowchart TD
+    UI[React client] -->|SSE request| API[FastAPI]
+    API --> History[SQLite thread history]
+    History --> Context[Question contextualizer]
+    Context --> Resolve[Deterministic bank resolver]
+    Resolve -->|one bank| Single[Single-bank pipeline]
+    Resolve -->|2-4 banks| Multi[Independent per-bank pipelines]
+    Single --> Retrieval[Qdrant dense + BM25S + app RRF]
+    Multi --> Retrieval
+    Retrieval --> Evidence[Hydrated canonical evidence]
+    Evidence --> Generate[Validated answer generation]
+    Multi --> Synthesis[Validated comparison synthesis]
+    Generate --> Persist[Persist turn and citation metadata]
+    Synthesis --> Persist
+    Persist --> UI
+    UI -->|open citation| Sources[Canonical source resolver]
+```
 
-Run commands from the repository root:
+The current question selects a bank or an ordered set of two to four banks. When it does not,
+the server-owned thread scope supplies follow-up context. Up to four completed turns from the
+same thread may rewrite the latest question for retrieval; previous assistant text never becomes
+filing evidence.
+
+## Repository map
+
+| Area | Responsibility | Detailed guide |
+|---|---|---|
+| `src/bankscope/` | Reusable Python application logic | [Package guide](src/bankscope/README.md) |
+| `scripts/` | Pipeline, serving, evaluation, and utility entry points | [CLI guide](scripts/README.md) |
+| `frontend/` | React/Vite local product interface | [Frontend guide](frontend/README.md) |
+| `config/` | Validated bank registry input | [Configuration guide](config/README.md) |
+| `data/` | Versioned inputs and generated data contracts | [Data guide](data/README.md) |
+| `tests/` | Active unit and integration tests | [Test guide](tests/README.md) |
+| `docs/` | Decisions, roadmap, and evaluation reports | [Documentation index](docs/README.md) |
+| `notebooks/` | Reproducible GPU evaluation workflow | [Notebook guide](notebooks/README.md) |
+| `assets/brand/` | Canonical editable and generated brand assets | [Brand guide](assets/brand/README.md) |
+| `sandbox/` | Superseded code and completed experiments | [Archive guide](sandbox/README.md) |
+
+The `src` layout itself is explained in [src/README.md](src/README.md). Generated `artifacts/`,
+tool caches, virtual environments, and local databases are not application source and are ignored.
+
+## Runtime contracts
+
+- `config/banks.yaml` is the source of truth for supported banks and aliases.
+- `data/filings.json` is the versioned filing manifest; downloaded filings are local artifacts.
+- `chunks.jsonl` is the retrieval corpus; `tables.jsonl` is canonical table evidence.
+- `embeddings.npz` must match the ordered chunk IDs and source SHA-256.
+- `qdrant_manifest.json` ties the local index to its corpus, model, dimensions, and collection.
+- SQLite owns thread state and citation metadata, not canonical filing content.
+- Invalid, stale, ambiguous, or insufficient evidence fails closed instead of being guessed.
+
+Schema and lifecycle details live in [data/README.md](data/README.md). Architectural reasons and
+measured trade-offs live in [docs/decisions/README.md](docs/decisions/README.md).
+
+## Useful commands
 
 ```powershell
-python scripts/download.py
-python scripts/build_corpus.py --overwrite
-python scripts/embed.py --overwrite
-python scripts/build_qdrant.py
-python scripts/search.py "How does JPMorgan Chase define cybersecurity risk?" --ticker JPM
+python scripts/search.py "operational risk capital" --ticker JPM
 python scripts/answer.py "How does JPMorgan Chase define cybersecurity risk?"
 python scripts/evaluate.py
 python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113
@@ -130,125 +168,10 @@ python scripts/evaluate_conversation_memory.py --model AZURE_GPT_51_2025_1113
 python scripts/evaluate_comparisons.py --model AZURE_GPT_51_2025_1113
 ```
 
-The default search uses Qdrant for dense retrieval and BM25S plus application
-RRF for hybrid retrieval. Baseline and full-Qdrant comparisons remain available:
+Filtered corpus builds must use a separate output directory so a smoke run cannot replace the
+complete ten-bank corpus. Use `build_qdrant.py --recreate` only for an intentional full rebuild.
 
-```powershell
-python scripts/search.py "operational risk capital" --backend baseline --mode hybrid --ticker JPM
-python scripts/search.py "operational risk capital" --backend qdrant --mode hybrid --ticker JPM
-python scripts/evaluate.py --backend all
-```
-
-Use `build_qdrant.py --recreate` only when intentionally rebuilding the existing
-`bankscope_retrieval` collection.
-
-Useful smoke runs:
-
-```powershell
-python scripts/download.py --ticker JPM
-python scripts/build_corpus.py --ticker JPM --output-dir data/processed/smoke-jpm --overwrite
-python scripts/embed.py --limit 10
-python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113 `
-  --query-id dev_jpm_standardized_cet1_ratio_2025 `
-  --output artifacts/generation-gpt51-smoke.json
-```
-
-Filtered corpus builds require their own output directory so a smoke run cannot
-replace the complete ten-bank corpus by accident.
-
-`build_corpus.py` writes the glossary locator artifact together with chunks and
-tables. To regenerate only that small artifact from existing processed data, run
-`python scripts/build_glossary_locators.py --overwrite`.
-
-Generated files are local and ignored by Git:
-
-```text
-data/raw/sec/                 downloaded filing HTML
-data/processed/chunks.jsonl   text chunks and table descriptions
-data/processed/tables.jsonl   complete tables and stable table IDs
-data/processed/lexical_glossary_locators_v1.jsonl lexical-only definition locators
-data/processed/manifest.json  parser and corpus provenance
-data/processed/embeddings.npz vectors joined to chunks by record order
-data/processed/qdrant/        generated persistent local Qdrant database
-data/processed/qdrant_manifest.json Qdrant source hashes and vector configuration
-data/evaluation/results/generation.json generation metrics, answers and provenance
-data/evaluation/results/generation-gpt51-json-v1.json hardened candidate baseline
-data/evaluation/results/retrieval-glossary-locators-v1.json v2 retrieval gate result
-data/evaluation/results/generation-gpt51-json-v2.json reserved v2 generation result
-data/evaluation/results/conversation-memory-v1.json conversational retrieval gate result
-data/local/bankscope_chat.db local thread/message/citation history
-```
-
-Table descriptions are deterministic by default. GPT-4o descriptions are an
-explicit optional enrichment and never replace either the deterministic table
-index or the source table as evidence:
-
-```powershell
-python -m pip install -e ".[dev,llm]"
-python scripts/build_corpus.py --description-mode openai --overwrite
-```
-
-This mode obtains the authenticated corporate client through
-`model_access.access_model()`. `OPENAI_MODEL` is configurable in `.env` and
-defaults to `AZURE_GPT_4o_2024_1120`. It makes one API request per
-retrieval-eligible table, so the local mode should be used for normal development runs.
-
-`answer.py` performs the default mixed hybrid retrieval and passes only hydrated
-evidence to the configured OpenAI-compatible Chat Completions endpoint. Generation
-uses JSON mode followed by a strict Pydantic contract. Numeric answers are rendered
-locally from validated `facts`, and their exact numeric token must occur in at least
-one cited evidence document. The flow makes at most one generation request per
-question and never retries. Unsupported periods fail before the model call, while
-ambiguous or insufficient evidence produces an abstention. Custom gateways can be
-configured by the internal `model_access` package. The bank normally comes from the
-question; `--ticker` remains an optional session/evaluation fallback for follow-ups
-and compatibility.
-
-Questions that explicitly name two to four configured banks use the comparison path. Each bank's
-retrieval evidence and first-stage answer are isolated and validated before a final synthesis sees
-the structured bank results. The API returns `mode: "comparison"`, an ordered `tickers` list and
-`bank_results`; `partial` means at least one selected bank lacks sufficient evidence. The React UI
-renders a summary plus bank-specific cards and sources. More than four banks are rejected locally.
-
-The accepted GPT-5.1 multi-bank evaluation answered all three frozen comparisons, hit all six
-required bank-evidence groups, produced no cross-ticker citation ownership violations, and passed
-all three correctness, completeness and groundedness judgements. Its ignored local result is
-`data/evaluation/results/multi-bank-v1.json`; the frozen single-bank run was not repeated.
-
-The answer CLI defaults to `OPENAI_MODEL` from `.env` (currently the GPT-4o
-configuration in `.env.example`). The local UI API deliberately defaults to the
-schema-validated `AZURE_GPT_51_2025_1113` candidate; pass `--model` to either entry
-point when an explicit override is needed.
-
-`evaluate_answers.py` reuses the same long-lived answer pipeline and evaluates
-the 26 frozen questions that fit the current single-bank contract: 25 answerable
-questions and one unsupported-period question. Three cross-bank questions and
-the ambiguous question without a ticker are listed as explicit scope exclusions.
-Deterministic status, structured-field and citation metrics are reported
-separately from the advisory semantic judge. Metrics read structured `facts` first
-and retain a text fallback for the historical baseline. Qrel citation metrics stay
-unchanged; support-aware metrics additionally use the versioned manual citation
-audit. The GPT-4o semantic judge receives only evidence actually cited by the
-answer. Use `--skip-judge` to omit the additional evaluation-only judge calls.
-
-The first recorded 26-question generation baseline completed 24 queries and
-captured two model-format/citation errors. Among completed queries, answer
-status accuracy was 100%, exact expected-value accuracy was 86.7%, relevant
-citation hit rate was 87.0%, and all eight advisory semantic judgements passed.
-See decision 005 for denominators and caveats; retrieval metrics remain separate.
-
-The hardened GPT-5.1 v2 frozen run completed all 26 questions without schema or
-format errors and passed every answer-quality check, including variant 9/9 and
-grounded narratives 10/10. It did not pass the overall gate because one extra PNC
-citation gives only the rounded `$440.9 billion`, not exact support for
-`$440,866 million`; the post-run citation audit is therefore 24/25. GPT-5.1 is the
-local UI API default but not the answer CLI default. The citation issue remains
-deferred and the frozen run must not be repeated without separate approval. The
-historical `generation.json` and v1 candidate remain unchanged. See
-[`docs/generation_hardening.md`](docs/generation_hardening.md) for the recorded result
-and audit contract.
-
-## Checks
+## Quality checks
 
 ```powershell
 python -m pytest
@@ -260,33 +183,16 @@ npm.cmd test
 npm.cmd run build
 ```
 
-`sandbox/` contains superseded code and experiments. Nothing under it is imported
-by the active project. `notebooks/` contains reproducible experimental workflows;
-both directories are outside the Ruff quality gate. See
-[`docs/data_pipeline.md`](docs/data_pipeline.md)
-for schemas and invariants,
-[`docs/decisions/002-repository-overhaul.md`](docs/decisions/002-repository-overhaul.md)
-for the completed migration result,
-[`docs/decisions/003-qdrant-local-retrieval.md`](docs/decisions/003-qdrant-local-retrieval.md)
-for the Qdrant evaluation decision,
-[`docs/decisions/004-mixed-vector-retrieval.md`](docs/decisions/004-mixed-vector-retrieval.md)
-for the active mixed-backend decision,
-[`docs/decisions/005-generation-evaluation.md`](docs/decisions/005-generation-evaluation.md)
-for the generation-evaluation contract,
-[`docs/decisions/006-automatic-bank-resolution.md`](docs/decisions/006-automatic-bank-resolution.md)
-for bank and session fallback behavior,
-[`docs/decisions/007-short-term-conversation-memory.md`](docs/decisions/007-short-term-conversation-memory.md)
-for thread-scoped contextualized retrieval,
-[`docs/decisions/008-multi-bank-comparisons.md`](docs/decisions/008-multi-bank-comparisons.md)
-for bounded comparison behavior and its live evaluation gate, and [`docs/roadmap.md`](docs/roadmap.md)
-for the next project phases.
+Before changing parsing, chunking, embeddings, retrieval, or answer generation, follow the
+acceptance gates in [docs/roadmap.md](docs/roadmap.md) and record measured decisions as ADRs.
 
-## Known corpus limitations
+## Known limitations
 
-- The downloaded USB and WFC primary filings point to separate annual-report
-  attachments, so their local content is partial.
-- A table that sec2md itself emits as separate continuation elements remains
-  separate; BankScope only guarantees that each emitted table is not split
-  further.
-- Retrieval scores are not answerability probabilities. Ambiguous and
-  unsupported questions still need checks before answer generation.
+- The downloaded USB and WFC primary filings point to separate annual-report attachments, so
+  their current local content is partial.
+- A table emitted by sec2md as separate continuation elements remains separate; BankScope only
+  guarantees that each emitted table is not split further.
+- Retrieval scores are rankings, not answerability probabilities.
+- The accepted GPT-5.1 generation candidate retains one documented rounded-citation caveat; see
+  [docs/generation_hardening.md](docs/generation_hardening.md).
+- Authentication, multi-user infrastructure, cloud persistence, and deployment are out of scope.

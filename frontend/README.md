@@ -1,5 +1,7 @@
 # BankScope frontend
 
+**Status:** active local product interface.
+
 Focused question-and-answer interface for exploring the latest indexed 10-K
 filings from 10 leading U.S. banks, with answers grounded in verifiable filing evidence.
 
@@ -9,6 +11,23 @@ filings from 10 leading U.S. banks, with answers grounded in verifiable filing e
 - Geist variable font
 - Lucide icons
 - CSS design tokens using BankScope blue `#3459b1` and red `#ee413b`
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Router[React Router] --> App[App.tsx state and views]
+    App --> Client[api.ts typed client]
+    Client -->|REST + SSE through Vite proxy| API[FastAPI :8000]
+    API --> Client
+    App --> Sources[Citation sheet]
+    App --> Threads[Thread navigation]
+    Components[components/ui] --> App
+```
+
+See [src/README.md](src/README.md) for the file and type-level map. The browser owns
+display state and cancellation; the server owns bank scope, history selection,
+retrieval, answer validation, and persistence.
 
 ## Run locally
 
@@ -42,9 +61,9 @@ database. The service defaults to `AZURE_GPT_51_2025_1113`; override it with
 - streamed question -> `POST /api/threads/{thread_id}/stream`
 - source context -> `GET /api/citations/{citation_id}/context`
 - compatibility question -> `POST /api/answer`
-- answer status -> `supported | ambiguous | unsupported`
+- answer status -> `supported | partial | ambiguous | unsupported`
 - source chips carry persisted citation IDs; the drawer hydrates canonical evidence on demand
-- bank selection is deliberately absent; `SingleBankAnswerPipeline` resolves it automatically
+- bank selection is deliberately absent; the server resolves one bank or an ordered comparison set
 
 ## Checks
 
@@ -57,5 +76,15 @@ npm.cmd run build
 ## Brand assets
 
 The header wordmark, assistant target and favicon mark are served from `public/brand/`.
-Their editable SVG sources live at the repository root and can be regenerated from
-the PDF-compatible Illustrator source with `node ../scripts/export_logo_from_ai.mjs`.
+Their canonical editable/generated sources live in `../assets/brand/` and can be regenerated
+with `node ../scripts/export_logo_from_ai.mjs`. Public URLs remain `/brand/<asset>.svg`.
+
+## When changing this area
+
+1. Keep response types in `src/api.ts` aligned with `bankscope.api` and generated answer fields.
+2. Preserve cancellation and terminal SSE handling for answer and error events.
+3. Keep source content server-resolved; do not persist canonical evidence in browser state.
+4. Add or update Testing Library coverage for visible behavior.
+5. Run lint, Vitest, and the production build.
+
+[Back to repository guide](../README.md)

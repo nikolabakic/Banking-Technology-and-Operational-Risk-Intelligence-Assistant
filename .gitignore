@@ -105,9 +105,14 @@ venv/
 # Windows
 Thumbs.db
 
-# Downloaded and processed SEC data
-data/raw/
-data/processed/
+# Downloaded and processed SEC data. Keep lifecycle documentation in otherwise
+# generated directories so a fresh clone explains how to recreate them.
+data/raw/*
+!data/raw/README.md
+data/processed/*
+!data/processed/README.md
+data/local/*
+!data/local/README.md
 data/evaluation/results/
 
 # Generated project artifacts
@@ -123,3 +128,12 @@ pytest-plan-check/
 # Frontend dependencies and Vite output
 node_modules/
 frontend/dist/
+
+# Regenerable archived experiment payloads
+sandbox/experiments/docling_jpm/source/
+sandbox/experiments/docling_jpm/output/
+sandbox/experiments/jpm_sec2md_data/sec2md_builtin/chunks.jsonl
+sandbox/experiments/jpm_sec2md_data/sec2md_builtin/embedding_records.jsonl
+sandbox/experiments/jpm_sec2md_data/structure_aware/chunks.jsonl
+sandbox/experiments/jpm_sec2md_data/structure_aware/embedding_records.jsonl
+sandbox/experiments/jpm_sec2md_data/structure_aware/table_parents.jsonl

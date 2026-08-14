@@ -3,7 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 const projectRoot = resolve(import.meta.dirname, "..");
-const sourcePath = resolve(projectRoot, "bankscope.ai");
+const brandRoot = resolve(projectRoot, "assets", "brand");
+const sourcePath = resolve(brandRoot, "bankscope.ai");
 const source = readFileSync(sourcePath);
 const latin = source.toString("latin1");
 
@@ -173,9 +174,9 @@ const targetArtwork = artwork
   }));
 
 const outputs = [
-  [resolve(projectRoot, "bankscope-wordmark.svg"), svg(artwork, [130, 140, 880, 500, 700], "BankScope")],
-  [resolve(projectRoot, "bankscope-mark.svg"), svg(markArtwork, [165, 140, 140, 210, 700], "BankScope")],
-  [resolve(projectRoot, "bankscope-target.svg"), svg(targetArtwork, [465, 230, 255, 255, 470], "BankScope target")],
+  [resolve(brandRoot, "bankscope-wordmark.svg"), svg(artwork, [130, 140, 880, 500, 700], "BankScope")],
+  [resolve(brandRoot, "bankscope-mark.svg"), svg(markArtwork, [165, 140, 140, 210, 700], "BankScope")],
+  [resolve(brandRoot, "bankscope-target.svg"), svg(targetArtwork, [465, 230, 255, 255, 470], "BankScope target")],
 ];
 
 for (const [rootPath, contents] of outputs) {
