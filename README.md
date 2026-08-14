@@ -9,6 +9,18 @@ This repository is organized as a set of documented functional areas. Start here
 system view, then follow the linked README files for module-level APIs, invariants, and safe
 change guidance.
 
+## Product preview
+
+Start a research question from the focused landing page, with example prompts for common
+operational-risk, cybersecurity, and capital-ratio investigations.
+
+![BankScope landing page with research prompts](assets/screenshots/bankscope-home.png)
+
+BankScope answers with filing-grounded evidence, inline citations, and clearly separated
+supporting excerpts for each bank in a comparison.
+
+![BankScope comparison answer with cited filing evidence](assets/screenshots/bankscope-evidence-answer.png)
+
 ## What the system does
 
 - downloads configured bank filings from SEC EDGAR;
