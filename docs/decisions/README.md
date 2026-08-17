@@ -13,6 +13,8 @@ flowchart LR
     Memory --> Comparison[008 multi-bank comparisons]
     Comparison --> CompleteFilings[009 complete primary filings]
     CompleteFilings --> Balanced[010 bank-balanced retrieval]
+    Balanced --> Agentic[011 eval-first agentic RAG]
+    Agentic --> Loop[012 bounded hybrid agent loop]
 ```
 
 | ADR | Decision |
@@ -27,6 +29,8 @@ flowchart LR
 | [008](008-multi-bank-comparisons.md) | Isolate per-bank evidence before bounded comparison synthesis |
 | [009](009-complete-primary-filings.md) | Replace partial USB/WFC filings with complete COF/STT filings |
 | [010](010-bank-balanced-comparison-retrieval.md) | Balance cross-bank retrieval before comparison synthesis |
+| [011](011-eval-first-agentic-rag.md) | Add bounded, diagnostics-first agentic RAG behind a disabled rollout flag |
+| [012](012-bounded-hybrid-agent-loop.md) | Replace one-shot evidence planning with a bounded hybrid retrieval loop |
 
 ADRs are append-only records of a decision at a point in time. If a decision is reversed, add a new
 ADR and mark the old one superseded rather than rewriting its measured history.

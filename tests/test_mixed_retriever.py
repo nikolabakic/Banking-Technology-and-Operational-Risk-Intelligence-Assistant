@@ -46,6 +46,11 @@ class RecordingLexicalRetriever:
         ticker = str(kwargs.get("ticker") or "JPM").upper()
         return [ranked("b", "bm25", 1, ticker=ticker), ranked("c", "bm25", 2, ticker=ticker)]
 
+    def search_exact(self, terms, **kwargs: Any) -> list[dict[str, Any]]:
+        self.calls.append({"terms": list(terms), **kwargs})
+        ticker = str(kwargs.get("ticker") or "JPM").upper()
+        return [ranked("exact", "exact", 1, ticker=ticker)]
+
 
 def test_mixed_retriever_delegates_dense_and_bm25() -> None:
     dense = RecordingDenseRetriever()
@@ -62,6 +67,25 @@ def test_mixed_retriever_delegates_dense_and_bm25() -> None:
     assert [result["target_chunk_id"] for result in bm25_results] == ["b", "c"]
     assert lexical.calls == [
         {"query": "risk capital", "limit": 2, "ticker": "jpm", "record_type": None}
+    ]
+
+
+def test_mixed_retriever_delegates_bounded_exact_search() -> None:
+    lexical = RecordingLexicalRetriever()
+    retriever = MixedRetriever(RecordingDenseRetriever(), lexical)  # type: ignore[arg-type]
+
+    results = retriever.search_exact(
+        ["Common Equity Tier 1"], limit=4, ticker="JPM", record_type="text"
+    )
+
+    assert [result["target_chunk_id"] for result in results] == ["exact"]
+    assert lexical.calls == [
+        {
+            "terms": ["Common Equity Tier 1"],
+            "limit": 4,
+            "ticker": "JPM",
+            "record_type": "text",
+        }
     ]
 
 

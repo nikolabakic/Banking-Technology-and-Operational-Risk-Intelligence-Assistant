@@ -90,6 +90,44 @@ class AppServices:
     ) -> tuple[dict[str, Any], int]:
         thread = self.store.get_thread(thread_id)
         conversation_history = self.store.conversation_history(thread_id)
+        stage_trace: list[dict[str, Any]] = []
+        latest_stage: str | None = None
+
+        def tracked_progress(stage: str, details: Mapping[str, Any]) -> None:
+            nonlocal latest_stage
+            latest_stage = stage
+            stage_trace.append({"stage": stage, "status": "started", **jsonable(dict(details))})
+            if on_progress is not None:
+                on_progress(stage, details)
+
+        def error_diagnostics(code: str, failed_stage: str | None = None) -> dict[str, Any]:
+            enabled = bool(getattr(self.pipeline, "agentic_rag_enabled", False))
+            checks = {
+                "pipeline_completed": False,
+                "plan_schema": not code.startswith(
+                    ("agentic_plan", "agentic_step", "agentic_verdict")
+                ),
+                "query_preservation": not any(
+                    marker in code for marker in ("rewrite_lost", "search_lost", "added_numeric")
+                ),
+                "citation_contract": True,
+                "bank_isolation": "crossed_bank" not in code,
+                "action_budget": True,
+                "request_budget": True,
+            }
+            return {
+                "route": "domain_rag",
+                "agentic_rag_enabled": enabled,
+                "outcome": "error",
+                "failed_stage": failed_stage or latest_stage,
+                "error_code": code,
+                "stages": stage_trace,
+                "initial_evidence_count": None,
+                "final_evidence_count": None,
+                "model_request_count": None,
+                "bank_plans": [],
+                "quality_gate": {"passed": False, "checks": checks},
+            }
         try:
             with self.pipeline_lock:
                 run = self.pipeline.answer(
@@ -97,7 +135,7 @@ class AppServices:
                     ticker=thread["session_ticker"],
                     tickers=thread["session_tickers"],
                     conversation_history=conversation_history,
-                    on_progress=on_progress,
+                    on_progress=tracked_progress,
                 )
             turn = self.store.append_answer_turn(
                 thread_id,
@@ -116,11 +154,19 @@ class AppServices:
                 question,
                 GENERATION_ERROR_MESSAGE,
                 code=error.code,
+                diagnostics=error_diagnostics(
+                    error.code,
+                    str(error.generation.get("stage") or "") or None,
+                ),
             )
             return turn, 422
         except ValueError as error:
             turn = self.store.append_error_turn(
-                thread_id, question, str(error), code="invalid_request"
+                thread_id,
+                question,
+                str(error),
+                code="invalid_request",
+                diagnostics=error_diagnostics("invalid_request"),
             )
             return turn, 400
         except Exception:
@@ -130,6 +176,7 @@ class AppServices:
                 question,
                 PIPELINE_ERROR_MESSAGE,
                 code="pipeline_failed",
+                diagnostics=error_diagnostics("pipeline_failed"),
             )
             return turn, 500
 

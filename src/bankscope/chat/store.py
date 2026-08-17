@@ -217,6 +217,7 @@ class ChatStore:
             if assistant and assistant["status"] == "error":
                 turn["error"] = assistant["content"]
                 turn["error_code"] = (assistant["payload"] or {}).get("code")
+                turn["diagnostics"] = (assistant["payload"] or {}).get("diagnostics")
             elif assistant:
                 turn["response"] = assistant["payload"]
             turns.append(turn)
@@ -388,6 +389,7 @@ class ChatStore:
         error: str,
         *,
         code: str,
+        diagnostics: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         now = _now()
         user_id = str(uuid.uuid4())
@@ -415,7 +417,14 @@ class ChatStore:
                 """INSERT INTO chat_messages
                    (id, thread_id, sequence, role, status, content, payload_json, created_at)
                    VALUES (?, ?, ?, 'assistant', 'error', ?, ?, ?)""",
-                (assistant_id, thread_id, sequence + 2, error, _json({"code": code}), now),
+                (
+                    assistant_id,
+                    thread_id,
+                    sequence + 2,
+                    error,
+                    _json({"code": code, "diagnostics": dict(diagnostics or {})}),
+                    now,
+                ),
             )
             title = thread["title"]
             if title == DEFAULT_THREAD_TITLE:
@@ -431,6 +440,7 @@ class ChatStore:
             "state": "error",
             "error": error,
             "error_code": code,
+            "diagnostics": dict(diagnostics or {}),
             "created_at": now,
         }
 

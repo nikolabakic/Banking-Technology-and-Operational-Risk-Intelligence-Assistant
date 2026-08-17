@@ -43,6 +43,22 @@ const response: AnswerResponse = {
     record_type: "text",
     section_title: "Risk management",
   }],
+  diagnostics: {
+    route: "domain_rag",
+    agentic_rag_enabled: true,
+    outcome: "supported",
+    stages: [{ stage: "routing", status: "completed", latency_ms: 12.3 }],
+    initial_evidence_count: 5,
+    final_evidence_count: 5,
+    model_request_count: 3,
+    bank_plans: [{
+      ticker: "JPM",
+      action: "generate",
+      reason_code: "evidence_sufficient",
+      explanation: "The initial evidence directly supports the answer.",
+    }],
+    quality_gate: { passed: true, checks: { pipeline_completed: true } },
+  },
 };
 
 const turn: Turn = {
@@ -96,6 +112,19 @@ describe("persistent chat workspace", () => {
       response.citations[0].citation_id,
       expect.any(AbortSignal),
     );
+  });
+
+  it("keeps execution diagnostics collapsed until requested", async () => {
+    renderThread();
+    await screen.findByText(response.question);
+    const trigger = screen.getByRole("button", { name: "Diagnostics" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger.closest(".answer-actions")).not.toBeNull();
+    fireEvent.click(trigger);
+    expect(await screen.findByText("Execution checks: passed")).toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("5 → 5")).toBeInTheDocument();
+    expect(screen.getByText("✓")).toBeInTheDocument();
   });
 
   it("renames and deletes conversations through confirmed sidebar actions", async () => {

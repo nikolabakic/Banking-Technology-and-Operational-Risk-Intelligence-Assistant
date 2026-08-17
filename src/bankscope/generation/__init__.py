@@ -6,7 +6,12 @@ from bankscope.generation.answer_generator import (
     NumericFacts,
     generate_answer,
 )
-from bankscope.generation.pipeline import AnswerRun, BankAnswerPipeline, SingleBankAnswerPipeline
+from bankscope.generation.pipeline import (
+    AnswerRun,
+    BankAnswerPipeline,
+    RetrievalRun,
+    SingleBankAnswerPipeline,
+)
 
 __all__ = [
     "AnswerRun",
@@ -14,6 +19,7 @@ __all__ = [
     "GPT51_CANDIDATE_MODEL",
     "GenerationValidationError",
     "NumericFacts",
+    "RetrievalRun",
     "SingleBankAnswerPipeline",
     "generate_answer",
 ]

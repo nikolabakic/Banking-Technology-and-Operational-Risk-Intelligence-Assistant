@@ -36,8 +36,8 @@ sequenceDiagram
 
 ## Public TypeScript contracts
 
-`api.ts` exports `Citation`, `NumericFacts`, `BankResult`, `AnswerResponse`, `ThreadSummary`, `Turn`,
-`SourceChunk`, `CitationContext`, and `ApiError`. Its functions list/create/load/rename/delete
+`api.ts` exports `Citation`, `NumericFacts`, `BankResult`, `Diagnostics`, `AnswerResponse`,
+`ThreadSummary`, `Turn`, `SourceChunk`, `CitationContext`, and `ApiError`. Its functions list/create/load/rename/delete
 threads, stream answers, and load citation context.
 
 `streamAnswer()` parses SSE blocks from a fetch `ReadableStream`. A stream must yield an answer or
@@ -46,10 +46,11 @@ for the UI. Keep discriminated status/type unions synchronized with backend resp
 
 `App.tsx` owns routing, selected-thread state, optimistic loading turns, stream cancellation,
 dialogs, comparison rendering, Markdown answer presentation, and the source sheet. UI primitives
-under `components/ui` should remain behavior-light.
+under `components/ui` should remain behavior-light. `DiagnosticsPanel` is a native collapsed
+`details` view for both successful and failed turns; it must not treat execution checks as a
+factual-accuracy score.
 
 Run `npm.cmd test` after behavior changes and add a test from the user's perspective rather than
 testing component internals.
 
 [Frontend guide](../README.md) · [Backend API](../../src/bankscope/README.md)
-

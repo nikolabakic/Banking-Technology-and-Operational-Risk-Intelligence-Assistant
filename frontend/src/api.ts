@@ -34,6 +34,40 @@ export type BankResult = {
   citations: Citation[];
 };
 
+export type Diagnostics = {
+  route: "general_chat" | "domain_rag";
+  agentic_rag_enabled: boolean;
+  outcome: string;
+  failed_stage?: string | null;
+  error_code?: string | null;
+  stages: Array<{ stage: string; status: string; latency_ms?: number; [key: string]: unknown }>;
+  initial_evidence_count?: number | null;
+  final_evidence_count?: number | null;
+  model_request_count?: number | null;
+  bank_plans: Array<{
+    ticker: string;
+    action: "agentic_loop" | "generate" | "rewrite_search" | "expand_context" | "abstain";
+    final_status?: "sufficient" | "unsupported";
+    reason_code?: string;
+    explanation?: string;
+    rewritten_query?: string | null;
+    anchor_target_chunk_id?: string | null;
+    model_request_count?: number;
+    tool_action_count?: number;
+    verifier_request_count?: number;
+    fallback?: boolean;
+    steps?: Array<{
+      action: string;
+      query?: string;
+      terms?: string[];
+      result?: string;
+      error_code?: string;
+      [key: string]: unknown;
+    }>;
+  }>;
+  quality_gate: { passed: boolean; checks: Record<string, boolean> };
+};
+
 export type AnswerResponse = {
   question: string;
   mode?: "comparison";
@@ -45,6 +79,7 @@ export type AnswerResponse = {
   reason: string;
   citations: Citation[];
   bank_results?: BankResult[];
+  diagnostics?: Diagnostics;
 };
 
 export type ThreadSummary = {
@@ -64,6 +99,7 @@ export type Turn = {
   error?: string;
   error_code?: string;
   status?: string;
+  diagnostics?: Diagnostics;
   created_at?: string;
 };
 

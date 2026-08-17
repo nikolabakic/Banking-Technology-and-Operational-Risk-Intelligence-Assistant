@@ -31,6 +31,10 @@ All retrievers expose compatible `search_dense`, `search_bm25`, and `search_hybr
 optional ticker and record-type filters. Results retain record identity and metadata while the
 `document` field is hydrated canonical evidence.
 
+The local lexical layer also exposes bounded `search_exact(terms)`. It accepts one to eight literal
+phrases, never regular expressions, returns at most 20 hydrated results, and is used only as an
+agentic complement for exact filing terminology, acronyms, names, and user-provided numbers.
+
 Multi-bank questions run the existing hybrid search independently for each of two to four unique
 tickers. Generation receives those per-bank lists; evaluation uses deterministic round-robin
 interleaving with target-ID deduplication for a balanced Top 10.

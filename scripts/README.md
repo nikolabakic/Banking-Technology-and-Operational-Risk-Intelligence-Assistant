@@ -17,6 +17,7 @@ flowchart LR
     Answer --> AnswerEval[evaluate_answers.py]
     Answer --> MemoryEval[evaluate_conversation_memory.py]
     Answer --> ComparisonEval[evaluate_comparisons.py]
+    Answer --> AgenticEval[evaluate_agentic_rag.py]
     Answer --> AppSmoke[smoke_answers.py]
 ```
 
@@ -60,6 +61,7 @@ python scripts/serve_api.py --host 127.0.0.1 --port 8000
 | `evaluate_answers.py` | Single-bank deterministic metrics and optional semantic judge |
 | `evaluate_conversation_memory.py` | Follow-up rewrite and retrieval gate with isolation controls |
 | `evaluate_comparisons.py` | Evidence-group, semantic, and citation-ownership checks |
+| `evaluate_agentic_rag.py` | Compare retrieval-only baseline/agentic runs on the 12-question challenge, record nested end-to-end results, and enforce rollout gates |
 | `smoke_answers.py` | Ten-bank supported-answer and citation-ownership smoke |
 | `benchmark_query_embeddings.py` | Warm-up and repeated query-encoder latency measurement |
 | `probe_generation_json.py` | Small gateway JSON-mode compatibility probe |
@@ -67,6 +69,45 @@ python scripts/serve_api.py --host 127.0.0.1 --port 8000
 
 Evaluation commands may make model calls and create ignored reports. Do not rerun a frozen live
 baseline without explicit intent; use `--skip-judge`, `--query-id`, or smoke limits where supported.
+
+### Enable and test bounded agentic RAG
+
+For the local application, edit the repository `.env`:
+
+```dotenv
+AGENTIC_RAG_ENABLED=true
+```
+
+For a one-session PowerShell override without editing `.env`:
+
+```powershell
+$env:AGENTIC_RAG_ENABLED = "true"
+.\start-app.ps1
+```
+
+Stop the existing API process before restarting it because embedded Qdrant has one local owner and
+settings are cached for the process lifetime:
+
+```powershell
+.\start-app.ps1
+```
+
+Open a response's collapsed **Diagnostics** panel and verify `Agentic RAG: enabled`, the route, the
+per-bank loop outcome and trace, model/tool/verifier request counts, and execution checks. To
+disable the feature, restore `AGENTIC_RAG_ENABLED=false` and restart the API.
+
+Run the live acceptance comparison only after the existing frozen gates pass:
+
+```powershell
+python scripts/evaluate_agentic_rag.py --prerequisite-gates-passed
+```
+
+The evaluator toggles baseline/agentic mode internally, obtains authoritative retrieval evidence
+through `retrieve_evidence()`, writes `data/evaluation/results/agentic-rag-v1.json`, and exits
+non-zero unless every rollout check passes. End-to-end answer generation is recorded separately in
+the same report. It defaults to the same `AZURE_GPT_51_2025_1113` candidate as `serve_api.py`; use
+`--model` only for an explicit comparison. Passing it does not change the production default
+automatically.
 
 ## Failure and safety rules
 

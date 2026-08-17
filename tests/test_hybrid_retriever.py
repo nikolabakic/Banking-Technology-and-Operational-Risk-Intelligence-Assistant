@@ -207,3 +207,22 @@ def test_financial_lexical_normalization_removes_numeric_commas() -> None:
     assert normalize_lexical_text("Assets were 12,345 \u2014 unchanged") == (
         "Assets were 12345 - unchanged"
     )
+
+
+def test_exact_search_uses_literal_terms_filters_and_bounded_ranking() -> None:
+    records = [
+        record("jpm", embedding_text="Common Equity Tier 1 capital ratio", ticker="JPM"),
+        record("bac", embedding_text="Common Equity Tier 1 capital ratio", ticker="BAC"),
+        record("jpm-other", embedding_text="Capital ratio only", ticker="JPM"),
+    ]
+    retriever = HybridRetriever(records)
+
+    results = retriever.search_exact(
+        ["Common Equity Tier 1", "capital ratio"], ticker="JPM", limit=2
+    )
+
+    assert [result["record_id"] for result in results] == ["jpm", "jpm-other"]
+    assert results[0]["matched_term_count"] == 2
+    assert all(result["ticker"] == "JPM" for result in results)
+    with pytest.raises(ValueError, match="cannot exceed 20"):
+        retriever.search_exact(["capital"], limit=21)

@@ -45,6 +45,7 @@ flowchart TD
 | `embeddings.npz` | Ordered dense vectors | IDs, order, dtype, normalization, model, and source hash validate |
 | `qdrant_manifest.json` | Persistent index provenance | Collection, vector schema, point count, and sources match |
 | `bankscope_chat.db` | Thread and citation metadata | Canonical evidence remains in the corpus, not SQLite |
+| `agentic_rag_challenge_v1.jsonl` | Agentic rollout challenge | Fixed 12-case category distribution reusing frozen qrels |
 
 Retrieval records contain searchable `embedding_text` and metadata. Hydrated results expose the
 canonical `document`: narrative content for text records and the complete Markdown table for table
@@ -66,4 +67,3 @@ Read the stage-specific guides:
 - [local application state](local/README.md)
 
 [Back to repository guide](../README.md)
-

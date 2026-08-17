@@ -31,5 +31,12 @@ Retrieval, single-bank generation, conversation memory, and multi-bank compariso
 denominators and reports. Do not combine them into one quality score or silently exclude errors.
 Metric changes require matching tests and an update to the relevant ADR/report.
 
-[Evaluation data](../../../data/evaluation/README.md) · [CLI evaluators](../../../scripts/README.md)
+The agentic evaluator is an orchestration gate built from these existing contracts rather than a
+new factual metric. It calls `BankAnswerPipeline.retrieve_evidence()` so baseline/agentic Hit@5/10
+and recovered misses are measured independently of answer-generation schema reliability. It also
+records routes, per-bank loop traces and verifier verdicts, model/tool requests, available token
+usage, latencies, citations, and runtime execution checks. End-to-end generation remains nested in
+the report as a separate gate; its failure does not erase a valid retrieval result. Qrels remain
+the only basis for claims about retrieval/factual recovery.
 
+[Evaluation data](../../../data/evaluation/README.md) · [CLI evaluators](../../../scripts/README.md)

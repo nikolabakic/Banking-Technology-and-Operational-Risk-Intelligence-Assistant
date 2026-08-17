@@ -31,6 +31,7 @@ class ApplicationSettings(BaseSettings):
     openai_x_company_id: SecretStr | None = None
     openai_x_api_version: SecretStr | None = None
     llm_temperature: float = Field(default=0, ge=0, le=2)
+    agentic_rag_enabled: bool = False
 
     @field_validator("sec_user_agent")
     @classmethod

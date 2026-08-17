@@ -93,6 +93,21 @@ class MixedRetriever:
             record_type=record_type,
         )
 
+    def search_exact(
+        self,
+        terms: list[str] | tuple[str, ...],
+        *,
+        limit: int = 20,
+        ticker: str | None = None,
+        record_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.lexical_retriever.search_exact(
+            terms,
+            limit=limit,
+            ticker=ticker,
+            record_type=record_type,
+        )
+
     def search_hybrid(
         self,
         query: str,

@@ -53,6 +53,12 @@ from the active canonical corpus when opened instead of being duplicated in the 
 database. The service defaults to `AZURE_GPT_51_2025_1113`; override it with
 `npm.cmd run api -- --model MODEL_NAME`.
 
+To test bounded agentic RAG in the UI, set `AGENTIC_RAG_ENABLED=true` in the repository `.env`, stop
+the old API process, and start it again. Each completed or failed turn then has a collapsed
+**Diagnostics** panel showing route, feature state, evidence counts, timeline, the per-bank loop
+outcome and trace, model/tool/verifier request counts, latencies, and execution checks. Setting the
+flag back to `false` and restarting restores baseline routing/retrieval behavior.
+
 ## Interface contract
 
 - readiness check -> `GET /api/health`
@@ -64,6 +70,10 @@ database. The service defaults to `AZURE_GPT_51_2025_1113`; override it with
 - answer status -> `supported | partial | ambiguous | unsupported`
 - source chips carry persisted citation IDs; the drawer hydrates canonical evidence on demand
 - bank selection is deliberately absent; the server resolves one bank or an ordered comparison set
+- optional diagnostics are backward-compatible and are rendered only when supplied
+- agentic progress adds `routing` and repeatable `assessing_evidence` events to the baseline
+  `embedding`, `retrieving`, `generating`, `validating`, `synthesizing`, and `contextualizing`
+  stages; detailed tool actions are carried in terminal diagnostics
 
 ## Checks
 

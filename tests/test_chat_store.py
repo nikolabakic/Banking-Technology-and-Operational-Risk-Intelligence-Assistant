@@ -46,10 +46,15 @@ def test_chat_store_errors_do_not_replace_session_bank(tmp_path) -> None:
     thread = store.create_thread()
     store.append_answer_turn(thread["id"], "JPM question", answer(), corpus_hash="hash-1")
     store.append_error_turn(
-        thread["id"], "Broken follow-up", "Stable public error", code="pipeline_failed"
+        thread["id"],
+        "Broken follow-up",
+        "Stable public error",
+        code="pipeline_failed",
+        diagnostics={"failed_stage": "retrieving", "error_code": "pipeline_failed"},
     )
     assert store.get_thread(thread["id"])["session_ticker"] == "JPM"
     assert store.list_turns(thread["id"])[1]["error_code"] == "pipeline_failed"
+    assert store.list_turns(thread["id"])[1]["diagnostics"]["failed_stage"] == "retrieving"
     assert store.conversation_history(thread["id"]) == [
         {"role": "user", "content": "JPM question"},
         {"role": "assistant", "content": "Answer [E1]"},

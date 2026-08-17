@@ -27,7 +27,9 @@ class FakePipeline:
     ):
         self.calls.append((question, ticker, list(tickers), list(conversation_history)))
         if on_progress:
+            on_progress("routing", {"message": "Routing the request..."})
             on_progress("resolving_bank", {"message": "Identifying the bank..."})
+            on_progress("assessing_evidence", {"message": "Assessing retrieved evidence..."})
             on_progress("retrieving", {"message": "Searching indexed filings..."})
         return SimpleNamespace(
             output={
@@ -45,6 +47,19 @@ class FakePipeline:
                         "record_type": "text",
                     }
                 ],
+                "diagnostics": {
+                    "route": "domain_rag",
+                    "agentic_rag_enabled": False,
+                    "outcome": "supported",
+                    "failed_stage": None,
+                    "error_code": None,
+                    "stages": [],
+                    "initial_evidence_count": 1,
+                    "final_evidence_count": 1,
+                    "model_request_count": 1,
+                    "bank_plans": [],
+                    "quality_gate": {"passed": True, "checks": {"pipeline_completed": True}},
+                },
             },
             evidence=[{"target_chunk_id": "chunk-1", "score": np.float32(0.75)}],
         )
@@ -156,6 +171,8 @@ def test_stream_emits_progress_answer_and_done(api) -> None:
         body = "".join(response.iter_text())
     assert response.status_code == 200
     assert '"stage":"resolving_bank"' in body
+    assert '"stage":"routing"' in body
+    assert '"stage":"assessing_evidence"' in body
     assert '"type":"answer"' in body
     assert '"type":"done"' in body
 

@@ -122,6 +122,7 @@ def build_services(args: argparse.Namespace) -> AppServices:
         qdrant_manifest_path=_project_path(args.qdrant_manifest),
         collection_name=args.collection,
         bank_registry_path=_project_path(settings.bank_registry_path),
+        agentic_rag_enabled=settings.agentic_rag_enabled,
     )
     store = ChatStore(_project_path(args.chat_db))
     store.initialize()

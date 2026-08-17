@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowRight,
@@ -28,6 +28,7 @@ import {
   streamAnswer,
   type AnswerResponse,
   type CitationContext,
+  type Diagnostics,
   type ThreadSummary,
   type Turn,
 } from "./api";
@@ -53,6 +54,10 @@ const statusVariants: Record<AnswerStatus, "success" | "warning" | "danger"> = {
 };
 
 const stageLabels: Record<string, string> = {
+  routing: "Routing the request\u2026",
+  assessing_evidence: "Assessing retrieved evidence\u2026",
+  rewriting_search: "Running a refined filing search\u2026",
+  expanding_context: "Reading adjacent filing context\u2026",
   resolving_bank: "Identifying the bank…",
   embedding: "Encoding the question…",
   retrieving: "Searching indexed filings…",
@@ -60,6 +65,80 @@ const stageLabels: Record<string, string> = {
   synthesizing: "Synthesizing the bank comparison…",
   validating: "Validating citations and answer structure…",
 };
+
+function DiagnosticsPanel({ diagnostics }: { diagnostics?: Diagnostics }) {
+  const [expanded, setExpanded] = useState(false);
+  const diagnosticsId = useId();
+  if (!diagnostics) return null;
+  const checks = Object.entries(diagnostics.quality_gate.checks);
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="diagnostics-trigger"
+        aria-expanded={expanded}
+        aria-controls={diagnosticsId}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <ChevronRight size={14} className={expanded ? "expanded" : ""} /> Diagnostics
+      </Button>
+      {expanded && <div className="diagnostics-content" id={diagnosticsId} role="region" aria-label="Diagnostics details">
+        <div className="diagnostics-summary">
+          <span>Route: <strong>{diagnostics.route}</strong></span>
+          <span>Agentic RAG: <strong>{diagnostics.agentic_rag_enabled ? "enabled" : "disabled"}</strong></span>
+          <span>Evidence: <strong>{diagnostics.initial_evidence_count ?? "\u2014"} {"\u2192"} {diagnostics.final_evidence_count ?? "\u2014"}</strong></span>
+          <span>Model requests: <strong>{diagnostics.model_request_count ?? "\u2014"}</strong></span>
+        </div>
+        {diagnostics.stages.length > 0 && (
+          <ol className="diagnostics-timeline">
+            {diagnostics.stages.map((stage, index) => (
+              <li key={`${stage.stage}-${index}`}>
+                <span>{stage.stage.replace(/_/g, " ")}</span>
+                {typeof stage.latency_ms === "number" && <small>{stage.latency_ms.toFixed(1)} ms</small>}
+              </li>
+            ))}
+          </ol>
+        )}
+        {diagnostics.bank_plans.map((plan) => (
+          <div className="diagnostics-plan" key={plan.ticker}>
+            <strong>{plan.ticker}: {plan.action}{plan.final_status ? ` \u2192 ${plan.final_status}` : ""}</strong>
+            {plan.reason_code && <span>{plan.reason_code}</span>}
+            {plan.explanation && <p>{plan.explanation}</p>}
+            {typeof plan.model_request_count === "number" && (
+              <span>{plan.model_request_count} model / {plan.tool_action_count ?? 0} tool / {plan.verifier_request_count ?? 0} verifier</span>
+            )}
+            {plan.rewritten_query && <code>{plan.rewritten_query}</code>}
+            {plan.anchor_target_chunk_id && <code>{plan.anchor_target_chunk_id}</code>}
+            {plan.steps && plan.steps.length > 0 && (
+              <ol>
+                {plan.steps.map((step, index) => (
+                  <li key={`${step.action}-${index}`}>
+                    {step.action.replace(/_/g, " ")}
+                    {step.query ? `: ${step.query}` : ""}
+                    {step.terms ? `: ${step.terms.join(", ")}` : ""}
+                    {step.result ? ` - ${step.result}` : ""}
+                    {step.error_code ? ` - ${step.error_code}` : ""}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        ))}
+        <div className={`execution-checks ${diagnostics.quality_gate.passed ? "passed" : "failed"}`}>
+          <strong>Execution checks: {diagnostics.quality_gate.passed ? "passed" : "failed"}</strong>
+          <ul>{checks.map(([name, passed]) => (
+            <li key={name}>
+              <span className={`diagnostics-check-icon ${passed ? "passed" : "failed"}`} aria-hidden="true">{passed ? "\u2713" : "\u2715"}</span>
+              {name.replace(/_/g, " ")}
+            </li>
+          ))}</ul>
+        </div>
+      </div>}
+    </>
+  );
+}
 
 function Brand() {
   return (
@@ -316,7 +395,7 @@ function AssistantTurn({ turn, copied, onCopy, onSource }: {
         </div>
       )}
       {turn.state === "error" && (
-        <div className="error-card" role="alert"><strong>Answer could not be generated.</strong><p>{turn.error}</p></div>
+        <><div className="error-card" role="alert"><strong>Answer could not be generated.</strong><p>{turn.error}</p></div><div className="answer-actions error-diagnostics"><DiagnosticsPanel diagnostics={turn.diagnostics} /></div></>
       )}
       {turn.state === "answered" && turn.response && (
         <div className="answer-body">
@@ -336,6 +415,7 @@ function AssistantTurn({ turn, copied, onCopy, onSource }: {
             {turn.response.citations.length > 0 && (
               <Button variant="ghost" size="sm" onClick={() => onSource(turn.response!, 0)}><FileSearch size={14} /> Sources</Button>
             )}
+            <DiagnosticsPanel diagnostics={turn.response.diagnostics} />
           </div>
         </div>
       )}

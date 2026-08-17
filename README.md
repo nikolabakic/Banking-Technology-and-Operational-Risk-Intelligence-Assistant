@@ -80,6 +80,35 @@ The API is served at `http://127.0.0.1:8000` and Vite at `http://localhost:5173`
 Qdrant permits one process to own its local storage, so stop an earlier BankScope Python
 process before launching another application instance.
 
+Bounded agentic RAG is experimental and remains disabled by default. Set
+`AGENTIC_RAG_ENABLED=true` only for local evaluation; the initial Qdrant + BM25S + RRF retrieval
+is unchanged. After that initial evidence, each bank gets an isolated, bounded loop that may run
+`search_hybrid`, literal `search_exact`, bounded `read_context`, or `finish`. Runtime limits the
+loop to six orchestration model requests, four retrieval/read actions, and two verifier requests
+per bank.
+
+```dotenv
+# .env
+AGENTIC_RAG_ENABLED=true
+```
+
+Restart the API after changing the flag because settings and the long-lived pipeline are loaded
+once per process. In the UI, open the collapsed **Diagnostics** panel on a turn and confirm
+`Agentic RAG: enabled`, the route, per-bank loop trace, evidence counts, model/tool/verifier
+requests, and execution checks. Restore the value to `false` and restart to return to baseline
+behavior.
+
+Compare baseline and agentic runs with:
+
+```powershell
+python scripts/evaluate_agentic_rag.py --prerequisite-gates-passed
+```
+
+The switch must remain off unless that report and the existing frozen quality gates pass. See
+[ADR 012](docs/decisions/012-bounded-hybrid-agent-loop.md) for the current design and rollout
+contract. [ADR 011](docs/decisions/011-eval-first-agentic-rag.md) preserves the superseded
+one-step experiment and its measured result.
+
 For separate terminals:
 
 ```powershell

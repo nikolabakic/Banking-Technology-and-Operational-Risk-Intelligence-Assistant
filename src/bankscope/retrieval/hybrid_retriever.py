@@ -270,6 +270,61 @@ class HybridRetriever:
                 break
         return results
 
+    def search_exact(
+        self,
+        terms: Sequence[str],
+        *,
+        limit: int = 20,
+        ticker: str | None = None,
+        record_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find literal filing terms with deterministic, bounded ranking.
+
+        This intentionally accepts literal phrases rather than regular expressions.  It is the
+        narrow complement to semantic/BM25 retrieval used by the agentic retrieval loop.
+        """
+        _validate_positive("limit", limit)
+        if limit > 20:
+            raise ValueError("Exact search limit cannot exceed 20.")
+        normalized_terms = [normalize_lexical_text(str(term)).strip().casefold() for term in terms]
+        if not 1 <= len(normalized_terms) <= 8:
+            raise ValueError("Exact search requires one to eight literal terms.")
+        if any(len(term) < 2 or len(term) > 120 for term in normalized_terms):
+            raise ValueError("Exact search terms must contain 2 to 120 characters.")
+
+        allowed = self._allowed_lexical_indices(ticker=ticker, record_type=record_type)
+        ranked: list[tuple[int, int, int]] = []
+        for index in allowed:
+            text = normalize_lexical_text(
+                get_retrieval_text(self.lexical_records[index])
+            ).casefold()
+            matches = [term for term in normalized_terms if term in text]
+            if not matches:
+                continue
+            occurrence_count = sum(text.count(term) for term in matches)
+            ranked.append((int(index), len(matches), occurrence_count))
+        ranked.sort(key=lambda item: (-item[1], -item[2], item[0]))
+
+        results: list[dict[str, Any]] = []
+        seen_targets: set[str] = set()
+        for index, matched_terms, occurrences in ranked:
+            target_id = str(self.lexical_records[index]["target_chunk_id"])
+            if target_id in seen_targets:
+                continue
+            seen_targets.add(target_id)
+            result = self._make_result(
+                index,
+                method="exact",
+                rank=len(results) + 1,
+                score=float(matched_terms * 1_000 + occurrences),
+                records=self.lexical_records,
+            )
+            result["matched_term_count"] = matched_terms
+            results.append(result)
+            if len(results) == limit:
+                break
+        return results
+
     def search_hybrid(
         self,
         query: str,
