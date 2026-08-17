@@ -24,12 +24,16 @@ flowchart TD
 |---|---|---|
 | `hybrid_retriever.py` | `HybridRetriever`, `reciprocal_rank_fusion()` | NumPy dense baseline, BM25S, fusion, filtering, hydration |
 | `qdrant_retriever.py` | `QdrantRetriever`, `load_qdrant_manifest()` | Persistent dense/BM25/native-hybrid queries and manifest validation |
-| `mixed_retriever.py` | `MixedRetriever` | Route dense to Qdrant, lexical to baseline, and fuse application rankings |
+| `mixed_retriever.py` | `MixedRetriever`, `interleave_bank_results()` | Fuse mixed rankings and provide isolated, bank-balanced multi-bank retrieval |
 | `glossary_locators.py` | `is_glossary_table()`, `build_glossary_locators()`, `validate_glossary_locators()` | Create small lexical definition records targeting parent tables |
 
 All retrievers expose compatible `search_dense`, `search_bm25`, and `search_hybrid` shapes with
 optional ticker and record-type filters. Results retain record identity and metadata while the
 `document` field is hydrated canonical evidence.
+
+Multi-bank questions run the existing hybrid search independently for each of two to four unique
+tickers. Generation receives those per-bank lists; evaluation uses deterministic round-robin
+interleaving with target-ID deduplication for a balanced Top 10.
 
 ## Invariants and failure modes
 
@@ -42,7 +46,7 @@ optional ticker and record-type filters. Results retain record identity and meta
 
 Run the retriever unit tests and `scripts/evaluate.py` before accepting ranking changes. See ADRs
 [003](../../../docs/decisions/003-qdrant-local-retrieval.md) and
-[004](../../../docs/decisions/004-mixed-vector-retrieval.md).
+[004](../../../docs/decisions/004-mixed-vector-retrieval.md), plus the multi-bank decision in
+[010](../../../docs/decisions/010-bank-balanced-comparison-retrieval.md).
 
 [Package architecture](../README.md) · [Data contracts](../../../data/README.md)
-

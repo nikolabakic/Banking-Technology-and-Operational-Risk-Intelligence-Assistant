@@ -113,19 +113,19 @@ def test_bm25_uses_glossary_locators_and_deduplicates_parent_tables() -> None:
 def test_dense_search_applies_ticker_and_record_type_filters() -> None:
     records = [
         record("jpm-text", ticker="JPM"),
-        record("wfc-text", ticker="WFC"),
-        record("wfc-table", ticker="WFC", record_type="table", table_id="wfc-table"),
+        record("cof-text", ticker="COF"),
+        record("cof-table", ticker="COF", record_type="table", table_id="cof-table"),
     ]
     embeddings = np.asarray([[1.0, 0.0], [0.8, 0.2], [0.9, 0.1]], dtype=np.float32)
-    tables = [{"table_id": "wfc-table", "document": "| WFC table |"}]
+    tables = [{"table_id": "cof-table", "document": "| COF table |"}]
     retriever = HybridRetriever(records, embeddings, tables)
 
     results = retriever.search_dense(
-        np.asarray([1.0, 0.0]), limit=3, ticker="wfc", record_type="text"
+        np.asarray([1.0, 0.0]), limit=3, ticker="cof", record_type="text"
     )
 
-    assert [result["record_id"] for result in results] == ["wfc-text"]
-    assert results[0]["ticker"] == "WFC"
+    assert [result["record_id"] for result in results] == ["cof-text"]
+    assert results[0]["ticker"] == "COF"
 
 
 def test_dense_search_preserves_record_order_when_scores_tie() -> None:

@@ -57,12 +57,17 @@ Populate `.env`, then build the local data products:
 ```powershell
 python scripts/download.py
 python scripts/build_corpus.py --overwrite
-python scripts/embed.py --overwrite
-python scripts/build_qdrant.py
+python scripts/embed.py --device cuda --overwrite
+python scripts/build_qdrant.py --recreate
 ```
 
 The processed corpus and Qdrant index are generated locally and are not included in a fresh
-clone. `embed.py` also populates the pinned query model in the local Hugging Face cache; API
+clone. A CUDA GPU is required for the practical full-corpus embedding build; acquisition, parsing,
+Qdrant construction and evaluation remain CPU tasks. If the development machine has no CUDA GPU,
+build the upload bundle with `python scripts/build_colab_bundle.py --overwrite`, then use
+[`notebooks/BankScope_GPU_Evaluation_Colab.ipynb`](notebooks/BankScope_GPU_Evaluation_Colab.ipynb)
+and follow [`notebooks/README.md`](notebooks/README.md). `embed.py` and the notebook pin the same model
+revision. The embedding step also populates the query model in the local Hugging Face cache; API
 startup deliberately has no network fallback for that model.
 
 Start the API and frontend together on Windows:
@@ -178,6 +183,7 @@ python scripts/evaluate.py
 python scripts/evaluate_answers.py --model AZURE_GPT_51_2025_1113
 python scripts/evaluate_conversation_memory.py --model AZURE_GPT_51_2025_1113
 python scripts/evaluate_comparisons.py --model AZURE_GPT_51_2025_1113
+python scripts/smoke_answers.py --model AZURE_GPT_51_2025_1113
 ```
 
 Filtered corpus builds must use a separate output directory so a smoke run cannot replace the

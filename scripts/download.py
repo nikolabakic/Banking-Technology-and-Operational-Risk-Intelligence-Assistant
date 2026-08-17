@@ -7,10 +7,13 @@ import json
 import os
 import tempfile
 import time
+import warnings
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
+
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 from bankscope.config.settings import ApplicationSettings, get_settings
 from bankscope.sec.company_registry import BankCompany, load_bank_registry
@@ -21,6 +24,112 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST_PATH = ROOT / "data/filings.json"
 
 Fetcher = Callable[[str, ApplicationSettings], bytes]
+
+REQUIRED_PRIMARY_10_K_MARKERS = {
+    "Item 1": ("ITEM 1 BUSINESS", "ITEM 1. BUSINESS", "1. BUSINESS"),
+    "Item 1A": ("ITEM 1A RISK FACTORS", "ITEM 1A. RISK FACTORS", "1A. RISK FACTORS"),
+    "Item 1C": ("ITEM 1C CYBERSECURITY", "ITEM 1C. CYBERSECURITY", "1C. CYBERSECURITY"),
+    "Item 7": (
+        "ITEM 7 MANAGEMENT S DISCUSSION",
+        "ITEM 7. MANAGEMENT S DISCUSSION",
+        "ITEM 7 MANAGEMENT'S DISCUSSION",
+        "ITEM 7. MANAGEMENT'S DISCUSSION",
+        "ITEM 7 MANAGEMENT’S DISCUSSION",
+        "ITEM 7. MANAGEMENT’S DISCUSSION",
+        "7. MANAGEMENT’S DISCUSSION",
+        "7. MANAGEMENT'S DISCUSSION",
+    ),
+    "Item 7A": (
+        "ITEM 7A QUANTITATIVE AND QUALITATIVE DISCLOSURES",
+        "ITEM 7A. QUANTITATIVE AND QUALITATIVE DISCLOSURES",
+        "7A. QUANTITATIVE AND QUALITATIVE DISCLOSURES",
+    ),
+    "Item 8": (
+        "ITEM 8 FINANCIAL STATEMENTS",
+        "ITEM 8. FINANCIAL STATEMENTS",
+        "8. FINANCIAL STATEMENTS",
+    ),
+    "Item 9A": (
+        "ITEM 9A CONTROLS AND PROCEDURES",
+        "ITEM 9A. CONTROLS AND PROCEDURES",
+        "9A. CONTROLS AND PROCEDURES",
+    ),
+    "Item 15": (
+        "ITEM 15 EXHIBITS",
+        "ITEM 15. EXHIBITS",
+        "ITEM 15 FINANCIAL STATEMENTS",
+        "ITEM 15. FINANCIAL STATEMENTS",
+        "EXHIBIT AND FINANCIAL STATEMENT SCHEDULES",
+    ),
+    "financial statements": (
+        "CONSOLIDATED BALANCE SHEET",
+        "CONSOLIDATED STATEMENT OF CONDITION",
+    ),
+    "auditor report": ("REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM",),
+}
+
+
+def _normalized_visible_text(content: bytes) -> str:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(content.decode("utf-8", errors="replace"), "lxml")
+    text = soup.get_text(" ", strip=True).replace("\xa0", " ")
+    return " ".join(text.upper().split())
+
+
+def validate_primary_10_k_html(content: bytes) -> dict[str, Any]:
+    """Reject primary documents that omit the annual-report body needed by BankScope."""
+
+    text = _normalized_visible_text(content)
+    if not text:
+        raise ValueError("Primary 10-K document contains no visible text")
+
+    incorporation_start = text.find("DOCUMENTS INCORPORATED BY REFERENCE")
+    incorporation_text = ""
+    if incorporation_start >= 0:
+        incorporation_text = text[incorporation_start : incorporation_start + 6_000]
+        table_of_contents = incorporation_text.find("TABLE OF CONTENTS")
+        if table_of_contents >= 0:
+            incorporation_text = incorporation_text[:table_of_contents]
+
+    annual_report_reference = any(
+        phrase in incorporation_text
+        for phrase in (
+            "ANNUAL REPORT TO SHAREHOLDERS",
+            "ANNUAL REPORT TO STOCKHOLDERS",
+            "EXHIBIT 13",
+            "EXHIBIT 13.1",
+        )
+    )
+    non_proxy_parts = any(
+        phrase in incorporation_text
+        for phrase in (
+            "PARTS I AND II",
+            "PARTS I, II",
+            "PARTS II AND IV",
+            "PARTS I, II AND IV",
+            "PART I, II AND IV",
+        )
+    )
+    if annual_report_reference and non_proxy_parts:
+        raise ValueError("Primary 10-K delegates Parts I, II, or IV to an annual-report attachment")
+
+    missing = [
+        label
+        for label, alternatives in REQUIRED_PRIMARY_10_K_MARKERS.items()
+        if not any(marker in text for marker in alternatives)
+    ]
+    if missing:
+        raise ValueError(
+            "Primary 10-K is missing required in-document content: " + ", ".join(missing)
+        )
+
+    return {
+        "status": "full",
+        "visible_character_count": len(text),
+        "required_markers": list(REQUIRED_PRIMARY_10_K_MARKERS),
+        "incorporated_by_reference": incorporation_text,
+    }
 
 
 def fetch_sec(url: str, settings: ApplicationSettings) -> bytes:
@@ -173,7 +282,11 @@ def download_latest_10_k(
     downloaded = not local_path.exists()
 
     if downloaded:
-        _write_bytes_atomic(local_path, fetcher(source_url, settings))
+        content = fetcher(source_url, settings)
+        validate_primary_10_k_html(content)
+        _write_bytes_atomic(local_path, content)
+    else:
+        validate_primary_10_k_html(local_path.read_bytes())
 
     record = {
         "ticker": bank.ticker,

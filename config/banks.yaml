@@ -18,16 +18,16 @@ banks:
     aliases: [Citigroup, Citi]
     enabled: true
 
-  - ticker: WFC
-    cik: "0000072971"
-    legal_name: Wells Fargo & Company
-    aliases: [Wells Fargo]
+  - ticker: COF
+    cik: "0000927628"
+    legal_name: Capital One Financial Corporation
+    aliases: [Capital One, Capital One Financial]
     enabled: true
 
-  - ticker: USB
-    cik: "0000036104"
-    legal_name: U.S. Bancorp
-    aliases: [US Bancorp, U.S. Bank]
+  - ticker: STT
+    cik: "0000093751"
+    legal_name: State Street Corporation
+    aliases: [State Street, State Street Bank]
     enabled: true
 
   - ticker: PNC

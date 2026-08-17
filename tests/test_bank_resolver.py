@@ -39,8 +39,8 @@ def test_resolves_names_aliases_tickers_and_punctuation() -> None:
         "What did Citi report?": "C",
         "What did ticker C report?": "C",
         "What did $C report?": "C",
-        "What did Wells-Fargo report?": "WFC",
-        "What did U.S. Bank report?": "USB",
+        "What did Capital-One report?": "COF",
+        "What did State Street Bank report?": "STT",
         "What did PNC's filing report?": "PNC",
         "What did Truist report?": "TFC",
         "What did Goldman Sachs report?": "GS",
@@ -82,16 +82,16 @@ def test_resolution_priority_and_session_fallback() -> None:
 
 def test_resolves_comparison_session_and_rejects_more_than_four_banks() -> None:
     inherited = resolve("What about 2024?", session_tickers=("BAC", "C", "JPM"))
-    switched = resolve("What did Wells Fargo report?", session_tickers=("BAC", "C"))
-    too_many = resolve("Compare JPMorgan, Bank of America, Citi, Wells Fargo and Goldman Sachs.")
+    switched = resolve("What did Capital One report?", session_tickers=("BAC", "C"))
+    too_many = resolve("Compare JPMorgan, Bank of America, Citi, Capital One and Goldman Sachs.")
 
     assert inherited.status == "multiple"
     assert inherited.source == "session"
     assert inherited.tickers == ("BAC", "C", "JPM")
     assert switched.status == "resolved"
-    assert switched.tickers == ("WFC",)
+    assert switched.tickers == ("COF",)
     assert too_many.status == "too_many"
-    assert too_many.tickers == ("JPM", "BAC", "C", "WFC", "GS")
+    assert too_many.tickers == ("JPM", "BAC", "C", "COF", "GS")
 
 
 def test_frozen_questions_cover_single_multiple_and_missing_resolution() -> None:

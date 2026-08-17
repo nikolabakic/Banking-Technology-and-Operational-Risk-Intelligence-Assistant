@@ -19,10 +19,10 @@ def test_bank_company_normalizes_ticker() -> None:
 def test_bank_company_normalizes_and_rejects_duplicate_aliases() -> None:
     with pytest.raises(ValidationError, match="duplirane aliase"):
         BankCompany(
-            ticker="USB",
-            cik="0000036104",
-            legal_name="U.S. Bancorp",
-            aliases=("U.S. Bank", "US Bank"),
+            ticker="STT",
+            cik="0000093751",
+            legal_name="State Street Corporation",
+            aliases=("State Street Bank", "State-Street Bank"),
         )
 
 

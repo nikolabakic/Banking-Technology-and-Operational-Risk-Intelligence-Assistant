@@ -1,37 +1,23 @@
-# BankScope Colab GPU evaluation
+# BankScope Colab GPU workflows
 
-**Status:** active reproducible compute workflow, not application runtime.
+`BankScope_GPU_Evaluation_Colab.ipynb` is the supported CUDA path for rebuilding the complete
+BankScope embedding archive and running the baseline retrieval evaluation. All acquisition,
+parsing, Qdrant, generation, comparison, and application checks run locally on CPU/API.
 
-Open `BankScope_GPU_Evaluation_Colab.ipynb` in Google Colab, select a T4 GPU
-runtime, and run the notebook from top to bottom. When prompted, upload
-`bankscope_colab_gpu_bundle.zip`.
+1. Build `data/processed/chunks.jsonl` locally.
+2. Run `python scripts/build_colab_bundle.py --overwrite` locally.
+3. Open the notebook in Google Colab and select a GPU runtime (T4 or better).
+4. Run every cell and upload `artifacts/bankscope_colab_gpu_bundle.zip` when prompted.
+5. Download `bankscope_gpu_results.zip` and copy its `embeddings.npz` to
+   `data/processed/embeddings.npz`.
+6. Run `python scripts/build_qdrant.py --recreate`; this validates record order, source hash,
+   model identity, revision, dimension, dtype, and vector normalization before indexing.
 
-The bundle intentionally contains only the frozen inputs and active code needed
-to generate Qwen3 embeddings and evaluate BM25, dense, and RRF hybrid retrieval:
+The notebook intentionally fails when CUDA is unavailable, verifies every bundled input by
+SHA-256, pins the same model revision as `scripts/embed.py`, runs a smoke batch before the full
+6,550-record corpus, and returns embeddings plus BM25, dense, and hybrid evaluation results.
 
-- `scripts/embed.py` and `scripts/evaluate.py`;
-- the active `src/bankscope/` package;
-- `data/processed/chunks.jsonl`, `tables.jsonl`, and `manifest.json`;
-- `data/evaluation/queries.jsonl`;
-- the repository README and parser/overhaul decision records.
-
-The notebook does not require OpenAI or Hugging Face credentials. Its final cell
-downloads `bankscope_gpu_results.zip`, containing `embeddings.npz`, the complete
-retrieval result, input contracts, and environment/hash provenance.
-
-The notebook is structurally validated locally, but its embedding and evaluation
-cells must be executed on Colab because the development machine has no CUDA GPU.
-
-```mermaid
-flowchart LR
-    Bundle[frozen input bundle] --> Upload[Colab T4 runtime]
-    Upload --> Embed[Qwen3 embeddings]
-    Embed --> Evaluate[BM25 / dense / RRF evaluation]
-    Evaluate --> Results[bankscope_gpu_results.zip]
-```
-
-The bundle must not include secrets, local chat state, or Qdrant storage. If a corpus or evaluator
-contract changes, rebuild the bundle and update the notebook's documented hashes together. Keep
-cell output small in Git; downloaded result archives belong in ignored `artifacts/`.
+The notebook does not require OpenAI credentials. Do not include secrets, local chat state, or Qdrant
+storage in uploads. Generated archives and notebook outputs remain ignored local artifacts.
 
 [Repository guide](../README.md) · [Evaluation data](../data/evaluation/README.md)

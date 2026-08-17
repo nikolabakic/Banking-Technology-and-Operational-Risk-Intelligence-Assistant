@@ -4,6 +4,9 @@
 student-project baseline described below. Historical implementations are kept
 under `sandbox/` and are not runtime fallbacks.
 
+The USB/WFC corpus composition and 30-question baseline described here were superseded by
+[ADR 009](009-complete-primary-filings.md) on 2026-08-17. The measurements below remain historical.
+
 ## Outcome
 
 The active workflow was reduced from 18 overlapping scripts to five commands:

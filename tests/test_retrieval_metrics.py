@@ -62,6 +62,23 @@ def test_qrel_validation_rejects_unknown_target_ids() -> None:
         validate_qrels([query], [{"target_chunk_id": "known"}])
 
 
+@pytest.mark.parametrize("tickers", [None, ["BAC"], ["BAC", "bac"]])
+def test_cross_bank_qrels_require_two_to_four_unique_tickers(tickers: object) -> None:
+    query = {
+        "query_id": "cross",
+        "query": "Compare banks",
+        "ticker": None,
+        "question_type": "cross_bank_coverage",
+        "status": "answerable",
+        "relevant_target_chunk_ids": ["known"],
+    }
+    if tickers is not None:
+        query["tickers"] = tickers
+
+    with pytest.raises(ValueError, match="tickers|two to four|duplicate"):
+        validate_qrels([query], [{"target_chunk_id": "known"}])
+
+
 def test_evidence_group_metrics_measure_complete_coverage() -> None:
     metrics = evaluate_evidence_groups(
         ["bank-a", "miss", "bank-b"], [["bank-a", "bank-a-alt"], ["bank-b"]]
@@ -206,6 +223,12 @@ def test_evaluator_bm25_skips_embedding_archive(monkeypatch: pytest.MonkeyPatch)
 
 def test_glossary_locator_gate_requires_hits_and_no_regressions() -> None:
     query_ids = ["dev_bac_bana_expansion_2025", "dev_pnc_gsib_expansion_2025"]
+    replacement_ids = [
+        "dev_cof_cybersecurity_technology_risk_management_2025",
+        "dev_stt_information_technology_risk_definition_2025",
+        "dev_cof_standardized_cet1_ratio_2025",
+        "dev_stt_standardized_cet1_ratio_2025",
+    ]
     candidate_rows = [
         {
             "query_id": query_id,
@@ -214,6 +237,46 @@ def test_glossary_locator_gate_requires_hits_and_no_regressions() -> None:
         }
         for query_id in query_ids
     ]
+    candidate_rows.extend(
+        {
+            "query_id": query_id,
+            "method_key": "mixed.hybrid",
+            "metrics": {
+                "first_relevant_rank": 2,
+                "hit_at_5": 1,
+                "hit_at_10": 1,
+                **(
+                    {
+                        "required_evidence_group_count": 2,
+                        "group_recall_at_10": 1.0,
+                        "complete_group_hit_at_10": 1,
+                    }
+                    if query_id == "dev_stt_information_technology_risk_definition_2025"
+                    else {}
+                ),
+            },
+        }
+        for query_id in replacement_ids
+    )
+    candidate_rows.extend(
+        {
+            "query_id": query_id,
+            "method_key": "mixed.hybrid",
+            "metrics": {
+                "first_relevant_rank": 1,
+                "hit_at_5": 1,
+                "hit_at_10": 1,
+                "required_evidence_group_count": 2,
+                "group_recall_at_10": 1.0,
+                "complete_group_hit_at_10": 1,
+            },
+        }
+        for query_id in (
+            "dev_cross_bac_c_standardized_cet1_2025",
+            "dev_cross_c_jpm_operational_risk_definitions_2025",
+            "dev_cross_pnc_tfc_cet1_2025",
+        )
+    )
     reference = {
         "per_query": [
             {
@@ -224,12 +287,26 @@ def test_glossary_locator_gate_requires_hits_and_no_regressions() -> None:
             for query_id in query_ids
         ]
     }
-    summary = {"mixed.hybrid": {"hit_count_at_5": 27, "hit_count_at_10": 28}}
+    summary = {"mixed.hybrid": {"hit_count_at_5": 31, "hit_count_at_10": 32}}
 
     gate = evaluate_script.assess_glossary_locator_gate(candidate_rows, summary, reference)
 
     assert gate is not None
     assert gate["passed"] is True
+
+    failing_rows = [dict(row) for row in candidate_rows]
+    failing = next(
+        row for row in failing_rows if row["query_id"] == "dev_cross_bac_c_standardized_cet1_2025"
+    )
+    failing["metrics"] = {
+        **failing["metrics"],
+        "group_recall_at_10": 0.5,
+        "complete_group_hit_at_10": 0,
+    }
+    failed_gate = evaluate_script.assess_glossary_locator_gate(failing_rows, summary, reference)
+    assert failed_gate is not None
+    assert failed_gate["passed"] is False
+    assert failed_gate["checks"]["cross_bank_evidence_groups_complete"] is False
 
 
 def test_evaluator_rejects_duplicate_methods(monkeypatch: pytest.MonkeyPatch) -> None:

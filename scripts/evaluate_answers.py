@@ -49,11 +49,11 @@ AUDIT_CLASSIFICATIONS = {
     "does_not_support_claim",
 }
 EXPECTED_GATE_COUNTS = {
-    "queries": 26,
-    "supported": 25,
-    "numeric": 15,
-    "narrative": 10,
-    "variant": 9,
+    "queries": 30,
+    "supported": 29,
+    "numeric": 17,
+    "narrative": 12,
+    "variant": 11,
 }
 
 

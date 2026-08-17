@@ -5,10 +5,12 @@ import numpy as np
 import pytest
 
 from bankscope.generation.answer_generator import GenerationValidationError
+from bankscope.generation.comparison_generator import _normalize_claim_citation_ids
 from bankscope.generation.pipeline import (
     SentenceTransformerQueryEncoder,
     SingleBankAnswerPipeline,
 )
+from bankscope.retrieval.mixed_retriever import BankSearchResult
 
 
 def test_query_encoder_loads_pinned_model_from_local_cache(monkeypatch) -> None:
@@ -29,6 +31,19 @@ def test_query_encoder_loads_pinned_model_from_local_cache(monkeypatch) -> None:
         "revision": "model-revision",
         "local_files_only": True,
     }
+
+
+def test_comparison_normalizes_redundant_citation_ids_from_inline_markers() -> None:
+    normalized, changed = _normalize_claim_citation_ids(
+        '{"claims":[{"text":"JPM [E1] and BAC [E2].",'
+        '"tickers":["JPM","BAC"],"citation_ids":["E1"]}]}'
+    )
+
+    assert changed is True
+    assert '"citation_ids":["E1","E2"]' in normalized
+
+    malformed = "not-json"
+    assert _normalize_claim_citation_ids(malformed) == (malformed, False)
 
 
 class MockEncoder:
@@ -54,6 +69,24 @@ class MockRetriever:
                 "evidence": "The filing states that the ratio was 14.6%.",
                 "metadata": {"report_date": "2025-12-31"},
             }
+        ]
+
+    def search_hybrid_by_ticker(
+        self, question, query_vector, *, tickers, limit_per_ticker, **kwargs
+    ):
+        return [
+            BankSearchResult(
+                ticker=ticker,
+                results=self.search_hybrid(
+                    question,
+                    query_vector,
+                    ticker=ticker,
+                    limit=limit_per_ticker,
+                    **kwargs,
+                ),
+                latency_ms=0.0,
+            )
+            for ticker in tickers
         ]
 
 
@@ -223,21 +256,21 @@ def test_missing_or_too_many_banks_returns_ambiguous_without_pipeline_calls() ->
             "JPM": "JPMorgan Chase & Co.",
             "BAC": "Bank of America Corporation",
             "C": "Citigroup Inc.",
-            "WFC": "Wells Fargo & Company",
+            "COF": "Capital One Financial Corporation",
             "GS": "The Goldman Sachs Group, Inc.",
         },
         bank_aliases={
             "JPM": ("JPMorgan",),
             "BAC": ("Bank of America",),
             "C": ("Citi",),
-            "WFC": ("Wells Fargo",),
+            "COF": ("Capital One",),
             "GS": ("Goldman Sachs",),
         },
     )
 
     missing = pipeline.answer("What was the CET1 ratio?")
     too_many = pipeline.answer(
-        "Compare JPMorgan, Bank of America, Citi, Wells Fargo and Goldman Sachs."
+        "Compare JPMorgan, Bank of America, Citi, Capital One and Goldman Sachs."
     )
 
     assert missing.output["status"] == "ambiguous"
@@ -249,7 +282,7 @@ def test_missing_or_too_many_banks_returns_ambiguous_without_pipeline_calls() ->
         "JPM",
         "BAC",
         "C",
-        "WFC",
+        "COF",
         "GS",
     ]
     assert missing.evidence == too_many.evidence == []

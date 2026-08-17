@@ -24,7 +24,7 @@ from bankscope.retrieval.glossary_locators import (
     validate_glossary_locators,
 )
 from bankscope.retrieval.hybrid_retriever import HybridRetriever
-from bankscope.retrieval.mixed_retriever import MixedRetriever
+from bankscope.retrieval.mixed_retriever import MixedRetriever, interleave_bank_results
 from bankscope.retrieval.qdrant_retriever import (
     DEFAULT_COLLECTION_NAME,
     QdrantRetriever,
@@ -53,6 +53,7 @@ PREVIEW_FIELDS = (
     "score",
     "dense_rank",
     "bm25_rank",
+    "bank_rank",
 )
 UNKNOWN_REVISION_WARNING = (
     "Embedding archive has model_revision='unknown'; exact model reproducibility is reduced."
@@ -121,6 +122,19 @@ def validate_qrels(
         primary = query.get("primary_target_chunk_id")
         if primary is not None and str(primary) not in relevant:
             raise ValueError(f"Primary target ID for {query_id} is not in its qrels.")
+        raw_tickers = query.get("tickers")
+        if query.get("question_type") == "cross_bank_coverage":
+            if not isinstance(raw_tickers, list):
+                raise ValueError(f"Cross-bank qrel {query_id} must define a tickers list.")
+            tickers = [str(value).strip().upper() for value in raw_tickers]
+            if not 2 <= len(tickers) <= 4 or any(not ticker for ticker in tickers):
+                raise ValueError(f"Cross-bank qrel {query_id} must define two to four tickers.")
+            if len(tickers) != len(set(tickers)):
+                raise ValueError(f"Cross-bank qrel {query_id} contains duplicate tickers.")
+            if query.get("ticker"):
+                raise ValueError(f"Cross-bank qrel {query_id} cannot define a single ticker.")
+        elif raw_tickers is not None:
+            raise ValueError(f"Only cross-bank qrels may define tickers: {query_id}.")
         validate_evidence_groups(query, relevant, corpus_ids)
         seen_query_ids.add(query_id)
         if status == "answerable":
@@ -352,19 +366,68 @@ def assess_glossary_locator_gate(
         query_id: candidate_rows.get(query_id, {}).get("metrics", {}).get("first_relevant_rank")
         for query_id in glossary_queries
     }
+    replacement_query_ids = (
+        "dev_cof_cybersecurity_technology_risk_management_2025",
+        "dev_stt_information_technology_risk_definition_2025",
+        "dev_cof_standardized_cet1_ratio_2025",
+        "dev_stt_standardized_cet1_ratio_2025",
+    )
+    replacement_ranks = {
+        query_id: candidate_rows.get(query_id, {}).get("metrics", {}).get("first_relevant_rank")
+        for query_id in replacement_query_ids
+    }
+    cross_bank_query_ids = {
+        "dev_cross_bac_c_standardized_cet1_2025",
+        "dev_cross_c_jpm_operational_risk_definitions_2025",
+        "dev_cross_pnc_tfc_cet1_2025",
+    }
+    grouped_rows = [
+        row
+        for row in candidate_rows.values()
+        if int(row.get("metrics", {}).get("required_evidence_group_count") or 0) > 0
+    ]
+    cross_bank_rows = [row for row in grouped_rows if row.get("query_id") in cross_bank_query_ids]
+
+    def covered_group_count(row: dict[str, Any]) -> int:
+        metrics = row["metrics"]
+        required = int(metrics["required_evidence_group_count"])
+        return round(float(metrics["group_recall_at_10"]) * required)
+
+    cross_bank_complete = sum(
+        int(row["metrics"]["complete_group_hit_at_10"]) for row in cross_bank_rows
+    )
+    cross_bank_group_hits = sum(covered_group_count(row) for row in cross_bank_rows)
+    all_grouped_complete = sum(
+        int(row["metrics"]["complete_group_hit_at_10"]) for row in grouped_rows
+    )
+    all_group_hits = sum(covered_group_count(row) for row in grouped_rows)
     checks = {
-        "mixed_hit_count_at_5": int(candidate_summary["hit_count_at_5"]) >= 27,
-        "mixed_hit_count_at_10": int(candidate_summary["hit_count_at_10"]) == 28,
+        "mixed_hit_count_at_5": int(candidate_summary["hit_count_at_5"]) >= 31,
+        "mixed_hit_count_at_10": int(candidate_summary["hit_count_at_10"]) == 32,
         "bana_and_gsib_in_top_5": all(
             isinstance(rank, int) and rank <= 5 for rank in glossary_ranks.values()
         ),
+        "replacement_banks_in_top_10": all(
+            isinstance(rank, int) and rank <= 10 for rank in replacement_ranks.values()
+        ),
         "no_hit_at_5_regressions": not regressions["hit_at_5"],
         "no_hit_at_10_regressions": not regressions["hit_at_10"],
+        "cross_bank_queries_complete": len(cross_bank_rows) == cross_bank_complete == 3,
+        "cross_bank_evidence_groups_complete": cross_bank_group_hits == 6,
+        "all_grouped_queries_complete": len(grouped_rows) == all_grouped_complete == 4,
+        "all_evidence_groups_complete": all_group_hits == 8,
     }
     return {
         "passed": all(checks.values()),
         "checks": checks,
         "glossary_first_relevant_ranks": glossary_ranks,
+        "replacement_first_relevant_ranks": replacement_ranks,
+        "evidence_group_counts": {
+            "cross_bank_queries": cross_bank_complete,
+            "cross_bank_groups": cross_bank_group_hits,
+            "all_grouped_queries": all_grouped_complete,
+            "all_groups": all_group_hits,
+        },
         "regressions": regressions,
     }
 
@@ -521,7 +584,26 @@ def main() -> None:
                         "record_type": record_type,
                     }
                     retrieval_started = perf_counter()
-                    if method == "bm25":
+                    multi_bank_tickers = (
+                        [str(value) for value in query.get("tickers", [])]
+                        if query.get("question_type") == "cross_bank_coverage"
+                        else []
+                    )
+                    if method == "hybrid" and backend == "mixed" and multi_bank_tickers:
+                        if not isinstance(retriever, MixedRetriever):
+                            raise RuntimeError("Mixed backend did not initialize MixedRetriever.")
+                        bank_results = retriever.search_hybrid_by_ticker(
+                            query_text,
+                            query_vector,
+                            tickers=multi_bank_tickers,
+                            limit_per_ticker=(max(DEFAULT_K_VALUES) + len(multi_bank_tickers) - 1)
+                            // len(multi_bank_tickers),
+                            candidate_k=args.candidate_k,
+                            rrf_k=args.rrf_k,
+                            record_type=record_type,
+                        )
+                        results = interleave_bank_results(bank_results, limit=max(DEFAULT_K_VALUES))
+                    elif method == "bm25":
                         results = retriever.search_bm25(query_text, **filters)
                     elif method == "dense":
                         results = retriever.search_dense(query_vector, **filters)

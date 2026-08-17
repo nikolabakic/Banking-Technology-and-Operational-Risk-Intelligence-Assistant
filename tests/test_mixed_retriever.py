@@ -3,15 +3,19 @@ from typing import Any
 import numpy as np
 import pytest
 
-from bankscope.retrieval.mixed_retriever import MixedRetriever
+from bankscope.retrieval.mixed_retriever import (
+    BankSearchResult,
+    MixedRetriever,
+    interleave_bank_results,
+)
 
 
-def ranked(target_id: str, method: str, rank: int) -> dict[str, Any]:
+def ranked(target_id: str, method: str, rank: int, *, ticker: str = "JPM") -> dict[str, Any]:
     return {
         "record_id": f"record::{target_id}",
         "target_chunk_id": target_id,
         "record_type": "text",
-        "ticker": "JPM",
+        "ticker": ticker,
         "embedding_text": target_id,
         "retrieval_text": target_id,
         "document": f"evidence::{target_id}",
@@ -29,7 +33,8 @@ class RecordingDenseRetriever:
 
     def search_dense(self, query_vector: np.ndarray, **kwargs: Any) -> list[dict[str, Any]]:
         self.calls.append({"query_vector": query_vector, **kwargs})
-        return [ranked("a", "dense", 1), ranked("b", "dense", 2)]
+        ticker = str(kwargs.get("ticker") or "JPM").upper()
+        return [ranked("a", "dense", 1, ticker=ticker), ranked("b", "dense", 2, ticker=ticker)]
 
 
 class RecordingLexicalRetriever:
@@ -38,7 +43,8 @@ class RecordingLexicalRetriever:
 
     def search_bm25(self, query: str, **kwargs: Any) -> list[dict[str, Any]]:
         self.calls.append({"query": query, **kwargs})
-        return [ranked("b", "bm25", 1), ranked("c", "bm25", 2)]
+        ticker = str(kwargs.get("ticker") or "JPM").upper()
+        return [ranked("b", "bm25", 1, ticker=ticker), ranked("c", "bm25", 2, ticker=ticker)]
 
 
 def test_mixed_retriever_delegates_dense_and_bm25() -> None:
@@ -104,3 +110,79 @@ def test_mixed_hybrid_validates_parameters() -> None:
         retriever.search_hybrid("risk", vector, rrf_k=0)
     with pytest.raises(ValueError, match="empty"):
         retriever.search_hybrid(" ", vector)
+
+
+def test_multi_bank_search_preserves_order_filters_and_per_bank_limits() -> None:
+    dense = RecordingDenseRetriever()
+    lexical = RecordingLexicalRetriever()
+    retriever = MixedRetriever(dense, lexical)  # type: ignore[arg-type]
+    vector = np.asarray([1.0, 0.0], dtype=np.float32)
+
+    searches = retriever.search_hybrid_by_ticker(
+        "compare capital",
+        vector,
+        tickers=["bac", "C"],
+        limit_per_ticker=2,
+        candidate_k=4,
+        rrf_k=10,
+        record_type="TABLE",
+    )
+
+    assert [search.ticker for search in searches] == ["BAC", "C"]
+    assert all(len(search.results) == 2 for search in searches)
+    assert [call["ticker"] for call in dense.calls] == ["BAC", "C"]
+    assert [call["ticker"] for call in lexical.calls] == ["BAC", "C"]
+    assert all(call["limit"] == 4 for call in dense.calls + lexical.calls)
+    assert all(call["record_type"] == "TABLE" for call in dense.calls + lexical.calls)
+
+
+@pytest.mark.parametrize(
+    ("tickers", "message"),
+    [
+        (["JPM"], "two to four"),
+        (["JPM", "BAC", "C", "PNC", "TFC"], "two to four"),
+        (["JPM", "jpm"], "unique"),
+        (["JPM", ""], "empty"),
+    ],
+)
+def test_multi_bank_search_validates_tickers(tickers: list[str], message: str) -> None:
+    retriever = MixedRetriever(  # type: ignore[arg-type]
+        RecordingDenseRetriever(), RecordingLexicalRetriever()
+    )
+    with pytest.raises(ValueError, match=message):
+        retriever.search_hybrid_by_ticker(
+            "risk", np.asarray([1.0, 0.0], dtype=np.float32), tickers=tickers
+        )
+
+
+def test_interleave_bank_results_is_deterministic_and_deduplicated() -> None:
+    searches = [
+        BankSearchResult(
+            ticker="BAC",
+            results=[
+                ranked("bac-1", "hybrid", 1, ticker="BAC"),
+                ranked("shared", "hybrid", 2, ticker="BAC"),
+            ],
+            latency_ms=1.0,
+        ),
+        BankSearchResult(
+            ticker="C",
+            results=[
+                ranked("c-1", "hybrid", 1, ticker="C"),
+                ranked("shared", "hybrid", 2, ticker="C"),
+                ranked("c-3", "hybrid", 3, ticker="C"),
+            ],
+            latency_ms=2.0,
+        ),
+    ]
+
+    results = interleave_bank_results(searches, limit=4)
+
+    assert [result["target_chunk_id"] for result in results] == [
+        "bac-1",
+        "c-1",
+        "shared",
+        "c-3",
+    ]
+    assert [result["rank"] for result in results] == [1, 2, 3, 4]
+    assert [result["bank_rank"] for result in results] == [1, 1, 2, 3]

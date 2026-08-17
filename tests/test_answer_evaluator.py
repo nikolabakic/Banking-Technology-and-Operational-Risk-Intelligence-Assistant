@@ -20,8 +20,8 @@ def test_frozen_queries_select_exact_single_bank_scope() -> None:
     validate_generation_queries(queries)
     eligible, skipped = select_generation_queries(queries)
 
-    assert len(eligible) == 26
-    assert sum(query["status"] == "answerable" for query in eligible) == 25
+    assert len(eligible) == 30
+    assert sum(query["status"] == "answerable" for query in eligible) == 29
     assert sum(query["status"] == "unsupported" for query in eligible) == 1
     assert len(skipped) == 4
     assert sum(item["reason"] == "cross_bank_out_of_single_bank_scope" for item in skipped) == 3
@@ -121,7 +121,7 @@ def test_default_candidate_artifact_requires_gpt51_model() -> None:
 
 def test_generation_quality_gate_encodes_frozen_acceptance_contract() -> None:
     rows = []
-    for _ in range(15):
+    for _ in range(17):
         rows.append(
             {
                 "expected_numeric": True,
@@ -135,7 +135,7 @@ def test_generation_quality_gate_encodes_frozen_acceptance_contract() -> None:
                 },
             }
         )
-    for _ in range(10):
+    for _ in range(12):
         rows.append(
             {
                 "expected_numeric": False,
@@ -157,24 +157,24 @@ def test_generation_quality_gate_encodes_frozen_acceptance_contract() -> None:
         }
     )
     summary = {
-        "evaluated_count": 26,
+        "evaluated_count": 30,
         "error_count": 0,
         "status_accuracy": 1.0,
-        "value_match_count": 15,
+        "value_match_count": 17,
         "value_match_rate": 1.0,
-        "unit_match_count": 15,
+        "unit_match_count": 17,
         "unit_match_rate": 1.0,
-        "period_match_count": 15,
+        "period_match_count": 17,
         "period_match_rate": 1.0,
-        "entity_match_count": 15,
+        "entity_match_count": 17,
         "entity_match_rate": 1.0,
-        "variant_match_count": 9,
+        "variant_match_count": 11,
         "variant_match_rate": 1.0,
-        "generation_request_count": 25,
+        "generation_request_count": 29,
     }
 
     gate = assess_generation_quality_gate(rows, summary)
 
     assert gate["passed"] is True
-    rows[15]["judge"]["groundedness"] = False
+    rows[17]["judge"]["groundedness"] = False
     assert assess_generation_quality_gate(rows, summary)["passed"] is False

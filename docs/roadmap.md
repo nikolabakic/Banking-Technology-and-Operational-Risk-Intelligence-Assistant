@@ -6,15 +6,15 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 
 | Phase | Status | Exit condition |
 |---|---|---|
-| Registry and SEC acquisition | Complete | Ten configured banks and a reproducible filing manifest |
+| Registry and SEC acquisition | Complete | Ten complete primary filings; COF/STT replace partial USB/WFC filings |
 | Parser selection | Complete | sec2md selected from recorded evaluation evidence |
 | Repository overhaul | Complete | Five active commands, legacy isolated, tests and lint green |
 | Whole-table corpus | Complete | One stored table and at most one description per parser-emitted table |
-| Embeddings | Implemented | Length/order/hash/model contracts and real smoke run pass |
-| Retrieval evaluation | Complete | Frozen 30-question baseline/Qdrant comparison and backend decision recorded |
+| Embeddings | Complete | Pinned Qwen archive contains 6,550 ordered, normalized vectors and matches the corpus hash |
+| Retrieval evaluation | Complete | Balanced mixed retrieval passes 31/32 Top 5, 32/32 Top 10 and every grouped-evidence gate |
 | Answer generation | Implemented | Single-bank answers use hydrated evidence, abstain and expose citations |
-| Generation evaluation | Complete | Reusable 26-question evaluator and first baseline record deterministic metrics, advisory judge results and two explicit query errors |
-| Generation hardening | Known citation caveat | Answer checks pass; citation audit is 24/25, the CLI default is unchanged and the UI API uses the validated GPT-5.1 candidate |
+| Generation evaluation | Complete | GPT-5.1 passes 30/30 questions, including all numeric, narrative, variant and citation-contract gates |
+| Generation hardening | Complete | The current manual audit accepts all 29 supported answers and the UI API uses the validated GPT-5.1 candidate |
 | Automatic bank resolution | Complete | Names, aliases and tickers resolve before retrieval; missing/multiple banks fail locally |
 | Durable local conversations | Complete | SQLite threads survive refresh/restart and retain server-owned bank context |
 | Short-term conversation memory | Implemented | Four bounded, completed turns from the current SQLite thread contextualize retrieval; the 8-case gate improved Hit@5 from 6/8 to 8/8 with all isolation controls passing |
@@ -56,6 +56,10 @@ Short-term conversation memory and its measured retrieval gate are recorded in
 `docs/decisions/007-short-term-conversation-memory.md`.
 The bounded multi-bank implementation and its accepted live evaluation gate are recorded in
 `docs/decisions/008-multi-bank-comparisons.md`.
+The complete-primary-filing replacement, GPU handoff and 34-question rebaseline are recorded in
+`docs/decisions/009-complete-primary-filings.md`.
+The accepted bank-balanced retrieval path and final ten-bank evaluation hashes are recorded in
+`docs/decisions/010-bank-balanced-comparison-retrieval.md`.
 
 ## Scope boundary
 

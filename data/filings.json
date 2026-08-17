@@ -36,28 +36,28 @@
     "local_html_path": "data/raw/sec/0000831001/000083100126000011/c-20251231.htm"
   },
   {
-    "ticker": "WFC",
-    "cik": "0000072971",
-    "legal_name": "Wells Fargo & Company",
+    "ticker": "COF",
+    "cik": "0000927628",
+    "legal_name": "Capital One Financial Corporation",
     "form": "10-K",
-    "accession_number": "0000072971-26-000133",
-    "filing_date": "2026-02-24",
+    "accession_number": "0000927628-26-000024",
+    "filing_date": "2026-02-19",
     "report_date": "2025-12-31",
-    "primary_document": "wfc-20251231_d2.htm",
-    "source_url": "https://www.sec.gov/Archives/edgar/data/72971/000007297126000133/wfc-20251231_d2.htm",
-    "local_html_path": "data/raw/sec/0000072971/000007297126000133/wfc-20251231_d2.htm"
+    "primary_document": "cof-20251231.htm",
+    "source_url": "https://www.sec.gov/Archives/edgar/data/927628/000092762826000024/cof-20251231.htm",
+    "local_html_path": "data/raw/sec/0000927628/000092762826000024/cof-20251231.htm"
   },
   {
-    "ticker": "USB",
-    "cik": "0000036104",
-    "legal_name": "U.S. Bancorp",
+    "ticker": "STT",
+    "cik": "0000093751",
+    "legal_name": "State Street Corporation",
     "form": "10-K",
-    "accession_number": "0000036104-26-000011",
-    "filing_date": "2026-02-23",
+    "accession_number": "0000093751-26-000124",
+    "filing_date": "2026-02-19",
     "report_date": "2025-12-31",
-    "primary_document": "usb-20251231.htm",
-    "source_url": "https://www.sec.gov/Archives/edgar/data/36104/000003610426000011/usb-20251231.htm",
-    "local_html_path": "data/raw/sec/0000036104/000003610426000011/usb-20251231.htm"
+    "primary_document": "stt-20251231.htm",
+    "source_url": "https://www.sec.gov/Archives/edgar/data/93751/000009375126000124/stt-20251231.htm",
+    "local_html_path": "data/raw/sec/0000093751/000009375126000124/stt-20251231.htm"
   },
   {
     "ticker": "PNC",

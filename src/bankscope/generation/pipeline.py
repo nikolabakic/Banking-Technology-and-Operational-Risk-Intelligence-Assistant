@@ -376,34 +376,40 @@ class BankAnswerPipeline:
         all_evidence: list[dict[str, Any]] = []
         bank_results: list[dict[str, Any]] = []
         per_bank_retrieval: list[dict[str, Any]] = []
-        retrieval_latency_ms = 0.0
+        if on_progress is not None:
+            on_progress(
+                "retrieving",
+                {
+                    "message": "Searching each selected bank filing...",
+                    "tickers": selected_tickers,
+                },
+            )
+        bank_searches = self.retriever.search_hybrid_by_ticker(
+            standalone_question,
+            query_vector,
+            tickers=selected_tickers,
+            limit_per_ticker=limit,
+            candidate_k=candidate_k,
+            rrf_k=rrf_k,
+            record_type=record_type,
+        )
+        search_by_ticker = {search.ticker: search for search in bank_searches}
+        if set(search_by_ticker) != set(selected_tickers):
+            raise RuntimeError("Multi-bank retrieval did not return every selected ticker.")
+        retrieval_latency_ms = sum(search.latency_ms for search in bank_searches)
         bank_generation_latency_ms = 0.0
         next_citation_index = 1
         for ticker in selected_tickers:
             bank_name = self.bank_names.get(ticker, ticker)
-            if on_progress is not None:
-                on_progress(
-                    "retrieving",
-                    {
-                        "message": f"Searching {ticker} filing evidence...",
-                        "ticker": ticker,
-                    },
-                )
-            started = perf_counter()
-            evidence = self.retriever.search_hybrid(
-                standalone_question,
-                query_vector,
-                limit=limit,
-                candidate_k=candidate_k,
-                rrf_k=rrf_k,
-                ticker=ticker,
-                record_type=record_type,
-            )
-            elapsed = (perf_counter() - started) * 1000
-            retrieval_latency_ms += elapsed
+            bank_search = search_by_ticker[ticker]
+            evidence = bank_search.results
             all_evidence.extend(evidence)
             per_bank_retrieval.append(
-                {"ticker": ticker, "evidence_count": len(evidence), "latency_ms": elapsed}
+                {
+                    "ticker": ticker,
+                    "evidence_count": len(evidence),
+                    "latency_ms": bank_search.latency_ms,
+                }
             )
 
             if on_progress is not None:

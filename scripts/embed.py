@@ -13,6 +13,7 @@ from bankscope.io import read_jsonl, sha256_file
 from bankscope.parsing.corpus import MAX_EMBEDDING_TOKENS
 
 MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
+MODEL_REVISION = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_PATH = ROOT / "data/processed/chunks.jsonl"
 DEFAULT_OUTPUT_PATH = ROOT / "data/processed/embeddings.npz"
@@ -48,19 +49,32 @@ def load_embedding_inputs(path: Path) -> tuple[list[str], list[str]]:
     return record_ids, embedding_texts
 
 
-def load_model(max_seq_length: int) -> Any:
+def resolve_device(requested: str, *, cuda_available: bool) -> str:
+    if requested == "cuda" and not cuda_available:
+        raise RuntimeError("CUDA was requested, but torch.cuda.is_available() is false")
+    if requested == "auto":
+        return "cuda" if cuda_available else "cpu"
+    return requested
+
+
+def load_model(max_seq_length: int, *, device: str, model_revision: str) -> Any:
     """Load SentenceTransformer lazily so CLI import and pytest collection stay fast."""
 
     import torch
     from sentence_transformers import SentenceTransformer
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = resolve_device(device, cuda_available=torch.cuda.is_available())
     model_kwargs: dict[str, Any] = {}
 
     if device == "cuda":
         model_kwargs["torch_dtype"] = torch.float16
 
-    model = SentenceTransformer(MODEL_NAME, device=device, model_kwargs=model_kwargs)
+    model = SentenceTransformer(
+        MODEL_NAME,
+        revision=model_revision,
+        device=device,
+        model_kwargs=model_kwargs,
+    )
     model.max_seq_length = max_seq_length
     print(f"Model: {MODEL_NAME} ({device}, max_seq_length={max_seq_length})")
     return model
@@ -174,6 +188,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, help="Smoke test first N records without writing.")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--max-seq-length", type=int, default=DEFAULT_MAX_SEQ_LENGTH)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--model-revision", default=MODEL_REVISION)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args(argv)
 
@@ -190,6 +206,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.max_seq_length <= 0:
         raise ValueError("--max-seq-length must be greater than zero")
 
+    if not args.model_revision.strip():
+        raise ValueError("--model-revision cannot be empty")
+
     smoke_test = args.limit is not None
 
     if not smoke_test and args.output.exists() and not args.overwrite:
@@ -202,7 +221,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         record_ids = record_ids[: args.limit]
         embedding_texts = embedding_texts[: args.limit]
 
-    model = load_model(args.max_seq_length)
+    model = load_model(
+        args.max_seq_length,
+        device=args.device,
+        model_revision=args.model_revision,
+    )
     validate_input_lengths(model, embedding_texts, args.max_seq_length)
     embeddings = encode(model, embedding_texts, args.batch_size)
 

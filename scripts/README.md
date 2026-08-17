@@ -17,6 +17,7 @@ flowchart LR
     Answer --> AnswerEval[evaluate_answers.py]
     Answer --> MemoryEval[evaluate_conversation_memory.py]
     Answer --> ComparisonEval[evaluate_comparisons.py]
+    Answer --> AppSmoke[smoke_answers.py]
 ```
 
 ## Build and data commands
@@ -41,6 +42,7 @@ builds must use their own `--output-dir`. `embed.py --limit N` is a no-write smo
 | `answer.py` | Run one single-bank or bounded comparison question | Uses the reusable long-lived pipeline for one CLI request |
 | `serve_api.py` | Load services once and run FastAPI/Uvicorn | Defaults to local SQLite and the validated UI model candidate |
 | `smoke_qdrant.py` | Exercise a small local Qdrant query | BM25 works without constructing a query embedding |
+| `smoke_answers.py` | Run the fixed ten-bank application-answer smoke | Requires the configured generation API and local mixed retriever |
 
 Examples:
 
@@ -58,6 +60,7 @@ python scripts/serve_api.py --host 127.0.0.1 --port 8000
 | `evaluate_answers.py` | Single-bank deterministic metrics and optional semantic judge |
 | `evaluate_conversation_memory.py` | Follow-up rewrite and retrieval gate with isolation controls |
 | `evaluate_comparisons.py` | Evidence-group, semantic, and citation-ownership checks |
+| `smoke_answers.py` | Ten-bank supported-answer and citation-ownership smoke |
 | `benchmark_query_embeddings.py` | Warm-up and repeated query-encoder latency measurement |
 | `probe_generation_json.py` | Small gateway JSON-mode compatibility probe |
 | `export_logo_from_ai.mjs` | Deterministically export canonical and public SVG brand assets |
@@ -76,4 +79,3 @@ baseline without explicit intent; use `--skip-judge`, `--query-id`, or smoke lim
 When changing a command, update this table, its `--help`, tests, and every README command example.
 
 [Repository guide](../README.md) · [Package architecture](../src/bankscope/README.md)
-

@@ -11,6 +11,8 @@ flowchart LR
     Generation --> Resolver[006 bank resolution]
     Resolver --> Memory[007 conversation memory]
     Memory --> Comparison[008 multi-bank comparisons]
+    Comparison --> CompleteFilings[009 complete primary filings]
+    CompleteFilings --> Balanced[010 bank-balanced retrieval]
 ```
 
 | ADR | Decision |
@@ -23,9 +25,10 @@ flowchart LR
 | [006](006-automatic-bank-resolution.md) | Resolve banks before retrieval with bounded session fallback |
 | [007](007-short-term-conversation-memory.md) | Contextualize from four completed same-thread turns |
 | [008](008-multi-bank-comparisons.md) | Isolate per-bank evidence before bounded comparison synthesis |
+| [009](009-complete-primary-filings.md) | Replace partial USB/WFC filings with complete COF/STT filings |
+| [010](010-bank-balanced-comparison-retrieval.md) | Balance cross-bank retrieval before comparison synthesis |
 
 ADRs are append-only records of a decision at a point in time. If a decision is reversed, add a new
 ADR and mark the old one superseded rather than rewriting its measured history.
 
 [Documentation index](../README.md)
-
