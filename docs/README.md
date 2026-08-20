@@ -11,7 +11,9 @@ contains cross-cutting decisions, current status, and durable evaluation reports
 |---|---|
 | [roadmap.md](roadmap.md) | Current phase status, scope boundary, and acceptance gates |
 | [generation_hardening.md](generation_hardening.md) | Frozen GPT-5.1 candidate result and citation caveat |
-| [ADR 012](decisions/012-bounded-hybrid-agent-loop.md) | Current bounded hybrid agentic retrieval loop and rollout gate |
+| [reliability-hardening.md](reliability-hardening.md) | Current failure analysis, GitHub research, controls, and verification contract |
+| [ADR 013](decisions/013-rag-reliability-hardening.md) | Current deterministic RAG and UI reliability boundaries |
+| [ADR 012](decisions/012-bounded-hybrid-agent-loop.md) | Superseded bounded hybrid agentic retrieval design |
 | [ADR 011](decisions/011-eval-first-agentic-rag.md) | Superseded one-step experiment and measured evaluation result |
 
 Detailed runtime contracts are linked from the [repository guide](../README.md), especially the
@@ -23,9 +25,9 @@ Detailed runtime contracts are linked from the [repository guide](../README.md),
 [`decisions/`](decisions/README.md) contains ADR-style records for accepted parser, repository,
 retrieval, generation, bank-resolution, memory, and comparison choices. ADRs explain why a choice
 was made and preserve the measured outcome; they are not tutorials or future plans. ADR 011
-records the first one-step agentic experiment and its failed gate. ADR 012 supersedes that design
-with the disabled-by-default hybrid search/read/verifier loop and the conditions for changing its
-default.
+records the first one-step agentic experiment and its failed gate. ADR 012 introduced the hybrid
+search/read/verifier loop. ADR 013 keeps it disabled by default while tightening bank resolution,
+comparison decomposition, memory selection, evidence ordering, budgets, and UI transport safety.
 
 ## Archived material
 

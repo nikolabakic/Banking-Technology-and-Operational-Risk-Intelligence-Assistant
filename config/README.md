@@ -36,9 +36,10 @@ SEC user agent, request rate, data paths, and model gateway fields.
 
 `AGENTIC_RAG_ENABLED=false` is the documented safe default. Set it to `true` only in the local
 environment to exercise the bounded per-bank search/read/verifier loop, then restart the API.
-Runtime caps each bank at six orchestration model requests, four retrieval/read actions, and two
-verifier requests. The retrieval-only 12-question live gate in `scripts/evaluate_agentic_rag.py`
-and the existing end-to-end gates must pass before any future change to the default.
+Runtime caps each bank at three orchestration model requests, one retrieval/read action, and one
+verifier request. Initial baseline evidence remains first. The retrieval-only 12-question live gate
+in `scripts/evaluate_agentic_rag.py` and the existing end-to-end gates must pass before any future
+change to the default.
 
 ## When changing this area
 

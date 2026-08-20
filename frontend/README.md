@@ -53,6 +53,11 @@ from the active canonical corpus when opened instead of being duplicated in the 
 database. The service defaults to `AZURE_GPT_51_2025_1113`; override it with
 `npm.cmd run api -- --model MODEL_NAME`.
 
+The stream sends an immediate status and heartbeat comments during long model work. `api.ts`
+assembles fragmented SSE blocks, ignores malformed non-terminal events, and validates final REST
+and stream payloads before React receives them. A top-level error boundary replaces a blank screen
+with a reload action if an unexpected rendering error still occurs.
+
 To test bounded agentic RAG in the UI, set `AGENTIC_RAG_ENABLED=true` in the repository `.env`, stop
 the old API process, and start it again. Each completed or failed turn then has a collapsed
 **Diagnostics** panel showing route, feature state, evidence counts, timeline, the per-bank loop
@@ -68,10 +73,14 @@ flag back to `false` and restarting restores baseline routing/retrieval behavior
 - source context -> `GET /api/citations/{citation_id}/context`
 - compatibility question -> `POST /api/answer`
 - answer status -> `supported | partial | ambiguous | unsupported`
+- dialog act -> `answer | clarification | greeting | acknowledgement | capability |
+  general_explanation | out_of_scope | retryable_error`
 - source chips carry persisted citation IDs; the drawer hydrates canonical evidence on demand
 - bank selection is deliberately absent; the server resolves one bank or an ordered comparison set
-- optional diagnostics are backward-compatible and are rendered only when supplied
-- agentic progress adds `routing` and repeatable `assessing_evidence` events to the baseline
+- optional and legacy diagnostics are normalized defensively before rendering
+- expected threaded model/pipeline failures arrive as answered `retryable_error` turns; red error
+  turns are reserved for infrastructure or protocol failures
+- agentic progress can add repeatable `assessing_evidence` events to the baseline
   `embedding`, `retrieving`, `generating`, `validating`, `synthesizing`, and `contextualizing`
   stages; detailed tool actions are carried in terminal diagnostics
 
@@ -92,7 +101,8 @@ with `node ../scripts/export_logo_from_ai.mjs`. Public URLs remain `/brand/<asse
 ## When changing this area
 
 1. Keep response types in `src/api.ts` aligned with `bankscope.api` and generated answer fields.
-2. Preserve cancellation and terminal SSE handling for answer and error events.
+2. Preserve cancellation, fragmented-block parsing, heartbeat handling, and validated terminal SSE
+   handling for answer and error events.
 3. Keep source content server-resolved; do not persist canonical evidence in browser state.
 4. Add or update Testing Library coverage for visible behavior.
 5. Run lint, Vitest, and the production build.

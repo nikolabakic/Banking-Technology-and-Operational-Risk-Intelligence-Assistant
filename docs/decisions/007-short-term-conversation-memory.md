@@ -1,6 +1,6 @@
 # Short-term conversation memory
 
-**Status: accepted on 2026-08-13.**
+**Status: accepted on 2026-08-13; selection and representation policy superseded by ADRs 013 and 014.**
 
 ## Context
 
@@ -54,3 +54,13 @@ turns and 12,000 characters are v1 bounds; summarization stays deferred until us
 OpenAI conversation state and compaction remain possible migration paths, but do not replace the
 need to contextualize BankScope's pre-generation retrieval query. This implementation stays on the
 compatible Chat Completions client and validates structured output locally.
+
+ADR 013 retains thread-isolated contextualization but makes it conditional on referential wording
+and passes only the newest two completed pairs. The four-pair policy above remains the historical
+evaluated v1 decision.
+
+ADR 014 keeps the full transcript only for persistence/UI, while model routing sees compact
+assistant state without prior answers, facts, numbers, or citations. Standalone questions receive
+no history. Retryable-error and out-of-scope turns are excluded, and the compact window is bounded
+by turns, characters, and an approximate token budget. The evaluation fixture also contains a long
+mixed-topic thread to verify standalone topic isolation.

@@ -20,7 +20,7 @@ flowchart LR
 | Settings, registry, resolver, I/O | `test_settings`, `test_company_registry`, `test_bank_resolver`, `test_io` |
 | Parsing and tables | `test_corpus`, `test_tables`, `test_glossary_locators` |
 | Retrieval and Qdrant | `test_hybrid_retriever`, `test_mixed_retriever`, `test_qdrant_retriever`, `test_retrieval_metrics` |
-| Generation, agentic orchestration, and comparisons | `test_answer_generator`, `test_answer_pipeline`, `test_agentic_rag`, `test_answer_metrics`, `test_evaluate_comparisons` |
+| Generation, planning, agentic orchestration, and comparisons | `test_answer_generator`, `test_query_planner`, `test_answer_pipeline`, `test_agentic_rag`, `test_answer_metrics`, `test_evaluate_comparisons` |
 | Conversation and API | `test_contextualizer`, `test_chat_store`, `test_chat_sources`, `test_frontend_api` |
 | Evaluation/client utilities | evaluator, semantic judge, embedding, download, model-access, and benchmark tests |
 
@@ -32,9 +32,11 @@ Qdrant integration tests use isolated temporary stores and close clients before 
 and number preservation, literal exact search, bounded canonical expansion, repeated-action
 handling, bank/accession isolation, schema recovery, safe termination, verifier feedback, budget
 limits, and the frozen 12-case challenge distribution. Evaluator tests keep retrieval-only results
-authoritative even when nested end-to-end generation fails. API/store/frontend tests cover SSE
-progress, persisted success and error diagnostics, and the collapsed Diagnostics panel. Existing
-pipeline tests run with the flag off and protect baseline request/retrieval parity.
+authoritative even when nested end-to-end generation fails. Query-planner regressions cover
+referential-only two-pair memory, peer-free bank decomposition, rewrite scope, and diversified
+whole-filing summaries. API/store/frontend tests cover fragmented or malformed SSE, progress,
+persisted legacy/error diagnostics, the collapsed Diagnostics panel, and blank-screen recovery.
+Existing pipeline tests run with the flag off and protect baseline request/retrieval parity.
 
 Run:
 

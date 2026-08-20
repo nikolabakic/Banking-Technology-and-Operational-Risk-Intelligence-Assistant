@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -6,6 +7,8 @@ from pydantic import ValidationError
 
 from bankscope.generation.agentic import (
     AGENT_STEP_ADAPTER,
+    AGENT_STEP_TOOLS,
+    EVIDENCE_VERDICT_TOOL,
     AgenticPlan,
     AgentState,
     CanonicalContextExpander,
@@ -21,7 +24,11 @@ from bankscope.generation.agentic import (
 from bankscope.generation.answer_generator import GenerationValidationError
 from bankscope.generation.pipeline import BankAnswerPipeline
 from bankscope.io import read_jsonl
-from scripts.evaluate_agentic_rag import run_mode, validate_challenge
+from scripts.evaluate_agentic_rag import (
+    recovered_baseline_misses,
+    run_mode,
+    validate_challenge,
+)
 
 
 def evidence(target: str, ticker: str = "JPM", accession: str = "filing-1") -> dict:
@@ -35,6 +42,25 @@ def evidence(target: str, ticker: str = "JPM", accession: str = "filing-1") -> d
             "accession_number": accession,
         },
     }
+
+
+def test_agentic_recovery_requires_a_genuine_baseline_top_10_miss() -> None:
+    rows = [
+        {
+            "query_id": "real-recovery",
+            "category": "rewrite_search",
+            "baseline": {"hit_at_5": False, "hit_at_10": False},
+            "agentic": {"hit_at_10": True},
+        },
+        {
+            "query_id": "already-in-baseline-top-10",
+            "category": "multi_bank",
+            "baseline": {"hit_at_5": False, "hit_at_10": True},
+            "agentic": {"hit_at_10": True},
+        },
+    ]
+
+    assert [row["query_id"] for row in recovered_baseline_misses(rows)] == ["real-recovery"]
 
 
 @pytest.mark.parametrize(
@@ -107,9 +133,7 @@ def test_context_expansion_is_radius_one_and_accession_scoped() -> None:
 
 def test_context_expansion_accepts_bounded_asymmetric_window() -> None:
     chunks = [evidence(f"chunk-{index}") for index in range(7)]
-    expanded = CanonicalContextExpander(chunks).expand(
-        "chunk-3", ticker="JPM", before=3, after=2
-    )
+    expanded = CanonicalContextExpander(chunks).expand("chunk-3", ticker="JPM", before=3, after=2)
     assert [item["target_chunk_id"] for item in expanded] == [
         "chunk-0",
         "chunk-1",
@@ -181,6 +205,15 @@ def test_agent_step_discriminated_schema(payload: dict) -> None:
     assert step.action == payload["action"]
     with pytest.raises(ValidationError):
         AGENT_STEP_ADAPTER.validate_python({**payload, "unexpected": True})
+
+
+def test_agentic_native_tools_use_strict_required_schemas() -> None:
+    for tool in (*AGENT_STEP_TOOLS, EVIDENCE_VERDICT_TOOL):
+        function = tool["function"]
+        parameters = function["parameters"]
+        assert function["strict"] is True
+        assert parameters["additionalProperties"] is False
+        assert set(parameters["required"]) == set(parameters["properties"])
 
 
 def test_agent_step_preserves_period_and_numeric_facts() -> None:
@@ -273,26 +306,56 @@ class LoopRetriever:
 
 
 class SequenceCompletions:
-    def __init__(self, contents: list[str]) -> None:
-        self.contents = list(contents)
+    def __init__(self, calls: list[tuple[str, dict] | None]) -> None:
+        self.responses = list(calls)
         self.calls = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        content = self.contents.pop(0)
-        message = SimpleNamespace(content=content, refusal=None)
-        return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
+        response = self.responses.pop(0)
+        tool_calls = []
+        if response is not None:
+            name, arguments = response
+            function = SimpleNamespace(name=name, arguments=json.dumps(arguments))
+            tool_calls = [SimpleNamespace(function=function)]
+        message = SimpleNamespace(content=None, refusal=None, tool_calls=tool_calls)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=message,
+                    finish_reason="tool_calls" if tool_calls else "stop",
+                )
+            ]
+        )
 
 
 def test_retrieve_evidence_runs_exact_search_then_independent_verifier() -> None:
     completions = SequenceCompletions(
         [
-            '{"action":"search_exact","terms":["Common Equity Tier 1 capital ratio"],'
-            '"reason":"Use the filing phrase."}',
-            '{"action":"finish","status":"sufficient","reason":"Target found",'
-            '"supporting_target_chunk_ids":["target"]}',
-            '{"status":"sufficient","explanation":"Direct evidence",'
-            '"missing_aspects":[],"supporting_target_chunk_ids":["target"]}',
+            (
+                "search_exact",
+                {
+                    "terms": ["Common Equity Tier 1 capital ratio"],
+                    "reason": "Use the filing phrase.",
+                },
+            ),
+            (
+                "finish",
+                {
+                    "status": "sufficient",
+                    "reason": "Target found",
+                    "supporting_target_chunk_ids": ["target"],
+                },
+            ),
+            (
+                "submit_evidence_verdict",
+                {
+                    "status": "sufficient",
+                    "explanation": "Direct evidence",
+                    "missing_aspects": [],
+                    "supporting_target_chunk_ids": ["target"],
+                },
+            ),
         ]
     )
     retriever = LoopRetriever()
@@ -307,7 +370,7 @@ def test_retrieve_evidence_runs_exact_search_then_independent_verifier() -> None
     run = pipeline.retrieve_evidence("What was JPM CET1 in 2025?", ticker="JPM")
 
     assert run.status == "sufficient"
-    assert [item["target_chunk_id"] for item in run.evidence[:2]] == ["target", "initial"]
+    assert [item["target_chunk_id"] for item in run.evidence[:2]] == ["initial", "target"]
     assert run.model_request_count == 3
     assert retriever.exact_calls[0][1]["ticker"] == "JPM"
     plan = run.agentic_plans[0]
@@ -316,10 +379,15 @@ def test_retrieve_evidence_runs_exact_search_then_independent_verifier() -> None
         "search_exact",
         "verify_evidence",
     ]
+    assert all(call["tool_choice"] == "required" for call in completions.calls)
+    assert all(call["parallel_tool_calls"] is False for call in completions.calls)
+    assert all(
+        tool["function"]["strict"] is True for call in completions.calls for tool in call["tools"]
+    )
 
 
 def test_retrieve_evidence_survives_two_schema_failures_with_safe_fallback() -> None:
-    completions = SequenceCompletions(["not-json", "still-not-json"])
+    completions = SequenceCompletions([None, None])
     pipeline = BankAnswerPipeline(
         retriever=LoopRetriever(),
         query_encoder=LoopEncoder(),
@@ -335,6 +403,46 @@ def test_retrieve_evidence_survives_two_schema_failures_with_safe_fallback() -> 
     assert run.model_request_count == 2
     assert run.agentic_plans[0]["fallback"] is True
     assert run.diagnostics["quality_gate"]["passed"] is False
+
+
+def test_agentic_unsupported_verdict_cannot_erase_baseline_evidence() -> None:
+    completions = SequenceCompletions(
+        [
+            (
+                "search_exact",
+                {"terms": ["Common Equity Tier 1"], "reason": "Try one corrective search."},
+            ),
+            (
+                "finish",
+                {
+                    "status": "unsupported",
+                    "reason": "Still incomplete",
+                    "supporting_target_chunk_ids": [],
+                },
+            ),
+            (
+                "submit_evidence_verdict",
+                {
+                    "status": "unsupported",
+                    "explanation": "Incomplete",
+                    "missing_aspects": [],
+                    "supporting_target_chunk_ids": [],
+                },
+            ),
+        ]
+    )
+    pipeline = BankAnswerPipeline(
+        retriever=LoopRetriever(),
+        query_encoder=LoopEncoder(),
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        generation_model="test-model",
+        agentic_rag_enabled=True,
+    )
+
+    run = pipeline.retrieve_evidence("What was JPM CET1 in 2025?", ticker="JPM")
+
+    assert run.status == "unsupported"
+    assert run.evidence[0]["target_chunk_id"] == "initial"
 
 
 def test_agentic_evaluator_keeps_retrieval_metrics_when_generation_fails() -> None:

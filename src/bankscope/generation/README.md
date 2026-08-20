@@ -4,13 +4,15 @@
 
 ```mermaid
 flowchart TD
-    Question[original question + bounded history] --> Route[structured router when enabled]
-    Route -->|general product chat| General[local product-help answer]
-    Route -->|domain RAG or fallback| Context[contextualize_question]
-    Context --> Resolve[resolve_bank]
+    Question[original question + newest 2 history pairs] --> FrontDoor{strict conversation function}
+    FrontDoor -->|respond_directly| General[greeting / help / general explanation]
+    FrontDoor -->|ask_clarification| Clarify[one concise assistant question]
+    FrontDoor -->|research_filings| Context[validated standalone search question]
+    Context --> Resolve[resolve_bank with server-owned session scope]
     Resolve -->|0 or more than 4| Ambiguous[local ambiguous result]
     Resolve -->|1| One[retrieve one bank]
-    Resolve -->|2-4| Many[retrieve each bank independently]
+    Resolve -->|2-4| Decompose[peer-free subquestion per bank]
+    Decompose --> Many[retrieve each bank independently]
     One --> Loop[bounded agentic retrieval loop]
     Loop -->|hybrid / exact search| One
     Loop -->|read context| Expand[canonical neighbours]
@@ -29,10 +31,12 @@ flowchart TD
 
 | File | Public symbols | Responsibility |
 |---|---|---|
-| `agentic.py` | `AgentStep`, `AgentState`, `EvidenceVerdict`, `CanonicalContextExpander` | Strict JSON actions, loop state, evidence verification, scope validation, and bounded context reads |
+| `conversation.py` | `ConversationDecision`, conversation argument models, `request_conversation_action()` | Choose direct response, clarification, or filing research through strict native function calling and safe deterministic fallback |
+| `agentic.py` | `AgentStep`, `AgentState`, `EvidenceVerdict`, `CanonicalContextExpander` | Strict native retrieval tools, loop state, evidence verification, scope validation, and bounded context reads |
 | `pipeline.py` | `QueryEncoder`, `RetrievalRun`, `AnswerRun`, `BankAnswerPipeline` | Load services and orchestrate retrieval-only runs, generation, and comparisons |
-| `answer_generator.py` | `NumericFacts`, `ModelAnswer`, `GenerationValidationError`, `generate_answer()` | Build evidence payload, request JSON, validate citations/facts, and render supported or abstaining answers |
+| `answer_generator.py` | `NumericFacts`, `ModelAnswer`, `GenerationValidationError`, `generate_answer()` | Build evidence payload, require a strict answer function call, validate citations/facts, and render supported or abstaining answers |
 | `contextualizer.py` | `StandaloneQuestion`, `ContextualizationResult`, `contextualize_question()` | Rewrite a follow-up from bounded clean history while preserving the original question |
+| `query_planner.py` | `needs_contextualization()`, `build_bank_subquestion()`, `build_retrieval_queries()` | Select history, validate rewrites, decompose comparisons, and diversify full-filing summaries |
 | `comparison_generator.py` | `ComparisonClaim`, `ComparisonSynthesis`, `synthesize_comparison()` | Validate a final synthesis over already validated, bank-owned results |
 
 ## Answer contracts
@@ -43,51 +47,77 @@ history, retrieval filters, and limits. It returns `AnswerRun`, which includes t
 retrieval/contextualization diagnostics. `retrieve_evidence()` returns a generation-independent
 `RetrievalRun`; `AnswerRun` retains `diagnostics`, `stage_trace`, and per-bank agent traces.
 
+Threaded API calls explicitly pass conversation history, including an empty history for a new
+thread. That activates the conversational front door. CLI and compatibility callers that omit
+history keep the direct domain-pipeline contract. Every threaded turn returns a `dialog_act`:
+`answer`, `clarification`, a direct-conversation category, or `retryable_error`.
+
 ## Bounded agentic mode
 
 The mode is controlled by `AGENTIC_RAG_ENABLED` and defaults to `false`. When enabled:
 
-1. The router allows `general_chat` only for greetings and BankScope product help; invalid routing
-   falls back to `domain_rag`.
+1. The conversation front door has already selected filing research; agentic mode does not decide
+   whether a user deserves a response.
 2. Existing Qdrant dense + BM25S + RRF runs first.
 3. Each bank independently receives a loop of `search_hybrid`, `search_exact`, `read_context`, and
    `finish` actions. Search may add canonical English filing terms while preserving periods and
    rejecting new numeric facts.
 4. Runtime-owned filters keep every action inside one ticker/accession. Exact search accepts only
    literal phrases; context reads accept only returned target IDs and at most three chunks per side.
-5. The loop permits at most six orchestration requests, four tool actions, and two independent
-   verifier requests per bank. Repeated actions return `No new evidence` and consume the budget.
+5. The loop permits at most three orchestration requests, one tool action, and one independent
+   verifier request per bank. Repeated actions return `No new evidence` and consume the budget.
 6. Two consecutive schema failures end safely with current evidence or `unsupported`.
 
-Planner and router calls use JSON mode, local Pydantic validation, a 30-second request timeout, and
-stable stage-specific failures. They do not use function calling, filesystem paths, shell access,
-or a Pydantic AI tool loop. Rewrite validation preserves explicit years and rejects numeric facts
-that were not present in the original question, preventing retrieved values from leaking into a
-new search query.
+Agentic evidence is corrective and additive: validated baseline results remain first and cannot be
+removed by an agent/verifier `unsupported` verdict. The feature remains disabled by default.
 
-Numeric model output must provide entity, metric, optional variant, period, exact value text, unit,
+Conversation, final-answer, agent-step, and verifier decisions use OpenAI native function calling with
+`tool_choice=required`, `parallel_tool_calls=false`, strict schemas, local Pydantic validation, and
+a bounded timeout. Runtime owns ticker filters, record filters, result limits, canonical target
+IDs, and tool budgets. No model tool accepts filesystem paths or shell access. Rewrite validation
+preserves explicit years and numeric qualifiers and rejects facts absent from user-authored
+context, preventing values from an earlier assistant answer from leaking into a new search query.
+
+Numeric model output must provide entity, metric, nullable variant, period, exact value text, unit,
 and citation IDs. Numeric answers are rendered locally, and the canonical numeric token must occur
 in cited evidence. Narrative answers still require owned citations. Missing periods, invalid JSON,
 unknown citations, cross-bank citations, or insufficient support produce a controlled error or
 abstention rather than an invented answer.
 
-For comparisons, each bank is retrieved and generated independently. Final synthesis sees
-structured bank results, not a mixed evidence pool. Status is `partial` when at least one selected
-bank is unsupported; citation ownership remains tied to its bank result. Partial comparisons skip
-the synthesis model and deterministically state which banks lack evidence before presenting the
-already validated supported bank answers. This prevents a synthesis from implying a relationship
-between banks when one side has no grounded result.
+For comparisons, the planner first removes every selected bank name from the topic and creates one
+bank-owned question. Each question is embedded, retrieved, and generated independently. Final
+synthesis sees structured bank results, not a mixed evidence pool. Status is `partial` when at
+least one selected bank is unsupported; citation ownership remains tied to its bank result. Partial
+comparisons skip the synthesis model and deterministically state which banks lack evidence before
+presenting the already validated supported bank answers.
 
 ## Model calls and failure modes
 
-- Contextualization is skipped when there is no usable history.
-- Single-bank generation makes at most one answer request and does not retry.
+- The conversational front door receives at most two compact pairs only for referential follow-ups
+  and must select one function. Standalone questions receive no history; prior assistant answers,
+  facts, values, and citations are omitted.
+- A model-authored research rewrite is only an internal search query. The original user question
+  remains authoritative; a rewrite that drops or adds bank, period, or numeric scope falls back to
+  the original question instead of terminating the turn. Focused retrieval searches the validated
+  rewrite, the original wording, and a deterministic bank-scoped concept query for operational
+  risk, cybersecurity, third-party risk, or CET1 when applicable.
+- Direct responses cannot make claims about a named/session bank. Capability answers are rendered
+  from the server-owned bank registry rather than model-authored bank names.
+- Single-bank generation selects one of four strict tools for supported numeric, supported
+  narrative, ambiguous, or unsupported results. Truncation and contract-shape failures receive at
+  most one repair retry; unsupported display text is server-rendered.
+- Deterministic out-of-scope and vague-CET1 guards run before retrieval, and one bank's validation
+  failure cannot abort the remaining banks in a comparison.
 - A fully supported comparison adds one synthesis request after its per-bank calls; partial and
   fully unsupported comparisons do not.
 - Model-specific request options are explicit; responses pass strict Pydantic validation.
 - Unsupported requested years can fail before a model call.
-- Enabled agentic mode adds up to six bounded orchestration requests per bank; diagnostics expose
+- Enabled agentic mode adds up to three bounded orchestration requests per bank; diagnostics expose
   every action, effective query, verifier verdict, fallback, latency, and budget check.
+- Expected threaded pipeline/model failures are persisted as normal `retryable_error` assistant
+  turns with diagnostics and HTTP 200. Recovery turns are excluded from later model history so
+  they cannot displace the last successful topic. Infrastructure/API contract failures may still
+  be errors.
 
 Changes require generator, pipeline, contextualizer, comparison, evaluator, and frontend contract
 tests plus the relevant frozen live gate before a default changes.

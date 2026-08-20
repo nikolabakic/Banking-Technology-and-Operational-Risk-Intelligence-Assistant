@@ -17,12 +17,14 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Generation hardening | Complete | The current manual audit accepts all 29 supported answers and the UI API uses the validated GPT-5.1 candidate |
 | Automatic bank resolution | Complete | Names, aliases and tickers resolve before retrieval; missing/multiple banks fail locally |
 | Durable local conversations | Complete | SQLite threads survive refresh/restart and retain server-owned bank context |
-| Short-term conversation memory | Implemented | Four bounded, completed turns from the current SQLite thread contextualize retrieval; the 8-case gate improved Hit@5 from 6/8 to 8/8 with all isolation controls passing |
+| Short-term conversation memory | Hardened | Only referential follow-ups use the newest two completed pairs; rewrites preserve periods, numeric facts, and bank scope, while standalone switches bypass history |
 | Streaming progress | Complete | The UI receives real bank-resolution, embedding, retrieval, generation and validation stages |
 | Citation context | Complete | Persisted citations reopen canonical narrative/table evidence and fail closed after corpus changes |
 | Local product interface | Complete | Routed chat history supports create, reopen, rename, delete and source inspection |
 | Experimentation foundation | Implemented | FastAPI contracts, structured local logs and isolated quality gates support future experiments |
-| Multi-bank questions | Complete | Questions select 2-4 banks, retrieve and validate each bank independently, synthesize a structured comparison, preserve the session bank set and expose bank-owned citations; the 3-question gate passed all 6 evidence groups, semantic checks and citation-isolation controls |
+| Multi-bank questions | Hardened | Questions select 2-4 banks, build a peer-free subquestion for each bank, retrieve and validate independently, then synthesize with bank-owned citations |
+| Reliability hardening | Implemented | Possessive aliases, diversified whole-filing summaries, guarded SSE payloads, heartbeats, and UI recovery have regression coverage |
+| Optional agentic RAG | Experimental, live gate failed | The 2026-08-20 run preserved baseline Top 5 but recovered only 2/3 required genuine Top-10 misses, had widespread schema fallback, and failed controlled unsupported handling; default remains off |
 | External tools and function calling | Future consideration | Assess web search, calculator and document lookup integrations to extend the assistant's capabilities |
 
 ## Acceptance gates
@@ -60,6 +62,9 @@ The complete-primary-filing replacement, GPU handoff and 34-question rebaseline 
 `docs/decisions/009-complete-primary-filings.md`.
 The accepted bank-balanced retrieval path and final ten-bank evaluation hashes are recorded in
 `docs/decisions/010-bank-balanced-comparison-retrieval.md`.
+The current resolver, comparison-query, selective-memory, additive-agentic, and UI transport
+boundaries are recorded in `docs/decisions/013-rag-reliability-hardening.md`; supporting GitHub
+research and reproduced failures are summarized in `docs/reliability-hardening.md`.
 
 ## Scope boundary
 

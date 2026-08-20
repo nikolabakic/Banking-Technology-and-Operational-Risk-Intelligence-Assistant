@@ -18,6 +18,7 @@ if str(SRC_ROOT) not in sys.path:
 from bankscope.config.settings import get_settings  # noqa: E402
 from bankscope.generation import GPT51_CANDIDATE_MODEL, BankAnswerPipeline  # noqa: E402
 from bankscope.generation.answer_generator import GenerationValidationError  # noqa: E402
+from bankscope.generation.query_planner import build_bank_subquestion  # noqa: E402
 from bankscope.io import read_jsonl  # noqa: E402
 from bankscope.llm import create_openai_client  # noqa: E402
 from bankscope.retrieval.mixed_retriever import (  # noqa: E402
@@ -101,7 +102,18 @@ def run_mode(
         retrieval_runs = []
         searches = []
         for ticker in tickers:
-            retrieval = pipeline.retrieve_evidence(str(row["query"]), ticker=ticker)
+            retrieval_question = (
+                build_bank_subquestion(
+                    str(row["query"]),
+                    ticker=ticker,
+                    selected_tickers=tickers,
+                    bank_names=pipeline.bank_names,
+                    bank_aliases=pipeline.bank_aliases,
+                )
+                if len(tickers) > 1
+                else str(row["query"])
+            )
+            retrieval = pipeline.retrieve_evidence(retrieval_question, ticker=ticker)
             retrieval_runs.append(retrieval)
             searches.append(
                 BankSearchResult(
@@ -115,11 +127,7 @@ def run_mode(
             if len(searches) == 1
             else interleave_bank_results(searches, limit=10)
         )
-        plans = [
-            dict(plan)
-            for retrieval in retrieval_runs
-            for plan in retrieval.agentic_plans
-        ]
+        plans = [dict(plan) for retrieval in retrieval_runs for plan in retrieval.agentic_plans]
     except Exception as error:
         print(
             f"[{row['query_id']}] {mode} retrieval failed: {type(error).__name__}",
@@ -216,6 +224,17 @@ def run_mode(
     }
 
 
+def recovered_baseline_misses(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return genuine Top-10 recoveries, excluding baseline results already hit in Top 10."""
+
+    answerable = [row for row in rows if row["category"] != "unsupported"]
+    return [
+        row
+        for row in answerable
+        if row["baseline"]["hit_at_10"] is False and row["agentic"]["hit_at_10"] is True
+    ]
+
+
 def main() -> None:
     args = parse_args()
     challenge = read_jsonl(args.challenge)
@@ -244,8 +263,9 @@ def main() -> None:
         pipeline.close()
 
     answerable = [row for row in rows if row["category"] != "unsupported"]
-    baseline_misses = [row for row in answerable if row["baseline"]["hit_at_5"] is False]
-    recovered = [row for row in baseline_misses if row["agentic"]["hit_at_5"] is True]
+    # Baseline evidence deliberately keeps the first five positions. Corrective agent evidence is
+    # additive, so recovery requires a baseline Top-10 miss to become an agentic Top-10 hit.
+    recovered = recovered_baseline_misses(rows)
     sufficient = next(row for row in rows if row["category"] == "sufficient_initial")
     unsupported = next(row for row in rows if row["category"] == "unsupported")
     checks = {
@@ -256,19 +276,16 @@ def main() -> None:
         "no_baseline_hit_at_5_lost": all(
             not row["baseline"]["hit_at_5"] or row["agentic"]["hit_at_5"] for row in answerable
         ),
-        "at_least_three_baseline_misses_recovered": len(recovered) >= 3,
+        "at_least_three_baseline_top_10_misses_recovered": len(recovered) >= 3,
         "all_runtime_contracts_pass": all(
             bool((row["agentic"].get("quality_gate") or {}).get("passed")) for row in rows
         ),
         "sufficient_retrieval_did_not_expand": all(
-            int(plan.get("tool_action_count") or 0) == 0
-            for plan in sufficient["agentic"]["plans"]
+            int(plan.get("tool_action_count") or 0) == 0 for plan in sufficient["agentic"]["plans"]
         ),
         "unsupported_abstained_without_citations": (
             unsupported["agentic"]["status"] == "unsupported"
-            and int(
-                (unsupported["agentic"].get("end_to_end") or {}).get("citation_count") or 0
-            )
+            and int((unsupported["agentic"].get("end_to_end") or {}).get("citation_count") or 0)
             == 0
         ),
     }
@@ -282,7 +299,7 @@ def main() -> None:
         "quality_gate": {
             "passed": all(checks.values()),
             "checks": checks,
-            "recovered_baseline_misses": [row["query_id"] for row in recovered],
+            "recovered_baseline_top_10_misses": [row["query_id"] for row in recovered],
         },
         "rows": rows,
     }

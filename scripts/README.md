@@ -104,10 +104,11 @@ python scripts/evaluate_agentic_rag.py --prerequisite-gates-passed
 
 The evaluator toggles baseline/agentic mode internally, obtains authoritative retrieval evidence
 through `retrieve_evidence()`, writes `data/evaluation/results/agentic-rag-v1.json`, and exits
-non-zero unless every rollout check passes. End-to-end answer generation is recorded separately in
-the same report. It defaults to the same `AZURE_GPT_51_2025_1113` candidate as `serve_api.py`; use
-`--model` only for an explicit comparison. Passing it does not change the production default
-automatically.
+non-zero unless every rollout check passes. The gate preserves baseline Top 5 and counts recovery
+only when a genuine baseline Top-10 miss becomes an agentic Top-10 hit. End-to-end generation is recorded
+separately in the same report. It defaults to the same `AZURE_GPT_51_2025_1113` candidate as
+`serve_api.py`; use `--model` only for an explicit comparison. Passing it does not change the
+production default automatically.
 
 ## Failure and safety rules
 

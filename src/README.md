@@ -39,6 +39,10 @@ verdict, and bounded loop contracts; `BankAnswerPipeline.retrieve_evidence()` re
 application logic rather than a script-only experiment; the command-line evaluator in `scripts/`
 only drives the reusable package implementation.
 
+`bankscope/generation/query_planner.py` owns referential-only memory selection, per-bank comparison
+decomposition, and section-diverse whole-filing summary queries. Agentic retrieval remains an
+additive, disabled-by-default extension of those deterministic boundaries.
+
 Do not place generated files, CLI-only orchestration, or archived experiments here. See the
 [package architecture](bankscope/README.md) and [script guide](../scripts/README.md).
 

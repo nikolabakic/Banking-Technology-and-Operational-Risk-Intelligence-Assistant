@@ -19,11 +19,72 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from bankscope.chat import ChatStore, CitationSourceResolver, StaleCitationError
-from bankscope.generation.answer_generator import GenerationValidationError
+from bankscope.generation.answer_generator import GenerationValidationError, question_language
 
 LOGGER = logging.getLogger("bankscope.api")
 GENERATION_ERROR_MESSAGE = "The model could not produce a valid grounded answer. Please try again."
 PIPELINE_ERROR_MESSAGE = "The answer pipeline failed. Check the API terminal for details."
+
+
+def _recovery_answer(question: str) -> str:
+    if question_language(question) == "Serbian":
+        return (
+            "Nisam uspeo da završim pouzdanu pretragu za ovu poruku. Možeš da pokušaš "
+            "ponovo ili da preformulišeš pitanje; prethodni kontekst razgovora je sačuvan."
+        )
+    return (
+        "I couldn't complete reliable research for this message. Please try again or rephrase "
+        "the question; the previous conversation context is still available."
+    )
+
+
+def _recovery_output(
+    question: str,
+    *,
+    model: str,
+    code: str,
+    diagnostics: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Represent an expected pipeline failure as a normal assistant turn."""
+
+    return {
+        "question": question,
+        "dialog_act": "retryable_error",
+        "ticker": None,
+        "contextualization": {
+            "applied": False,
+            "history_turns": 0,
+            "standalone_question": question,
+            "model": model,
+            "latency_ms": 0.0,
+            "source": "recovery",
+            "fallback": True,
+            "error_code": code,
+            "skip_reason": "pipeline_recovery",
+        },
+        "bank_resolution": {
+            "status": "not_required",
+            "source": "recovery",
+            "ticker": None,
+            "detected_tickers": [],
+        },
+        "retrieval": {"backend": "none", "mode": "none", "evidence_count": 0},
+        "status": "unsupported",
+        "answer_type": "narrative",
+        "answer": _recovery_answer(question),
+        "facts": None,
+        "reason": (
+            "The current research attempt failed safely before a grounded answer was available."
+        ),
+        "reason_code": code,
+        "citations": [],
+        "generation": {
+            "model": model,
+            "final_status": "unsupported",
+            "request_count": 0,
+        },
+        "diagnostics": dict(diagnostics),
+    }
 
 
 def jsonable(value: object) -> Any:
@@ -100,7 +161,11 @@ class AppServices:
             if on_progress is not None:
                 on_progress(stage, details)
 
-        def error_diagnostics(code: str, failed_stage: str | None = None) -> dict[str, Any]:
+        def error_diagnostics(
+            code: str,
+            failed_stage: str | None = None,
+            generation: Mapping[str, Any] | None = None,
+        ) -> dict[str, Any]:
             enabled = bool(getattr(self.pipeline, "agentic_rag_enabled", False))
             checks = {
                 "pipeline_completed": False,
@@ -115,7 +180,7 @@ class AppServices:
                 "action_budget": True,
                 "request_budget": True,
             }
-            return {
+            diagnostics = {
                 "route": "domain_rag",
                 "agentic_rag_enabled": enabled,
                 "outcome": "error",
@@ -128,6 +193,11 @@ class AppServices:
                 "bank_plans": [],
                 "quality_gate": {"passed": False, "checks": checks},
             }
+            validation_errors = (generation or {}).get("validation_errors")
+            if isinstance(validation_errors, list):
+                diagnostics["validation_errors"] = validation_errors
+            return diagnostics
+
         try:
             with self.pipeline_lock:
                 run = self.pipeline.answer(
@@ -149,36 +219,56 @@ class AppServices:
                 "generation_validation_failed",
                 extra={"thread_id": thread_id, "error_code": error.code},
             )
-            turn = self.store.append_error_turn(
+            diagnostics = error_diagnostics(
+                error.code,
+                str(error.generation.get("stage") or "") or None,
+                error.generation,
+            )
+            turn = self.store.append_answer_turn(
                 thread_id,
                 question,
-                GENERATION_ERROR_MESSAGE,
-                code=error.code,
-                diagnostics=error_diagnostics(
-                    error.code,
-                    str(error.generation.get("stage") or "") or None,
+                _recovery_output(
+                    question,
+                    model=str(getattr(self.pipeline, "generation_model", "unknown")),
+                    code=error.code,
+                    diagnostics=diagnostics,
                 ),
+                corpus_hash=self.sources.corpus_hash,
             )
-            return turn, 422
-        except ValueError as error:
-            turn = self.store.append_error_turn(
+            return turn, 200
+        except ValueError:
+            LOGGER.info(
+                "answer_request_recovered",
+                extra={"thread_id": thread_id, "error_code": "invalid_request"},
+            )
+            diagnostics = error_diagnostics("invalid_request")
+            turn = self.store.append_answer_turn(
                 thread_id,
                 question,
-                str(error),
-                code="invalid_request",
-                diagnostics=error_diagnostics("invalid_request"),
+                _recovery_output(
+                    question,
+                    model=str(getattr(self.pipeline, "generation_model", "unknown")),
+                    code="invalid_request",
+                    diagnostics=diagnostics,
+                ),
+                corpus_hash=self.sources.corpus_hash,
             )
-            return turn, 400
+            return turn, 200
         except Exception:
             LOGGER.exception("answer_pipeline_failed", extra={"thread_id": thread_id})
-            turn = self.store.append_error_turn(
+            diagnostics = error_diagnostics("pipeline_failed")
+            turn = self.store.append_answer_turn(
                 thread_id,
                 question,
-                PIPELINE_ERROR_MESSAGE,
-                code="pipeline_failed",
-                diagnostics=error_diagnostics("pipeline_failed"),
+                _recovery_output(
+                    question,
+                    model=str(getattr(self.pipeline, "generation_model", "unknown")),
+                    code="pipeline_failed",
+                    diagnostics=diagnostics,
+                ),
+                corpus_hash=self.sources.corpus_hash,
             )
-            return turn, 500
+            return turn, 200
 
 
 def _thread_payload(services: AppServices, thread_id: str) -> dict[str, Any]:
@@ -191,6 +281,10 @@ def _thread_payload(services: AppServices, thread_id: str) -> dict[str, Any]:
 
 def _sse(payload: Mapping[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
+
+
+def _sse_comment(comment: str) -> str:
+    return f": {comment}\n\n"
 
 
 def create_app(services: AppServices) -> FastAPI:
@@ -299,10 +393,20 @@ def create_app(services: AppServices) -> FastAPI:
                 )
             )
             try:
+                # Flush headers and a first event immediately. Agentic requests can otherwise
+                # remain silent long enough for browsers or reverse proxies to drop the stream.
+                yield _sse(
+                    {
+                        "type": "status",
+                        "stage": "connected",
+                        "message": "Connected to the answer service...",
+                    }
+                )
                 while not task.done() or not queue.empty():
                     try:
-                        event = await asyncio.wait_for(queue.get(), timeout=0.1)
+                        event = await asyncio.wait_for(queue.get(), timeout=10.0)
                     except TimeoutError:
+                        yield _sse_comment("keep-alive")
                         continue
                     yield _sse(event)
                 turn, status_code = await task
@@ -325,7 +429,14 @@ def create_app(services: AppServices) -> FastAPI:
                 )
                 raise
 
-        return StreamingResponse(events(), media_type="text/event-stream")
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/api/citations/{citation_id}/context")
     def citation_context(

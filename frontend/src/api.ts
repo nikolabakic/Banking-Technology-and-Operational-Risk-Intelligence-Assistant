@@ -70,6 +70,7 @@ export type Diagnostics = {
 
 export type AnswerResponse = {
   question: string;
+  dialog_act?: "answer" | "clarification" | "greeting" | "acknowledgement" | "capability" | "general_explanation" | "out_of_scope" | "retryable_error";
   mode?: "comparison";
   ticker: string | null;
   tickers?: string[];
@@ -140,6 +141,190 @@ export class ApiError extends Error {
   }
 }
 
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord
+    : null;
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ApiError(`The answer service returned an invalid ${field}.`, 502, "invalid_response");
+  }
+  return value;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function parseCitation(value: unknown): Citation {
+  const item = asRecord(value);
+  if (!item) throw new ApiError("The answer service returned an invalid citation.", 502, "invalid_response");
+  const optionalScalar = (input: unknown) => typeof input === "string" || typeof input === "number" || input === null ? input : undefined;
+  return {
+    citation_id: requiredString(item.citation_id, "citation ID"),
+    label: requiredString(item.label, "citation label"),
+    target_chunk_id: requiredString(item.target_chunk_id, "citation target"),
+    ticker: requiredString(item.ticker, "citation ticker"),
+    record_type: requiredString(item.record_type, "citation record type"),
+    report_date: optionalString(item.report_date),
+    filing_date: optionalString(item.filing_date),
+    section_title: optionalString(item.section_title),
+    page_start: optionalScalar(item.page_start),
+    page_end: optionalScalar(item.page_end),
+    display_page_start: optionalScalar(item.display_page_start),
+    display_page_end: optionalScalar(item.display_page_end),
+    source_url: optionalString(item.source_url),
+  };
+}
+
+function parseDiagnostics(value: unknown): Diagnostics | undefined {
+  const item = asRecord(value);
+  if (!item) return undefined;
+  const rawStages = Array.isArray(item.stages) ? item.stages : [];
+  const stages = rawStages.flatMap((stage) => {
+    const parsed = asRecord(stage);
+    if (!parsed || typeof parsed.stage !== "string") return [];
+    return [{
+      ...parsed,
+      stage: parsed.stage,
+      status: typeof parsed.status === "string" ? parsed.status : "unknown",
+      latency_ms: typeof parsed.latency_ms === "number" ? parsed.latency_ms : undefined,
+    }];
+  });
+  const rawPlans = Array.isArray(item.bank_plans) ? item.bank_plans : [];
+  const bankPlans = rawPlans.flatMap((plan) => {
+    const parsed = asRecord(plan);
+    if (!parsed || typeof parsed.ticker !== "string" || typeof parsed.action !== "string") return [];
+    return [parsed as Diagnostics["bank_plans"][number]];
+  });
+  const rawGate = asRecord(item.quality_gate);
+  const rawChecks = asRecord(rawGate?.checks);
+  const checks = Object.fromEntries(
+    Object.entries(rawChecks ?? {}).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"),
+  );
+  return {
+    route: item.route === "general_chat" ? "general_chat" : "domain_rag",
+    agentic_rag_enabled: item.agentic_rag_enabled === true,
+    outcome: typeof item.outcome === "string" ? item.outcome : "unknown",
+    failed_stage: typeof item.failed_stage === "string" || item.failed_stage === null ? item.failed_stage : undefined,
+    error_code: typeof item.error_code === "string" || item.error_code === null ? item.error_code : undefined,
+    stages,
+    initial_evidence_count: typeof item.initial_evidence_count === "number" || item.initial_evidence_count === null ? item.initial_evidence_count : undefined,
+    final_evidence_count: typeof item.final_evidence_count === "number" || item.final_evidence_count === null ? item.final_evidence_count : undefined,
+    model_request_count: typeof item.model_request_count === "number" || item.model_request_count === null ? item.model_request_count : undefined,
+    bank_plans: bankPlans,
+    quality_gate: { passed: rawGate?.passed === true, checks },
+  };
+}
+
+function parseBankResult(value: unknown): BankResult {
+  const item = asRecord(value);
+  if (!item) throw new ApiError("The answer service returned an invalid bank result.", 502, "invalid_response");
+  const status = item.status;
+  const answerType = item.answer_type;
+  if (status !== "supported" && status !== "ambiguous" && status !== "unsupported") {
+    throw new ApiError("The answer service returned an invalid bank status.", 502, "invalid_response");
+  }
+  if (answerType !== "numeric" && answerType !== "narrative") {
+    throw new ApiError("The answer service returned an invalid answer type.", 502, "invalid_response");
+  }
+  if (!Array.isArray(item.citations)) {
+    throw new ApiError("The answer service omitted bank citations.", 502, "invalid_response");
+  }
+  return {
+    ticker: requiredString(item.ticker, "bank ticker"),
+    bank_name: requiredString(item.bank_name, "bank name"),
+    status,
+    answer_type: answerType,
+    answer: requiredString(item.answer, "bank answer"),
+    facts: asRecord(item.facts) as NumericFacts | null,
+    reason: requiredString(item.reason, "bank reason"),
+    citations: item.citations.map(parseCitation),
+  };
+}
+
+export function parseAnswerPayload(value: unknown): AnswerResponse {
+  const item = asRecord(value);
+  if (!item) throw new ApiError("The answer service returned an invalid answer.", 502, "invalid_response");
+  const status = item.status;
+  const answerType = item.answer_type;
+  if (status !== "supported" && status !== "partial" && status !== "ambiguous" && status !== "unsupported") {
+    throw new ApiError("The answer service returned an invalid answer status.", 502, "invalid_response");
+  }
+  if (answerType !== "numeric" && answerType !== "narrative") {
+    throw new ApiError("The answer service returned an invalid answer type.", 502, "invalid_response");
+  }
+  if (!Array.isArray(item.citations)) {
+    throw new ApiError("The answer service omitted citations.", 502, "invalid_response");
+  }
+  const allowedDialogActs = new Set([
+    "answer",
+    "clarification",
+    "greeting",
+    "acknowledgement",
+    "capability",
+    "general_explanation",
+    "out_of_scope",
+    "retryable_error",
+  ]);
+  const dialogAct = typeof item.dialog_act === "string" && allowedDialogActs.has(item.dialog_act)
+    ? item.dialog_act as AnswerResponse["dialog_act"]
+    : undefined;
+  return {
+    question: requiredString(item.question, "question"),
+    dialog_act: dialogAct,
+    mode: item.mode === "comparison" ? "comparison" : undefined,
+    ticker: typeof item.ticker === "string" ? item.ticker : null,
+    tickers: Array.isArray(item.tickers) ? item.tickers.filter((ticker): ticker is string => typeof ticker === "string") : undefined,
+    status,
+    answer_type: answerType,
+    answer: requiredString(item.answer, "answer text"),
+    reason: requiredString(item.reason, "answer reason"),
+    citations: item.citations.map(parseCitation),
+    bank_results: Array.isArray(item.bank_results) ? item.bank_results.map(parseBankResult) : undefined,
+    diagnostics: parseDiagnostics(item.diagnostics),
+  };
+}
+
+export function parseTurnPayload(value: unknown): Turn {
+  const item = asRecord(value);
+  if (!item) throw new ApiError("The answer service returned an invalid turn.", 502, "invalid_response");
+  const state = item.state;
+  if (state !== "loading" && state !== "answered" && state !== "error") {
+    throw new ApiError("The answer service returned an invalid turn state.", 502, "invalid_response");
+  }
+  const turn: Turn = {
+    id: requiredString(item.id, "turn ID"),
+    question: requiredString(item.question, "turn question"),
+    state,
+    error: optionalString(item.error),
+    error_code: optionalString(item.error_code),
+    status: optionalString(item.status),
+    diagnostics: parseDiagnostics(item.diagnostics),
+    created_at: optionalString(item.created_at),
+  };
+  if (state === "answered") turn.response = parseAnswerPayload(item.response);
+  if (state === "error" && !turn.error) turn.error = "The answer service reported an error.";
+  return turn;
+}
+
+function parseThreadSummary(value: unknown): ThreadSummary {
+  const item = asRecord(value);
+  if (!item) throw new ApiError("The answer service returned an invalid conversation.", 502, "invalid_response");
+  return {
+    id: requiredString(item.id, "conversation ID"),
+    title: requiredString(item.title, "conversation title"),
+    session_ticker: typeof item.session_ticker === "string" ? item.session_ticker : null,
+    session_tickers: Array.isArray(item.session_tickers) ? item.session_tickers.filter((ticker): ticker is string => typeof ticker === "string") : [],
+    created_at: requiredString(item.created_at, "conversation creation time"),
+    updated_at: requiredString(item.updated_at, "conversation update time"),
+  };
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -164,28 +349,33 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export async function listThreads(signal?: AbortSignal): Promise<ThreadSummary[]> {
-  const payload = await requestJson<{ threads: ThreadSummary[] }>("/api/threads", { signal });
-  return payload.threads;
+  const payload = await requestJson<{ threads?: unknown }>("/api/threads", { signal });
+  if (!Array.isArray(payload.threads)) throw new ApiError("The answer service omitted conversations.", 502, "invalid_response");
+  return payload.threads.map(parseThreadSummary);
 }
 
-export function createThread(): Promise<ThreadSummary> {
-  return requestJson("/api/threads", {
+export async function createThread(): Promise<ThreadSummary> {
+  const payload = await requestJson<unknown>("/api/threads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",
   });
+  return parseThreadSummary(payload);
 }
 
-export function loadThread(threadId: string, signal?: AbortSignal): Promise<ThreadHistory> {
-  return requestJson(`/api/threads/${threadId}/messages`, { signal });
+export async function loadThread(threadId: string, signal?: AbortSignal): Promise<ThreadHistory> {
+  const payload = asRecord(await requestJson<unknown>(`/api/threads/${threadId}/messages`, { signal }));
+  if (!payload || !Array.isArray(payload.turns)) throw new ApiError("The answer service returned invalid conversation history.", 502, "invalid_response");
+  return { thread: parseThreadSummary(payload.thread), turns: payload.turns.map(parseTurnPayload) };
 }
 
-export function renameThread(threadId: string, title: string): Promise<ThreadSummary> {
-  return requestJson(`/api/threads/${threadId}`, {
+export async function renameThread(threadId: string, title: string): Promise<ThreadSummary> {
+  const payload = await requestJson<unknown>(`/api/threads/${threadId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
   });
+  return parseThreadSummary(payload);
 }
 
 export async function deleteThread(threadId: string): Promise<void> {
@@ -195,12 +385,6 @@ export async function deleteThread(threadId: string): Promise<void> {
     throw new ApiError(payload.detail || "Conversation could not be deleted.", response.status);
   }
 }
-
-type StreamEvent =
-  | { type: "status"; stage: string; message: string }
-  | { type: "answer"; turn: Turn }
-  | { type: "error"; turn: Turn; error: string; code: string }
-  | { type: "done"; status: number };
 
 export async function streamAnswer(
   threadId: string,
@@ -222,33 +406,89 @@ export async function streamAnswer(
       payload.code,
     );
   }
+  const contentType = response.headers.get("content-type");
+  if (contentType && !contentType.toLowerCase().includes("text/event-stream")) {
+    throw new ApiError("The answer service returned a non-streaming response.", 502, "invalid_stream");
+  }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let finalTurn: Turn | undefined;
+  let malformedEvents = 0;
+
+  const consumeBlock = (block: string) => {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data || data === "[DONE]") return;
+    try {
+      const event = asRecord(JSON.parse(data));
+      if (!event || typeof event.type !== "string") throw new Error("Invalid SSE event");
+      if (event.type === "status" && typeof event.stage === "string") {
+        onStatus(event.stage, typeof event.message === "string" ? event.message : "");
+      }
+      if (event.type === "answer" || event.type === "error") {
+        finalTurn = parseTurnPayload(event.turn);
+      }
+    } catch {
+      malformedEvents += 1;
+    }
+  };
 
   while (true) {
     const { value, done } = await reader.read();
     buffer += decoder.decode(value, { stream: !done });
-    const blocks = buffer.split("\n\n");
-    buffer = blocks.pop() ?? "";
-    for (const block of blocks) {
-      const data = block.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
-      if (!data) continue;
-      const event = JSON.parse(data) as StreamEvent;
-      if (event.type === "status") onStatus(event.stage, event.message);
-      if (event.type === "answer" || event.type === "error") finalTurn = event.turn;
+    let boundary = /\r?\n\r?\n/.exec(buffer);
+    while (boundary) {
+      consumeBlock(buffer.slice(0, boundary.index));
+      buffer = buffer.slice(boundary.index + boundary[0].length);
+      boundary = /\r?\n\r?\n/.exec(buffer);
     }
     if (done) break;
   }
-  if (!finalTurn) throw new ApiError("The answer stream ended without a result.", 500);
+  if (buffer.trim()) consumeBlock(buffer);
+  if (!finalTurn) {
+    const detail = malformedEvents ? ` (${malformedEvents} malformed event${malformedEvents === 1 ? "" : "s"})` : "";
+    throw new ApiError(`The answer stream ended without a valid result${detail}.`, 502, "invalid_stream");
+  }
   return finalTurn;
 }
 
-export function loadCitationContext(
+export async function loadCitationContext(
   citationId: string,
   signal?: AbortSignal,
 ): Promise<CitationContext> {
-  return requestJson(`/api/citations/${citationId}/context?radius=1`, { signal });
+  const payload = asRecord(await requestJson<unknown>(`/api/citations/${citationId}/context?radius=1`, { signal }));
+  if (!payload || !Array.isArray(payload.chunks)) throw new ApiError("The answer service returned invalid citation context.", 502, "invalid_response");
+  const citationWrapper = asRecord(payload.citation);
+  const metadata = parseCitation(asRecord(citationWrapper?.metadata));
+  const chunks = payload.chunks.map((value) => {
+    const chunk = asRecord(value);
+    if (!chunk || (chunk.role !== "previous" && chunk.role !== "anchor" && chunk.role !== "next")) {
+      throw new ApiError("The answer service returned an invalid source chunk.", 502, "invalid_response");
+    }
+    return {
+      target_chunk_id: requiredString(chunk.target_chunk_id, "source target"),
+      role: chunk.role,
+      record_type: requiredString(chunk.record_type, "source record type"),
+      document: requiredString(chunk.document, "source document"),
+      metadata: asRecord(chunk.metadata) ?? {},
+    } as SourceChunk;
+  });
+  return {
+    citation: {
+      id: requiredString(citationWrapper?.id, "stored citation ID"),
+      label: requiredString(citationWrapper?.label, "stored citation label"),
+      metadata,
+    },
+    target_chunk_id: requiredString(payload.target_chunk_id, "source target"),
+    record_type: requiredString(payload.record_type, "source record type"),
+    ticker: requiredString(payload.ticker, "source ticker"),
+    source_url: typeof payload.source_url === "string" ? payload.source_url : "",
+    corpus_hash: requiredString(payload.corpus_hash, "source corpus hash"),
+    chunks,
+  };
 }

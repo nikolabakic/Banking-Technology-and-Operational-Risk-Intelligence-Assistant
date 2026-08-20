@@ -16,6 +16,10 @@ from bankscope.generation.contextualizer import (
     contextualize_question,
 )
 from bankscope.generation.pipeline import SingleBankAnswerPipeline
+from bankscope.generation.query_planner import (
+    needs_contextualization,
+    recent_conversation_history,
+)
 from bankscope.io import read_jsonl
 from bankscope.llm import create_openai_client
 from bankscope.sec.bank_resolver import resolve_bank
@@ -153,10 +157,10 @@ def main() -> None:
             current_question = str(case["current_question"])
             history = case["history"]
             standalone = current_question
-            if history:
+            if history and needs_contextualization(current_question):
                 standalone = contextualize_question(
                     current_question,
-                    history,
+                    recent_conversation_history(history, max_turns=2),
                     client=client,
                     model=model,
                     session_ticker=case["session_ticker"],

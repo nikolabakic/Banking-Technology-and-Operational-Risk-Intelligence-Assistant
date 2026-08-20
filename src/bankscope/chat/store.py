@@ -15,6 +15,7 @@ SCHEMA_VERSION = 2
 DEFAULT_THREAD_TITLE = "New conversation"
 DEFAULT_MEMORY_MAX_TURNS = 4
 DEFAULT_MEMORY_MAX_CHARS = 12_000
+DEFAULT_MEMORY_MAX_TOKENS = 1_500
 
 
 def _now() -> str:
@@ -229,34 +230,49 @@ class ChatStore:
         *,
         max_turns: int = DEFAULT_MEMORY_MAX_TURNS,
         max_chars: int = DEFAULT_MEMORY_MAX_CHARS,
+        max_tokens: int = DEFAULT_MEMORY_MAX_TOKENS,
     ) -> list[dict[str, str]]:
-        """Return bounded, completed turn pairs for one thread's model context."""
+        """Return compact research state while preserving the full transcript in SQLite."""
         if max_turns <= 0:
             raise ValueError("max_turns must be positive.")
         if max_chars <= 0:
             raise ValueError("max_chars must be positive.")
+        if max_tokens <= 0:
+            raise ValueError("max_tokens must be positive.")
 
         messages = self.list_messages(thread_id)
         completed_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
         for index in range(0, len(messages), 2):
             user = messages[index]
             assistant = messages[index + 1] if index + 1 < len(messages) else None
+            assistant_payload = (assistant or {}).get("payload") or {}
+            dialog_act = str(assistant_payload.get("dialog_act") or "answer")
+            if dialog_act == "out_of_scope":
+                # A declined topic is a barrier: a later pronoun must not jump back over it and
+                # accidentally revive stale filing research.
+                completed_pairs.clear()
+                continue
             if (
                 user["role"] == "user"
                 and assistant is not None
                 and assistant["role"] == "assistant"
                 and assistant["status"] == "complete"
+                and dialog_act in {"answer", "clarification"}
             ):
                 completed_pairs.append((user, assistant))
 
         selected: list[tuple[dict[str, Any], dict[str, Any]]] = []
         used_chars = 0
+        used_tokens = 0
         for user, assistant in reversed(completed_pairs):
-            pair_chars = len(user["content"]) + len(assistant["content"])
-            if pair_chars + used_chars > max_chars:
+            compact_assistant = self._compact_assistant_state(user, assistant)
+            pair_chars = len(user["content"]) + len(compact_assistant)
+            pair_tokens = max(1, (pair_chars + 3) // 4)
+            if pair_chars + used_chars > max_chars or pair_tokens + used_tokens > max_tokens:
                 break
             selected.append((user, assistant))
             used_chars += pair_chars
+            used_tokens += pair_tokens
             if len(selected) == max_turns:
                 break
 
@@ -265,10 +281,34 @@ class ChatStore:
             history.extend(
                 [
                     {"role": "user", "content": user["content"]},
-                    {"role": "assistant", "content": assistant["content"]},
+                    {
+                        "role": "assistant",
+                        "content": self._compact_assistant_state(user, assistant),
+                    },
                 ]
             )
         return history
+
+    @staticmethod
+    def _compact_assistant_state(user: Mapping[str, Any], assistant: Mapping[str, Any]) -> str:
+        """Keep conversational routing state, never prior answers, facts, or citations."""
+
+        payload = assistant.get("payload") or {}
+        contextualization = payload.get("contextualization") or {}
+        tickers = payload.get("tickers") or []
+        if not tickers and payload.get("ticker"):
+            tickers = [payload["ticker"]]
+        state = {
+            "dialog_act": str(payload.get("dialog_act") or "answer"),
+            "status": str(payload.get("status") or "unknown"),
+            "tickers": [str(value) for value in tickers],
+            "mode": str(payload.get("mode") or "single"),
+            "answer_type": str(payload.get("answer_type") or "narrative"),
+            "resolved_question": str(
+                contextualization.get("standalone_question") or user.get("content") or ""
+            ),
+        }
+        return _json(state)
 
     def append_answer_turn(
         self,

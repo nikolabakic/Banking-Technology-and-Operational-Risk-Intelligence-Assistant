@@ -10,6 +10,7 @@ import numpy as np
 
 from bankscope.generation.agentic import (
     MAX_AGENT_MODEL_REQUESTS,
+    MAX_AGENT_TOOL_ACTIONS,
     MAX_VERIFIER_REQUESTS,
     AgentState,
     CanonicalContextExpander,
@@ -20,7 +21,6 @@ from bankscope.generation.agentic import (
     SearchHybridStep,
     deduplicate_evidence,
     request_agent_step,
-    route_question,
     validate_agent_step,
     verify_evidence,
 )
@@ -28,9 +28,30 @@ from bankscope.generation.answer_generator import (
     CITATION_PATTERN,
     GenerationValidationError,
     generate_answer,
+    question_language,
+    render_unsupported_answer,
 )
 from bankscope.generation.comparison_generator import synthesize_comparison
-from bankscope.generation.contextualizer import contextualize_question
+from bankscope.generation.conversation import (
+    ClarificationArgs,
+    DeclineOutOfScopeArgs,
+    DirectResponseArgs,
+    ResearchFilingsArgs,
+    cet1_metric_clarification,
+    is_banking_domain_question,
+    is_clearly_out_of_scope,
+    render_capability_answer,
+    render_out_of_scope_answer,
+    request_conversation_action,
+)
+from bankscope.generation.query_planner import (
+    build_bank_subquestion,
+    build_retrieval_queries,
+    needs_contextualization,
+    recent_conversation_history,
+    round_robin_evidence,
+    validate_contextualized_rewrite,
+)
 from bankscope.io import read_jsonl, sha256_file
 from bankscope.retrieval.glossary_locators import validate_glossary_locators
 from bankscope.retrieval.hybrid_retriever import HybridRetriever
@@ -247,7 +268,8 @@ class BankAnswerPipeline:
         error_code: str | None = None,
     ) -> dict[str, Any]:
         action_budget_ok = all(
-            int(plan.get("tool_action_count") or plan.get("additional_action_count") or 0) <= 4
+            int(plan.get("tool_action_count") or plan.get("additional_action_count") or 0)
+            <= MAX_AGENT_TOOL_ACTIONS
             for plan in bank_plans
         )
         orchestration_budget = MAX_AGENT_MODEL_REQUESTS * max(1, len(bank_plans))
@@ -299,6 +321,7 @@ class BankAnswerPipeline:
         rrf_k: int,
         on_progress: Callable[[str, Mapping[str, Any]], None] | None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any], float, float, int, str]:
+        baseline_evidence = [dict(item) for item in evidence]
         state = AgentState(
             ticker=ticker,
             question=question,
@@ -311,6 +334,7 @@ class BankAnswerPipeline:
         schema_valid = True
 
         while state.model_requests < MAX_AGENT_MODEL_REQUESTS:
+            request_recorded = False
             if on_progress is not None:
                 on_progress(
                     "assessing_evidence",
@@ -326,6 +350,7 @@ class BankAnswerPipeline:
                 )
                 state.model_requests += decision.request_count
                 orchestration_ms += decision.latency_ms
+                request_recorded = True
                 step = decision.value
                 if not isinstance(
                     step, (SearchHybridStep, SearchExactStep, ReadContextStep, FinishStep)
@@ -333,7 +358,9 @@ class BankAnswerPipeline:
                     raise RuntimeError("Agent returned an unexpected step type.")
                 validate_agent_step(step, state)
                 state.consecutive_schema_failures = 0
-                if state.tool_actions >= 4 and not isinstance(step, FinishStep):
+                if state.tool_actions >= MAX_AGENT_TOOL_ACTIONS and not isinstance(
+                    step, FinishStep
+                ):
                     step = FinishStep(
                         action="finish",
                         status="sufficient" if state.evidence else "unsupported",
@@ -345,8 +372,9 @@ class BankAnswerPipeline:
                         ],
                     )
             except GenerationValidationError as error:
-                state.model_requests += int(error.generation.get("request_count") or 1)
-                orchestration_ms += float(error.generation.get("latency_ms") or 0.0)
+                if not request_recorded:
+                    state.model_requests += int(error.generation.get("request_count") or 1)
+                    orchestration_ms += float(error.generation.get("latency_ms") or 0.0)
                 state.consecutive_schema_failures += 1
                 schema_valid = False
                 state.trace.append(
@@ -538,22 +566,18 @@ class BankAnswerPipeline:
                     if verdict.status == "missing" and state.remaining_tool_actions > 0:
                         state.verifier_feedback.extend(verdict.missing_aspects)
                         continue
-                    final_status = (
-                        "sufficient" if verdict.status == "sufficient" else "unsupported"
-                    )
+                    final_status = "sufficient" if verdict.status == "sufficient" else "unsupported"
                     break
                 except GenerationValidationError as error:
                     state.model_requests += int(error.generation.get("request_count") or 1)
                     state.verifier_requests += 1
                     orchestration_ms += float(error.generation.get("latency_ms") or 0.0)
                     schema_valid = False
-                    state.trace.append(
-                        {"action": "invalid_verdict", "error_code": error.code}
-                    )
+                    state.trace.append({"action": "invalid_verdict", "error_code": error.code})
                     final_status = "sufficient" if state.evidence else "unsupported"
                     break
 
-            if state.tool_actions >= 4:
+            if state.tool_actions >= MAX_AGENT_TOOL_ACTIONS:
                 # The next model call must finish; make that constraint visible to the agent.
                 state.verifier_feedback.append(
                     "Tool budget exhausted; finish from current evidence."
@@ -574,13 +598,19 @@ class BankAnswerPipeline:
             "schema_valid": schema_valid,
             "query_preservation_ok": not any(
                 trace.get("error_code")
-                in {"agentic_search_lost_period", "agentic_search_added_numeric_fact"}
+                in {
+                    "agentic_search_lost_period",
+                    "agentic_search_added_numeric_fact",
+                    "agentic_exact_added_numeric_fact",
+                }
                 for trace in state.trace
             ),
             "bank_isolation_ok": True,
             "fallback": not schema_valid,
         }
-        final_evidence = state.evidence if final_status == "sufficient" else []
+        # Agentic retrieval is corrective and additive. A model verdict must never erase the
+        # validated baseline path; generation remains the final groundedness/abstention gate.
+        final_evidence = deduplicate_evidence(baseline_evidence, state.evidence, limit=10)
         return (
             final_evidence,
             payload,
@@ -595,6 +625,7 @@ class BankAnswerPipeline:
         question: str,
         *,
         ticker: str,
+        original_question: str | None = None,
         record_type: str | None = None,
         limit: int = 5,
         candidate_k: int = 30,
@@ -611,35 +642,68 @@ class BankAnswerPipeline:
         if limit <= 0 or candidate_k < limit or rrf_k <= 0:
             raise ValueError("Invalid retrieval limits.")
         stages: list[dict[str, Any]] = []
+        bank_name = self.bank_names.get(normalized_ticker, normalized_ticker)
+        retrieval_queries = build_retrieval_queries(
+            question,
+            ticker=normalized_ticker,
+            bank_name=bank_name,
+            original_question=original_question,
+        )
         if on_progress is not None:
             on_progress(
                 "embedding",
-                {"message": "Encoding the question...", "ticker": normalized_ticker},
+                {
+                    "message": (
+                        "Encoding section-diverse summary searches..."
+                        if len(retrieval_queries) > 1
+                        else "Encoding the question..."
+                    ),
+                    "ticker": normalized_ticker,
+                    "query_count": len(retrieval_queries),
+                },
             )
-        started = perf_counter()
-        vector = self.query_encoder.encode(question)
-        embedding_ms = (perf_counter() - started) * 1000
+        embedding_ms = 0.0
+        vectors: list[np.ndarray] = []
+        for retrieval_query in retrieval_queries:
+            started = perf_counter()
+            vectors.append(self.query_encoder.encode(retrieval_query))
+            embedding_ms += (perf_counter() - started) * 1000
         stages.append({"stage": "embedding", "status": "completed", "latency_ms": embedding_ms})
         if on_progress is not None:
             on_progress(
                 "retrieving",
-                {"message": "Searching indexed filings...", "ticker": normalized_ticker},
+                {
+                    "message": (
+                        "Searching key sections of the indexed filing..."
+                        if len(retrieval_queries) > 1
+                        else "Searching indexed filings..."
+                    ),
+                    "ticker": normalized_ticker,
+                    "query_count": len(retrieval_queries),
+                },
             )
-        started = perf_counter()
-        evidence = self.retriever.search_hybrid(
-            question,
-            vector,
-            limit=limit,
-            candidate_k=candidate_k,
-            rrf_k=rrf_k,
-            ticker=normalized_ticker,
-            record_type=record_type,
-        )
-        retrieval_ms = (perf_counter() - started) * 1000
+        retrieval_ms = 0.0
+        result_groups: list[list[dict[str, Any]]] = []
+        per_query_limit = limit if len(retrieval_queries) == 1 else 2
+        for retrieval_query, vector in zip(retrieval_queries, vectors, strict=True):
+            started = perf_counter()
+            results = self.retriever.search_hybrid(
+                retrieval_query,
+                vector,
+                limit=per_query_limit,
+                candidate_k=candidate_k,
+                rrf_k=rrf_k,
+                ticker=normalized_ticker,
+                record_type=record_type,
+            )
+            retrieval_ms += (perf_counter() - started) * 1000
+            result_groups.append([dict(item) for item in results])
+        evidence_limit = limit if len(retrieval_queries) == 1 else max(limit, 10)
+        evidence = [
+            dict(item) for item in round_robin_evidence(result_groups, limit=evidence_limit)
+        ]
         initial_count = len(evidence)
-        stages.append(
-            {"stage": "retrieving", "status": "completed", "latency_ms": retrieval_ms}
-        )
+        stages.append({"stage": "retrieving", "status": "completed", "latency_ms": retrieval_ms})
         plans: list[dict[str, Any]] = []
         requests = 0
         orchestration_ms = 0.0
@@ -669,6 +733,7 @@ class BankAnswerPipeline:
         diagnostics = {
             "ticker": normalized_ticker,
             "status": status,
+            "queries": list(retrieval_queries),
             "initial_evidence_count": initial_count,
             "final_evidence_count": len(evidence),
             "model_request_count": requests,
@@ -679,7 +744,10 @@ class BankAnswerPipeline:
                     for plan in plans
                     for key in ("query_preservation_ok", "bank_isolation_ok")
                 )
-                and all(int(plan.get("tool_action_count") or 0) <= 4 for plan in plans)
+                and all(
+                    int(plan.get("tool_action_count") or 0) <= MAX_AGENT_TOOL_ACTIONS
+                    for plan in plans
+                )
                 and all(bool(plan.get("schema_valid", True)) for plan in plans)
                 and requests <= MAX_AGENT_MODEL_REQUESTS,
             },
@@ -704,7 +772,7 @@ class BankAnswerPipeline:
         *,
         ticker: str | None = None,
         tickers: Sequence[str] = (),
-        conversation_history: Sequence[Mapping[str, str]] = (),
+        conversation_history: Sequence[Mapping[str, str]] | None = None,
         record_type: str | None = None,
         limit: int = 5,
         candidate_k: int = 30,
@@ -726,61 +794,267 @@ class BankAnswerPipeline:
         stages: list[dict[str, Any]] = []
         route = "domain_rag"
         orchestration_request_count = 0
-        if self.agentic_rag_enabled:
-            if on_progress is not None:
-                on_progress("routing", {"message": "Routing the request..."})
-            routed = route_question(question, client=self.client, model=self.generation_model)
-            route = str(routed.value.route)
-            orchestration_request_count += routed.request_count
-            stages.append(
-                {
-                    "stage": "routing",
-                    "status": "completed",
-                    "latency_ms": routed.latency_ms,
-                    "fallback": routed.fallback,
-                }
-            )
-            if route == "general_chat":
-                return self._general_chat_run(
-                    question,
-                    stages=stages,
-                    model_request_count=orchestration_request_count,
-                )
+        history = list(conversation_history or ())
+        chat_mode = conversation_history is not None
+        explicit_resolution = resolve_bank(
+            question,
+            bank_names=self.bank_names,
+            bank_aliases=self.bank_aliases,
+        )
+
+        available_history_turns = len(history) // 2
+        selected_history: list[Mapping[str, str]] = []
+        if history and needs_contextualization(question):
+            selected_history = recent_conversation_history(history, max_turns=2)
 
         standalone_question = question
         contextualization_model: str | None = None
         contextualization_latency_ms = 0.0
-        if conversation_history:
+        contextualization_fallback = False
+        contextualization_error_code: str | None = None
+
+        if chat_mode:
+            if on_progress is not None:
+                on_progress("routing", {"message": "Routing the request..."})
+            session_scope = list(
+                dict.fromkeys(
+                    value.strip().upper()
+                    for value in (tickers or ((ticker,) if ticker else ()))
+                    if value and value.strip()
+                )
+            )
+            deterministic_clarification = cet1_metric_clarification(question)
+            if deterministic_clarification is not None:
+                stages.append(
+                    {
+                        "stage": "routing",
+                        "status": "completed",
+                        "latency_ms": 0.0,
+                        "source": "deterministic_scope_guard",
+                        "action": type(deterministic_clarification).__name__,
+                        "fallback": False,
+                        "error_code": None,
+                    }
+                )
+                return self._clarification_run(
+                    question,
+                    deterministic_clarification,
+                    stages=stages,
+                    model_request_count=0,
+                    history_turns=len(selected_history) // 2,
+                    available_history_turns=available_history_turns,
+                    fallback=False,
+                    error_code=None,
+                )
+            if is_clearly_out_of_scope(question, self.bank_names):
+                stages.append(
+                    {
+                        "stage": "routing",
+                        "status": "completed",
+                        "latency_ms": 0.0,
+                        "source": "deterministic_scope_guard",
+                        "action": "DeclineOutOfScopeArgs",
+                        "fallback": False,
+                        "error_code": None,
+                    }
+                )
+                return self._out_of_scope_run(
+                    question,
+                    stages=stages,
+                    model_request_count=0,
+                    history_turns=0,
+                    available_history_turns=available_history_turns,
+                    fallback=False,
+                    error_code=None,
+                )
+            if (
+                needs_contextualization(question)
+                and not selected_history
+                and not is_banking_domain_question(question, self.bank_names)
+            ):
+                if question_language(question) == "Serbian":
+                    clarification_text = "Na koje bankarsko pitanje želite da se nadovežem?"
+                else:
+                    clarification_text = "Which banking question would you like me to continue?"
+                action = ClarificationArgs(question=clarification_text, missing="intent")
+                stages.append(
+                    {
+                        "stage": "routing",
+                        "status": "completed",
+                        "latency_ms": 0.0,
+                        "source": "deterministic_context_guard",
+                        "action": type(action).__name__,
+                        "fallback": False,
+                        "error_code": None,
+                    }
+                )
+                return self._clarification_run(
+                    question,
+                    action,
+                    stages=stages,
+                    model_request_count=0,
+                    history_turns=0,
+                    available_history_turns=available_history_turns,
+                    fallback=False,
+                    error_code=None,
+                )
+            decision = request_conversation_action(
+                question,
+                selected_history,
+                client=self.client,
+                model=self.generation_model,
+                bank_names=self.bank_names,
+                session_tickers=session_scope,
+            )
+            orchestration_request_count += decision.request_count
+            action = decision.action
+            stages.append(
+                {
+                    "stage": "routing",
+                    "status": "completed",
+                    "latency_ms": decision.latency_ms,
+                    "source": "native_function_call",
+                    "action": type(action).__name__,
+                    "fallback": decision.fallback,
+                    "error_code": decision.error_code,
+                }
+            )
+            if isinstance(action, DirectResponseArgs):
+                if action.category == "capability":
+                    action = DirectResponseArgs(
+                        answer=render_capability_answer(question, self.bank_names),
+                        category="capability",
+                    )
+                elif action.category == "general_explanation" and (
+                    explicit_resolution.tickers
+                    or (session_scope and needs_contextualization(question))
+                ):
+                    action = ResearchFilingsArgs(
+                        search_question=question,
+                        reason="Bank-specific context requires grounded filing research.",
+                    )
+                if isinstance(action, DirectResponseArgs):
+                    return self._direct_conversation_run(
+                        question,
+                        action,
+                        stages=stages,
+                        model_request_count=orchestration_request_count,
+                        history_turns=len(selected_history) // 2,
+                        available_history_turns=available_history_turns,
+                        fallback=decision.fallback,
+                        error_code=decision.error_code,
+                    )
+            if isinstance(action, ClarificationArgs):
+                return self._clarification_run(
+                    question,
+                    action,
+                    stages=stages,
+                    model_request_count=orchestration_request_count,
+                    history_turns=len(selected_history) // 2,
+                    available_history_turns=available_history_turns,
+                    fallback=decision.fallback,
+                    error_code=decision.error_code,
+                )
+            if isinstance(action, DeclineOutOfScopeArgs):
+                return self._out_of_scope_run(
+                    question,
+                    stages=stages,
+                    model_request_count=orchestration_request_count,
+                    history_turns=len(selected_history) // 2,
+                    available_history_turns=available_history_turns,
+                    fallback=decision.fallback,
+                    error_code=decision.error_code,
+                )
+            if not isinstance(action, ResearchFilingsArgs):
+                raise RuntimeError("Conversation routing returned an unexpected action.")
+            standalone_question = action.search_question
+            contextualization_model = self.generation_model
+            contextualization_latency_ms = decision.latency_ms
+            contextualization_fallback = decision.fallback
+            contextualization_error_code = decision.error_code
             if on_progress is not None:
                 on_progress(
                     "contextualizing",
-                    {"message": "Resolving the follow-up question..."},
+                    {"message": "Preparing the filing search..."},
                 )
-            contextualization = contextualize_question(
-                question,
-                conversation_history,
-                client=self.client,
-                model=self.generation_model,
-                session_ticker=ticker,
-                session_tickers=tickers,
-            )
-            standalone_question = contextualization.standalone_question
-            contextualization_model = contextualization.model
-            contextualization_latency_ms = contextualization.latency_ms
-            orchestration_request_count += 1
+            user_history = [
+                str(message.get("content") or "")
+                for message in selected_history
+                if message.get("role") == "user"
+            ]
+            try:
+                validate_contextualized_rewrite(
+                    question,
+                    standalone_question,
+                    allowed_user_context=user_history,
+                )
+                planned_resolution = resolve_bank(
+                    standalone_question,
+                    bank_names=self.bank_names,
+                    bank_aliases=self.bank_aliases,
+                    session_ticker=ticker,
+                    session_tickers=tickers,
+                )
+                explicit_scope = set(explicit_resolution.tickers)
+                planned_scope = set(planned_resolution.tickers)
+                history_scope = {
+                    history_ticker
+                    for message in selected_history
+                    if message.get("role") == "user"
+                    for history_ticker in resolve_bank(
+                        str(message.get("content") or ""),
+                        bank_names=self.bank_names,
+                        bank_aliases=self.bank_aliases,
+                    ).tickers
+                }
+                allowed_scope = explicit_scope | set(session_scope) | history_scope
+                if explicit_scope - planned_scope:
+                    raise GenerationValidationError(
+                        "contextualization_lost_bank_scope",
+                        "The filing search dropped a bank named in the current question.",
+                        generation={"stage": "contextualizing"},
+                    )
+                if planned_scope - allowed_scope:
+                    raise GenerationValidationError(
+                        "contextualization_added_bank_scope",
+                        "The filing search introduced a bank outside the conversation scope.",
+                        generation={"stage": "contextualizing"},
+                    )
+            except GenerationValidationError as error:
+                # Search-query planning is fail-open. The original message remains authoritative;
+                # grounded answer generation and citation validation remain fail-closed.
+                standalone_question = question
+                contextualization_fallback = True
+                contextualization_error_code = error.code
             stages.append(
                 {
                     "stage": "contextualizing",
                     "status": "completed",
                     "latency_ms": contextualization_latency_ms,
+                    "fallback": contextualization_fallback,
+                    "error_code": contextualization_error_code,
                 }
             )
+        contextualization_applied = standalone_question != question
         contextualization_payload = {
-            "applied": bool(conversation_history),
-            "history_turns": len(conversation_history) // 2,
+            "applied": contextualization_applied,
+            "history_turns": len(selected_history) // 2,
+            "available_history_turns": available_history_turns,
             "standalone_question": standalone_question,
             "model": contextualization_model,
             "latency_ms": contextualization_latency_ms,
+            "source": "conversation_tool" if chat_mode else "not_requested",
+            "fallback": contextualization_fallback,
+            "error_code": contextualization_error_code,
+            "skip_reason": (
+                None
+                if contextualization_applied
+                else "no_history"
+                if not history
+                else "original_question_fallback"
+                if contextualization_fallback
+                else "current_question_is_standalone"
+            ),
         }
 
         if on_progress is not None:
@@ -792,6 +1066,37 @@ class BankAnswerPipeline:
             session_ticker=ticker,
             session_tickers=tickers,
         )
+        if contextualization_applied:
+            explicit_scope = set(explicit_resolution.tickers)
+            final_scope = set(resolution.tickers)
+            session_scope = {
+                value.strip().upper()
+                for value in (tickers or ((ticker,) if ticker else ()))
+                if value and value.strip()
+            }
+            history_scope = {
+                history_ticker
+                for message in selected_history
+                if message.get("role") == "user"
+                for history_ticker in resolve_bank(
+                    str(message.get("content") or ""),
+                    bank_names=self.bank_names,
+                    bank_aliases=self.bank_aliases,
+                ).tickers
+            }
+            if explicit_scope - final_scope:
+                raise GenerationValidationError(
+                    "contextualization_lost_bank_scope",
+                    "The standalone question dropped a bank named in the current question.",
+                    generation={"stage": "contextualizing"},
+                )
+            allowed_scope = explicit_scope | session_scope | history_scope
+            if final_scope - allowed_scope:
+                raise GenerationValidationError(
+                    "contextualization_added_bank_scope",
+                    "The standalone question introduced a bank outside the current thread scope.",
+                    generation={"stage": "contextualizing"},
+                )
         stages.append({"stage": "resolving_bank", "status": "completed", "latency_ms": 0.0})
         if resolution.status in {"missing", "too_many"}:
             return self._ambiguous_bank_run(
@@ -820,6 +1125,7 @@ class BankAnswerPipeline:
         retrieval_run = self.retrieve_evidence(
             standalone_question,
             ticker=resolved_ticker,
+            original_question=question,
             record_type=record_type,
             limit=limit,
             candidate_k=candidate_k,
@@ -860,6 +1166,7 @@ class BankAnswerPipeline:
         stages.append({"stage": "validating", "status": "completed", "latency_ms": 0.0})
         output = {
             "question": question,
+            "dialog_act": "answer",
             "ticker": resolved_ticker,
             "contextualization": contextualization_payload,
             "bank_resolution": resolution.as_dict(),
@@ -867,6 +1174,7 @@ class BankAnswerPipeline:
                 "backend": "mixed",
                 "mode": "hybrid",
                 "evidence_count": len(evidence),
+                "queries": list(retrieval_run.diagnostics.get("queries") or []),
             },
             **answer,
         }
@@ -931,86 +1239,56 @@ class BankAnswerPipeline:
         orchestration_request_count: int,
     ) -> AnswerRun:
         selected_tickers = resolution.tickers
-        if on_progress is not None:
-            on_progress(
-                "embedding",
-                {"message": "Encoding the comparison question...", "tickers": selected_tickers},
-            )
-        started = perf_counter()
-        query_vector = self.query_encoder.encode(standalone_question)
-        embedding_latency_ms = (perf_counter() - started) * 1000
-        stages.append(
-            {"stage": "embedding", "status": "completed", "latency_ms": embedding_latency_ms}
-        )
-
+        embedding_latency_ms = 0.0
+        retrieval_latency_ms = 0.0
         all_evidence: list[dict[str, Any]] = []
         bank_results: list[dict[str, Any]] = []
         per_bank_retrieval: list[dict[str, Any]] = []
-        if on_progress is not None:
-            on_progress(
-                "retrieving",
-                {
-                    "message": "Searching each selected bank filing...",
-                    "tickers": selected_tickers,
-                },
-            )
-        bank_searches = self.retriever.search_hybrid_by_ticker(
-            standalone_question,
-            query_vector,
-            tickers=selected_tickers,
-            limit_per_ticker=limit,
-            candidate_k=candidate_k,
-            rrf_k=rrf_k,
-            record_type=record_type,
-        )
-        search_by_ticker = {search.ticker: search for search in bank_searches}
-        if set(search_by_ticker) != set(selected_tickers):
-            raise RuntimeError("Multi-bank retrieval did not return every selected ticker.")
-        retrieval_latency_ms = sum(search.latency_ms for search in bank_searches)
-        stages.append(
-            {"stage": "retrieving", "status": "completed", "latency_ms": retrieval_latency_ms}
-        )
         bank_generation_latency_ms = 0.0
         initial_evidence_count = 0
         bank_plans: list[dict[str, Any]] = []
         next_citation_index = 1
         for ticker in selected_tickers:
             bank_name = self.bank_names.get(ticker, ticker)
-            bank_search = search_by_ticker[ticker]
-            evidence = bank_search.results
-            initial_evidence_count += len(evidence)
-            if self.agentic_rag_enabled:
-                evidence, plan, extra_embedding, extra_work, requests, _ = (
-                    self._run_agentic_loop(
-                        standalone_question,
-                        evidence,
-                        ticker=ticker,
-                        record_type=record_type,
-                        candidate_k=candidate_k,
-                        rrf_k=rrf_k,
-                        on_progress=on_progress,
-                    )
-                )
-                bank_plans.append(plan)
-                embedding_latency_ms += extra_embedding
-                retrieval_latency_ms += max(
-                    0.0, extra_work - float(plan.get("assessment_latency_ms") or 0.0)
-                )
-                orchestration_request_count += requests
-                stages.append(
-                    {
-                        "stage": "agentic_retrieval",
-                        "status": "completed",
-                        "ticker": ticker,
-                        "latency_ms": extra_work,
-                    }
-                )
+            bank_question = build_bank_subquestion(
+                standalone_question,
+                ticker=ticker,
+                selected_tickers=selected_tickers,
+                bank_names=self.bank_names,
+                bank_aliases=self.bank_aliases,
+            )
+            original_bank_question = build_bank_subquestion(
+                question,
+                ticker=ticker,
+                selected_tickers=selected_tickers,
+                bank_names=self.bank_names,
+                bank_aliases=self.bank_aliases,
+            )
+            retrieval_run = self.retrieve_evidence(
+                bank_question,
+                ticker=ticker,
+                original_question=original_bank_question,
+                record_type=record_type,
+                limit=limit,
+                candidate_k=candidate_k,
+                rrf_k=rrf_k,
+                on_progress=on_progress,
+            )
+            evidence = retrieval_run.evidence
+            initial_evidence_count += retrieval_run.initial_evidence_count
+            embedding_latency_ms += retrieval_run.embedding_latency_ms
+            retrieval_latency_ms += retrieval_run.retrieval_latency_ms
+            orchestration_request_count += retrieval_run.model_request_count
+            bank_plans.extend(dict(plan) for plan in retrieval_run.agentic_plans)
+            stages.extend({**dict(stage), "ticker": ticker} for stage in retrieval_run.stage_trace)
             all_evidence.extend(evidence)
             per_bank_retrieval.append(
                 {
                     "ticker": ticker,
+                    "query": bank_question,
+                    "queries": list(retrieval_run.diagnostics.get("queries") or []),
                     "evidence_count": len(evidence),
-                    "latency_ms": bank_search.latency_ms,
+                    "latency_ms": retrieval_run.retrieval_latency_ms,
                 }
             )
 
@@ -1024,18 +1302,40 @@ class BankAnswerPipeline:
                     },
                 )
             started = perf_counter()
-            answer = generate_answer(
-                question,
-                evidence,
-                client=self.client,
-                model=self.generation_model,
-                expected_ticker=ticker,
-                expected_bank_name=bank_name,
-                expected_record_type=record_type,
-                temperature=self.temperature,
-                resolved_question=standalone_question,
-                comparison_scope=True,
-            )
+            try:
+                answer = generate_answer(
+                    question,
+                    evidence,
+                    client=self.client,
+                    model=self.generation_model,
+                    expected_ticker=ticker,
+                    expected_bank_name=bank_name,
+                    expected_record_type=record_type,
+                    temperature=self.temperature,
+                    resolved_question=bank_question,
+                    comparison_scope=True,
+                )
+            except GenerationValidationError as error:
+                generation = dict(error.generation)
+                answer = {
+                    "status": "unsupported",
+                    "answer_type": "narrative",
+                    "answer": render_unsupported_answer(question),
+                    "facts": None,
+                    "reason": (
+                        f"The {ticker} answer failed output validation ({error.code}); "
+                        "the other banks were still evaluated."
+                    ),
+                    "citations": [],
+                    "generation": {
+                        **generation,
+                        "model": self.generation_model,
+                        "request_count": int(generation.get("request_count") or 0),
+                        "final_status": "unsupported",
+                        "error_code": error.code,
+                    },
+                }
+                per_bank_retrieval[-1]["generation_error_code"] = error.code
             bank_generation_latency_ms += (perf_counter() - started) * 1000
             relabeled, next_citation_index = self._relabel_bank_result(answer, next_citation_index)
             bank_results.append({"ticker": ticker, "bank_name": bank_name, **relabeled})
@@ -1083,6 +1383,7 @@ class BankAnswerPipeline:
         ) + int(synthesis["generation"].get("request_count") or 0)
         output = {
             "question": question,
+            "dialog_act": "answer",
             "mode": "comparison",
             "ticker": None,
             "tickers": list(selected_tickers),
@@ -1138,6 +1439,210 @@ class BankAnswerPipeline:
             agentic_plans=tuple(bank_plans),
         )
 
+    def _direct_conversation_run(
+        self,
+        question: str,
+        action: DirectResponseArgs,
+        *,
+        stages: Sequence[Mapping[str, Any]],
+        model_request_count: int,
+        history_turns: int,
+        available_history_turns: int,
+        fallback: bool,
+        error_code: str | None,
+    ) -> AnswerRun:
+        output: dict[str, Any] = {
+            "question": question,
+            "dialog_act": action.category,
+            "ticker": None,
+            "contextualization": {
+                "applied": False,
+                "history_turns": history_turns,
+                "available_history_turns": available_history_turns,
+                "standalone_question": question,
+                "model": self.generation_model,
+                "latency_ms": 0.0,
+                "source": "conversation_tool",
+                "fallback": fallback,
+                "error_code": error_code,
+                "skip_reason": "retrieval_not_required",
+            },
+            "bank_resolution": {
+                "status": "not_required",
+                "source": "conversation_tool",
+                "ticker": None,
+                "detected_tickers": [],
+            },
+            "retrieval": {"backend": "none", "mode": "none", "evidence_count": 0},
+            "status": "supported",
+            "answer_type": "narrative",
+            "answer": action.answer,
+            "facts": None,
+            "reason": "The conversation action does not require filing evidence.",
+            "reason_code": f"conversation_{action.category}",
+            "citations": [],
+            "generation": {
+                "model": self.generation_model,
+                "final_status": "supported",
+                "request_count": 0,
+            },
+        }
+        diagnostics = self._diagnostics(
+            route="general_chat",
+            outcome="supported",
+            stages=stages,
+            initial_evidence_count=0,
+            final_evidence_count=0,
+            model_request_count=model_request_count,
+            output=output,
+        )
+        output["diagnostics"] = diagnostics
+        return AnswerRun(
+            output=output,
+            evidence=[],
+            embedding_latency_ms=0.0,
+            retrieval_latency_ms=0.0,
+            generation_latency_ms=0.0,
+            diagnostics=diagnostics,
+            stage_trace=tuple(dict(stage) for stage in stages),
+        )
+
+    def _out_of_scope_run(
+        self,
+        question: str,
+        *,
+        stages: Sequence[Mapping[str, Any]],
+        model_request_count: int,
+        history_turns: int,
+        available_history_turns: int,
+        fallback: bool,
+        error_code: str | None,
+    ) -> AnswerRun:
+        output: dict[str, Any] = {
+            "question": question,
+            "dialog_act": "out_of_scope",
+            "ticker": None,
+            "tickers": [],
+            "contextualization": {
+                "applied": False,
+                "history_turns": history_turns,
+                "available_history_turns": available_history_turns,
+                "standalone_question": question,
+                "model": self.generation_model,
+                "latency_ms": 0.0,
+                "source": "deterministic_scope_guard",
+                "fallback": fallback,
+                "error_code": error_code,
+                "skip_reason": "outside_banking_research_scope",
+            },
+            "bank_resolution": {
+                "status": "not_required",
+                "source": "deterministic_scope_guard",
+                "ticker": None,
+                "detected_tickers": [],
+            },
+            "retrieval": {"backend": "none", "mode": "none", "evidence_count": 0},
+            "status": "unsupported",
+            "answer_type": "narrative",
+            "answer": render_out_of_scope_answer(question),
+            "facts": None,
+            "reason": "The request is outside BankScope's supported research domain.",
+            "reason_code": "outside_banking_research_scope",
+            "citations": [],
+            "generation": {
+                "model": self.generation_model,
+                "final_status": "unsupported",
+                "request_count": 0,
+            },
+        }
+        diagnostics = self._diagnostics(
+            route="scope_guard",
+            outcome="unsupported",
+            stages=stages,
+            initial_evidence_count=0,
+            final_evidence_count=0,
+            model_request_count=model_request_count,
+            output=output,
+        )
+        output["diagnostics"] = diagnostics
+        return AnswerRun(
+            output=output,
+            evidence=[],
+            embedding_latency_ms=0.0,
+            retrieval_latency_ms=0.0,
+            generation_latency_ms=0.0,
+            diagnostics=diagnostics,
+            stage_trace=tuple(dict(stage) for stage in stages),
+        )
+
+    def _clarification_run(
+        self,
+        question: str,
+        action: ClarificationArgs,
+        *,
+        stages: Sequence[Mapping[str, Any]],
+        model_request_count: int,
+        history_turns: int,
+        available_history_turns: int,
+        fallback: bool,
+        error_code: str | None,
+    ) -> AnswerRun:
+        output: dict[str, Any] = {
+            "question": question,
+            "dialog_act": "clarification",
+            "ticker": None,
+            "contextualization": {
+                "applied": False,
+                "history_turns": history_turns,
+                "available_history_turns": available_history_turns,
+                "standalone_question": question,
+                "model": self.generation_model,
+                "latency_ms": 0.0,
+                "source": "conversation_tool",
+                "fallback": fallback,
+                "error_code": error_code,
+                "skip_reason": f"missing_{action.missing}",
+            },
+            "bank_resolution": {
+                "status": "not_required",
+                "source": "conversation_tool",
+                "ticker": None,
+                "detected_tickers": [],
+            },
+            "retrieval": {"backend": "none", "mode": "none", "evidence_count": 0},
+            "status": "ambiguous",
+            "answer_type": "narrative",
+            "answer": action.question,
+            "facts": None,
+            "reason": f"Filing research needs the missing {action.missing}.",
+            "reason_code": f"missing_{action.missing}",
+            "citations": [],
+            "generation": {
+                "model": self.generation_model,
+                "final_status": "ambiguous",
+                "request_count": 0,
+            },
+        }
+        diagnostics = self._diagnostics(
+            route="domain_rag",
+            outcome="ambiguous",
+            stages=stages,
+            initial_evidence_count=0,
+            final_evidence_count=0,
+            model_request_count=model_request_count,
+            output=output,
+        )
+        output["diagnostics"] = diagnostics
+        return AnswerRun(
+            output=output,
+            evidence=[],
+            embedding_latency_ms=0.0,
+            retrieval_latency_ms=0.0,
+            generation_latency_ms=0.0,
+            diagnostics=diagnostics,
+            stage_trace=tuple(dict(stage) for stage in stages),
+        )
+
     def _ambiguous_bank_run(
         self,
         question: str,
@@ -1168,6 +1673,7 @@ class BankAnswerPipeline:
             reason = "Pitanje ne sadrži prepoznat naziv ili ticker podržane banke."
         output = {
             "question": question,
+            "dialog_act": "clarification",
             "ticker": None,
             "contextualization": dict(contextualization),
             "bank_resolution": resolution.as_dict(),
@@ -1222,6 +1728,7 @@ class BankAnswerPipeline:
         )
         output: dict[str, Any] = {
             "question": question,
+            "dialog_act": "capability",
             "ticker": None,
             "contextualization": {
                 "applied": False,

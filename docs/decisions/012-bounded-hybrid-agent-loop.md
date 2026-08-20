@@ -1,6 +1,6 @@
 # ADR 012: Bounded hybrid agentic retrieval loop
 
-- Status: Accepted, experimental feature disabled by default
+- Status: Superseded by ADR 013; historical experimental design
 - Date: 2026-08-17
 
 ## Context
@@ -39,3 +39,6 @@ The feature stays disabled by default. Rollout requires all existing frozen gate
 Hit@5, at least three recovered known misses, bank/accession isolation, per-bank request/action
 budgets, no unnecessary tool action for sufficient initial evidence, and citation-free unsupported
 answers. A passing live report and a separate default-change decision are still required.
+
+ADR 013 preserves the loop as an optional additive experiment but replaces the current budget and
+evidence-ordering contract. The 6/4/2 limits above remain the historical ADR 012 decision.

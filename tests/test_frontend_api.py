@@ -123,15 +123,19 @@ def test_thread_answer_persists_messages_and_server_side_session(api) -> None:
     )
     assert second.status_code == 200
     assert pipeline.calls[0] == ("What did JPM report?", None, [], [])
-    assert pipeline.calls[1] == (
-        "What about the framework?",
-        "JPM",
-        ["JPM"],
-        [
-            {"role": "user", "content": "What did JPM report?"},
-            {"role": "assistant", "content": "Grounded answer [E1]"},
-        ],
-    )
+    assert pipeline.calls[1][:3] == ("What about the framework?", "JPM", ["JPM"])
+    model_history = pipeline.calls[1][3]
+    assert model_history[0] == {"role": "user", "content": "What did JPM report?"}
+    compact_state = json.loads(model_history[1]["content"])
+    assert compact_state == {
+        "dialog_act": "answer",
+        "status": "supported",
+        "tickers": ["JPM"],
+        "mode": "single",
+        "answer_type": "narrative",
+        "resolved_question": "What did JPM report?",
+    }
+    assert "Grounded answer" not in model_history[1]["content"]
 
     history = client.get(f"/api/threads/{thread['id']}/messages").json()
     assert len(history["messages"]) == 4
@@ -170,6 +174,9 @@ def test_stream_emits_progress_answer_and_done(api) -> None:
     ) as response:
         body = "".join(response.iter_text())
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache, no-transform"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert '"stage":"connected"' in body
     assert '"stage":"resolving_bank"' in body
     assert '"stage":"routing"' in body
     assert '"stage":"assessing_evidence"' in body
@@ -215,7 +222,7 @@ def test_citation_context_hydrates_persisted_source(tmp_path) -> None:
     assert stale.json()["code"] == "citation_corpus_mismatch"
 
 
-def test_validation_error_is_stable_and_persisted(tmp_path) -> None:
+def test_validation_error_becomes_stable_conversation_turn(tmp_path) -> None:
     class InvalidPipeline:
         def answer(
             self,
@@ -227,7 +234,12 @@ def test_validation_error_is_stable_and_persisted(tmp_path) -> None:
             on_progress=None,
         ):
             raise GenerationValidationError(
-                "contextualization_invalid_schema", "Invalid contextualization response."
+                "contextualization_invalid_schema",
+                "Invalid contextualization response.",
+                generation={
+                    "stage": "contextualizing",
+                    "validation_errors": [{"location": "facts", "type": "model_type"}],
+                },
             )
 
     store = ChatStore(tmp_path / "chat.db")
@@ -240,9 +252,23 @@ def test_validation_error_is_stable_and_persisted(tmp_path) -> None:
     )
     client = TestClient(create_app(services))
     thread = client.post("/api/threads", json={}).json()
-    response = client.post(f"/api/threads/{thread['id']}/answers", json={"question": "Question"})
-    assert response.status_code == 422
-    assert response.json()["code"] == "contextualization_invalid_schema"
+    response = client.post(
+        f"/api/threads/{thread['id']}/answers",
+        json={"question": "Uporedi njihove pokazatelje"},
+    )
+    assert response.status_code == 200
+    response_turn = response.json()["turn"]
+    assert response_turn["state"] == "answered"
+    assert response_turn["response"]["dialog_act"] == "retryable_error"
+    assert response_turn["response"]["reason_code"] == "contextualization_invalid_schema"
+    assert response_turn["response"]["answer"].startswith("Nisam uspeo")
+    assert response_turn["response"]["diagnostics"]["error_code"] == (
+        "contextualization_invalid_schema"
+    )
+    assert response_turn["response"]["diagnostics"]["failed_stage"] == "contextualizing"
+    assert response_turn["response"]["diagnostics"]["validation_errors"] == [
+        {"location": "facts", "type": "model_type"}
+    ]
     turns = client.get(f"/api/threads/{thread['id']}/messages").json()["turns"]
-    assert turns[0]["state"] == "error"
-    assert turns[0]["error_code"] == "contextualization_invalid_schema"
+    assert turns[0]["state"] == "answered"
+    assert turns[0]["response"]["dialog_act"] == "retryable_error"

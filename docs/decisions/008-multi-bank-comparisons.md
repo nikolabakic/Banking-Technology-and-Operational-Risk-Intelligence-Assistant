@@ -1,6 +1,6 @@
 # Multi-bank comparisons
 
-**Status: accepted on 2026-08-14.**
+**Status: accepted on 2026-08-14; query-planning detail superseded by ADR 013.**
 
 ## Context
 
@@ -47,3 +47,6 @@ single-bank generation run was not repeated.
 A two-bank first turn normally makes three generation requests; four banks make five. Calls remain
 sequential for deterministic behavior. Authentication, cloud persistence, unsupported banks, and
 comparisons of more than four configured banks remain outside this phase.
+
+ADR 013 keeps bank-isolated retrieval and synthesis but replaces the shared standalone embedding
+with one peer-free, independently embedded subquestion per bank.

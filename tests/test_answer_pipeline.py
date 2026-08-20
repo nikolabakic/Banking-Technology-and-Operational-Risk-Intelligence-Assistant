@@ -1,3 +1,4 @@
+import json
 import sys
 from types import SimpleNamespace
 
@@ -103,30 +104,66 @@ class MockCompletions:
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        message = SimpleNamespace(
-            content=(
-                '{"status":"supported","answer_type":"numeric",'
-                '"answer":"The ratio was 14.6% [E1].",'
-                '"facts":{"entity":"JPMorgan Chase & Co.","metric":"ratio",'
-                '"variant":null,"period":"2025","value_text":"14.6%",'
-                '"unit":"percent"},"citation_ids":["E1"],'
-                '"reason":"Direct support."}'
+        tool_names = {tool["function"]["name"] for tool in (kwargs.get("tools") or [])}
+        if "research_filings" in tool_names:
+            payload = json.loads(kwargs["messages"][1]["content"])
+            function = SimpleNamespace(
+                name="research_filings",
+                arguments=json.dumps(
+                    {
+                        "search_question": payload["current_question"],
+                        "reason": "The question requires filing evidence.",
+                    }
+                ),
             )
+            message = SimpleNamespace(
+                content=None,
+                refusal=None,
+                tool_calls=[SimpleNamespace(function=function)],
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+            )
+        arguments = (
+            '{"status":"supported","answer_type":"numeric",'
+            '"answer":"The ratio was 14.6% [E1].",'
+            '"facts":{"entity":"JPMorgan Chase & Co.","metric":"ratio",'
+            '"variant":null,"period":"2025","value_text":"14.6%",'
+            '"unit":"percent"},"citation_ids":["E1"],'
+            '"reason":"Direct support."}'
         )
-        return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
+        function = SimpleNamespace(name="submit_supported_numeric_answer", arguments=arguments)
+        message = SimpleNamespace(
+            content=None,
+            refusal=None,
+            tool_calls=[SimpleNamespace(function=function)],
+        )
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+        )
 
 
 class ContextualizedCompletions(MockCompletions):
     def create(self, **kwargs):
         if not self.calls:
             self.calls.append(kwargs)
-            message = SimpleNamespace(
-                content=(
-                    '{"standalone_question":"What was JPMorgan Chase & Co. CET1 ratio in 2024?"}'
+            function = SimpleNamespace(
+                name="research_filings",
+                arguments=json.dumps(
+                    {
+                        "search_question": ("What was JPMorgan Chase & Co. CET1 ratio in 2024?"),
+                        "reason": "Resolve the natural follow-up from recent user context.",
+                    }
                 ),
-                refusal=None,
             )
-            return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
+            message = SimpleNamespace(
+                content=None,
+                refusal=None,
+                tool_calls=[SimpleNamespace(function=function)],
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+            )
         return super().create(**kwargs)
 
 
@@ -141,6 +178,8 @@ class ComparisonCompletions(MockCompletions):
                 '14.6% [E2].","tickers":["JPM","BAC"],'
                 '"citation_ids":["E1","E2"]}]}'
             )
+            message = SimpleNamespace(content=content, refusal=None)
+            return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
         else:
             entity = (
                 "Bank of America Corporation"
@@ -155,8 +194,15 @@ class ComparisonCompletions(MockCompletions):
                 '"unit":"percent"},"citation_ids":["E1"],'
                 '"reason":"Direct support."}'
             )
-        message = SimpleNamespace(content=content, refusal=None)
-        return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
+        function = SimpleNamespace(name="submit_supported_numeric_answer", arguments=content)
+        message = SimpleNamespace(
+            content=None,
+            refusal=None,
+            tool_calls=[SimpleNamespace(function=function)],
+        )
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+        )
 
 
 class PartialRetriever(MockRetriever):
@@ -173,10 +219,76 @@ class EmptyRetriever(MockRetriever):
         return []
 
 
+class OperationalFrameworkRetriever(MockRetriever):
+    def search_hybrid(self, question, query_vector, **kwargs):
+        self.calls.append((question, query_vector, kwargs))
+        if "operational risk framework operational risk management" not in question.casefold():
+            return []
+        return [
+            {
+                "target_chunk_id": "jpm-operational-framework",
+                "record_type": "text",
+                "ticker": kwargs["ticker"],
+                "evidence": (
+                    "JPMorgan Chase manages operational risk through a firmwide framework "
+                    "with governance, risk identification, assessment, monitoring and controls."
+                ),
+                "metadata": {"report_date": "2025-12-31"},
+            }
+        ]
+
+
+class OperationalFrameworkCompletions(MockCompletions):
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        arguments = json.dumps(
+            {
+                "status": "supported",
+                "answer_type": "narrative",
+                "answer": (
+                    "JPMorgan Chase describes a firmwide operational-risk framework with "
+                    "governance, identification, assessment, monitoring and controls [E1]."
+                ),
+                "facts": None,
+                "citation_ids": ["E1"],
+                "reason": "The filing evidence directly describes the framework.",
+            }
+        )
+        function = SimpleNamespace(name="submit_supported_narrative_answer", arguments=arguments)
+        message = SimpleNamespace(
+            content=None,
+            refusal=None,
+            tool_calls=[SimpleNamespace(function=function)],
+        )
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+        )
+
+
 class PartialCompletions(ComparisonCompletions):
     def create(self, **kwargs):
         if "concise comparison" in kwargs["messages"][0]["content"]:
             raise AssertionError("Partial comparisons must not call the synthesis model.")
+        return super().create(**kwargs)
+
+
+class PerBankValidationCompletions(ComparisonCompletions):
+    def create(self, **kwargs):
+        prompt = kwargs["messages"][1]["content"]
+        if "Expected ticker: JPM" in prompt:
+            self.calls.append(kwargs)
+            function = SimpleNamespace(
+                name="submit_supported_numeric_answer",
+                arguments='{"status":"supported"}',
+            )
+            message = SimpleNamespace(
+                content=None,
+                refusal=None,
+                tool_calls=[SimpleNamespace(function=function)],
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+            )
         return super().create(**kwargs)
 
 
@@ -213,6 +325,7 @@ def test_pipeline_reuses_encoder_and_retriever_and_preserves_cli_output() -> Non
         "backend": "mixed",
         "mode": "hybrid",
         "evidence_count": 1,
+        "queries": ["What was the ratio?"],
     }
     assert first.output["status"] == "supported"
     assert first.output["facts"]["entity"] == "JPMorgan Chase & Co."
@@ -220,6 +333,33 @@ def test_pipeline_reuses_encoder_and_retriever_and_preserves_cli_output() -> Non
     assert len(completions.calls) == 2
     assert "Expected bank: JPMorgan Chase & Co." in completions.calls[0]["messages"][1]["content"]
     assert second.evidence[0]["target_chunk_id"] == "chunk-1"
+
+
+def test_simple_jpm_operational_framework_question_recovers_via_concept_query() -> None:
+    encoder = MockEncoder()
+    retriever = OperationalFrameworkRetriever()
+    completions = OperationalFrameworkCompletions()
+    pipeline = SingleBankAnswerPipeline(
+        retriever=retriever,
+        query_encoder=encoder,
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co."},
+        bank_aliases={"JPM": ("JPMorgan", "JPMorgan Chase")},
+    )
+
+    question = "How does JPMorgan Chase describe its operational risk framework?"
+    run = pipeline.answer(question)
+
+    assert run.output["status"] == "supported"
+    assert run.output["dialog_act"] == "answer"
+    assert run.evidence[0]["target_chunk_id"] == "jpm-operational-framework"
+    assert encoder.calls == [
+        question,
+        "JPMorgan Chase & Co. (JPM) Form 10-K: operational risk framework "
+        "operational risk management",
+    ]
+    assert run.output["retrieval"]["queries"] == encoder.calls
 
 
 def test_pipeline_resolves_question_bank_before_retrieval() -> None:
@@ -292,7 +432,7 @@ def test_missing_or_too_many_banks_returns_ambiguous_without_pipeline_calls() ->
     assert completions.calls == []
 
 
-def test_comparison_reuses_one_embedding_and_isolates_bank_retrieval_and_citations() -> None:
+def test_comparison_retrieves_independent_bank_subquestions_before_synthesis() -> None:
     encoder = MockEncoder()
     retriever = MockRetriever()
     completions = ComparisonCompletions()
@@ -305,10 +445,17 @@ def test_comparison_reuses_one_embedding_and_isolates_bank_retrieval_and_citatio
         bank_aliases={"JPM": ("JPMorgan",), "BAC": ("Bank of America",)},
     )
 
-    run = pipeline.answer("Compare JPMorgan and Bank of America ratios in 2025.")
+    run = pipeline.answer("Compare JPMorgans CET1 ratio with Bank of Americas for 2025.")
 
-    assert encoder.calls == ["Compare JPMorgan and Bank of America ratios in 2025."]
-    assert [call[2]["ticker"] for call in retriever.calls] == ["JPM", "BAC"]
+    assert encoder.calls == [
+        "JPMorgan Chase & Co. (JPM) Form 10-K: cet1 ratio for 2025",
+        "JPMorgan Chase & Co. (JPM) Form 10-K: CET1 common equity tier 1 capital ratio",
+        "Bank of America Corporation (BAC) Form 10-K: cet1 ratio for 2025",
+        "Bank of America Corporation (BAC) Form 10-K: CET1 common equity tier 1 capital ratio",
+    ]
+    assert [call[2]["ticker"] for call in retriever.calls] == ["JPM", "JPM", "BAC", "BAC"]
+    assert all("bank of america" not in call[0].casefold() for call in retriever.calls[:2])
+    assert all("jpmorgan" not in call[0].casefold() for call in retriever.calls[2:])
     assert len(completions.calls) == 3
     assert run.output["mode"] == "comparison"
     assert run.output["tickers"] == ["JPM", "BAC"]
@@ -317,6 +464,14 @@ def test_comparison_reuses_one_embedding_and_isolates_bank_retrieval_and_citatio
     assert run.output["bank_results"][0]["citations"][0]["ticker"] == "JPM"
     assert run.output["bank_results"][1]["citations"][0]["ticker"] == "BAC"
     assert run.output["generation"]["request_count"] == 3
+    assert [item["query"] for item in run.output["retrieval"]["per_bank"]] == [
+        encoder.calls[0],
+        encoder.calls[2],
+    ]
+    assert [item["queries"] for item in run.output["retrieval"]["per_bank"]] == [
+        encoder.calls[:2],
+        encoder.calls[2:],
+    ]
 
 
 def test_comparison_returns_partial_or_all_unsupported_without_unvalidated_facts() -> None:
@@ -358,6 +513,30 @@ def test_comparison_returns_partial_or_all_unsupported_without_unvalidated_facts
     assert empty_client.chat.completions.calls == []
 
 
+def test_comparison_isolates_invalid_schema_to_one_bank_and_continues() -> None:
+    completions = PerBankValidationCompletions()
+    pipeline = SingleBankAnswerPipeline(
+        retriever=MockRetriever(),
+        query_encoder=MockEncoder(),
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co.", "BAC": "Bank of America Corporation"},
+        bank_aliases={"JPM": ("JPMorgan",), "BAC": ("Bank of America",)},
+    )
+
+    run = pipeline.answer("Compare JPMorgan and Bank of America ratios in 2025.")
+
+    assert run.output["status"] == "partial"
+    assert [result["status"] for result in run.output["bank_results"]] == [
+        "unsupported",
+        "supported",
+    ]
+    assert run.output["bank_results"][0]["generation"]["error_code"] == "invalid_schema"
+    assert run.output["bank_results"][0]["generation"]["request_count"] == 2
+    assert run.output["bank_results"][1]["ticker"] == "BAC"
+    assert run.output["generation"]["bank_request_count"] == 3
+
+
 def test_comparison_synthesis_fails_closed_on_invalid_schema() -> None:
     completions = ComparisonCompletions()
     original_create = completions.create
@@ -397,6 +576,10 @@ def test_pipeline_contextualizes_follow_up_before_retrieval() -> None:
         bank_names={"JPM": "JPMorgan Chase & Co."},
     )
     history = [
+        {"role": "user", "content": "Stale question about Citi governance."},
+        {"role": "assistant", "content": "Stale Citi answer [E8]."},
+        {"role": "user", "content": "What were JPM's deposits in 2025?"},
+        {"role": "assistant", "content": "The deposits were reported [E2]."},
         {"role": "user", "content": "What was JPM's CET1 ratio in 2025?"},
         {"role": "assistant", "content": "It was 14.6% [E1]."},
     ]
@@ -410,14 +593,166 @@ def test_pipeline_contextualizes_follow_up_before_retrieval() -> None:
     )
 
     standalone = "What was JPMorgan Chase & Co. CET1 ratio in 2024?"
-    assert encoder.calls == [standalone]
+    assert encoder.calls == [
+        standalone,
+        "What about 2024?",
+        "JPMorgan Chase & Co. (JPM) Form 10-K: CET1 common equity tier 1 capital ratio",
+    ]
     assert retriever.calls[0][0] == standalone
     assert run.output["question"] == "What about 2024?"
     assert run.output["contextualization"]["applied"] is True
-    assert run.output["contextualization"]["history_turns"] == 1
+    assert run.output["contextualization"]["history_turns"] == 2
+    assert run.output["contextualization"]["available_history_turns"] == 3
     assert run.output["contextualization"]["standalone_question"] == standalone
-    assert progress[0] == "contextualizing"
-    assert "[E1]" not in completions.calls[0]["messages"][1]["content"]
+    assert progress[:2] == ["routing", "contextualizing"]
+    assert "Stale question" not in completions.calls[0]["messages"][1]["content"]
+    assert "14.6" not in completions.calls[0]["messages"][1]["content"]
     generation_prompt = completions.calls[-1]["messages"][1]["content"]
     assert "Current user question:\nWhat about 2024?" in generation_prompt
     assert f"Resolved standalone question:\n{standalone}" in generation_prompt
+
+
+def test_pipeline_skips_history_for_a_new_standalone_question() -> None:
+    encoder = MockEncoder()
+    retriever = MockRetriever()
+    completions = MockCompletions()
+    pipeline = SingleBankAnswerPipeline(
+        retriever=retriever,
+        query_encoder=encoder,
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co.", "BAC": "Bank of America Corporation"},
+        bank_aliases={"JPM": ("JPMorgan",), "BAC": ("Bank of America",)},
+    )
+    history = [
+        {"role": "user", "content": "How does JPMorgan define cybersecurity risk?"},
+        {"role": "assistant", "content": "The filing describes it [E1]."},
+    ]
+
+    run = pipeline.answer(
+        "What was Bank of America's ratio in 2025?",
+        ticker="JPM",
+        conversation_history=history,
+    )
+
+    assert run.output["ticker"] == "BAC"
+    assert run.output["contextualization"]["applied"] is False
+    assert run.output["contextualization"]["skip_reason"] == ("current_question_is_standalone")
+    assert len(completions.calls) == 2
+    assert completions.calls[0]["tool_choice"] == "required"
+    routing_payload = json.loads(completions.calls[0]["messages"][1]["content"])
+    assert routing_payload["conversation_history"] == []
+
+
+def test_standalone_question_ignores_thirty_turns_of_mixed_history() -> None:
+    completions = MockCompletions()
+    pipeline = SingleBankAnswerPipeline(
+        retriever=MockRetriever(),
+        query_encoder=MockEncoder(),
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co.", "BAC": "Bank of America Corporation"},
+        bank_aliases={"JPM": ("JPMorgan",), "BAC": ("Bank of America",)},
+    )
+    history = [
+        {"role": role, "content": f"stale-secret-{index}-{role}"}
+        for index in range(30)
+        for role in ("user", "assistant")
+    ]
+
+    run = pipeline.answer(
+        "What was Bank of America's ratio in 2025?",
+        ticker="JPM",
+        conversation_history=history,
+    )
+
+    routing_payload = json.loads(completions.calls[0]["messages"][1]["content"])
+    assert routing_payload["conversation_history"] == []
+    assert run.output["contextualization"]["available_history_turns"] == 30
+    assert run.output["contextualization"]["history_turns"] == 0
+
+
+def test_contextualization_falls_back_when_tool_introduces_bank_outside_thread_scope() -> None:
+    completions = ContextualizedCompletions()
+    original_create = completions.create
+
+    def injected_bank(**kwargs):
+        if not completions.calls:
+            completions.calls.append(kwargs)
+            function = SimpleNamespace(
+                name="research_filings",
+                arguments=json.dumps(
+                    {
+                        "search_question": "What was Citi CET1 in 2024?",
+                        "reason": "Resolve the follow-up.",
+                    }
+                ),
+            )
+            message = SimpleNamespace(
+                content=None,
+                refusal=None,
+                tool_calls=[SimpleNamespace(function=function)],
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+            )
+        return original_create(**kwargs)
+
+    completions.create = injected_bank
+    pipeline = SingleBankAnswerPipeline(
+        retriever=ContextualizedRetriever(),
+        query_encoder=MockEncoder(),
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        generation_model="AZURE_GPT_51_2025_1113",
+        bank_names={"JPM": "JPMorgan Chase & Co.", "C": "Citigroup Inc."},
+        bank_aliases={"JPM": ("JPMorgan",), "C": ("Citi",)},
+    )
+
+    run = pipeline.answer(
+        "What about 2024?",
+        ticker="JPM",
+        conversation_history=[
+            {"role": "user", "content": "What was JPM CET1 in 2025?"},
+            {"role": "assistant", "content": "It was reported [E1]."},
+        ],
+    )
+
+    assert run.output["ticker"] == "JPM"
+    assert run.output["contextualization"]["standalone_question"] == "What about 2024?"
+    assert run.output["contextualization"]["fallback"] is True
+    assert run.output["contextualization"]["error_code"] == ("contextualization_added_bank_scope")
+
+
+class SummaryRetriever(MockRetriever):
+    def search_hybrid(self, question, query_vector, **kwargs):
+        self.calls.append((question, query_vector, kwargs))
+        index = len(self.calls)
+        return [
+            {
+                "target_chunk_id": f"summary-{index}",
+                "record_type": "text",
+                "ticker": kwargs["ticker"],
+                "evidence": "The filing states that the ratio was 14.6%.",
+                "metadata": {"report_date": "2025-12-31"},
+            }
+        ]
+
+
+def test_whole_filing_summary_uses_section_diverse_retrieval() -> None:
+    encoder = MockEncoder()
+    retriever = SummaryRetriever()
+    pipeline = SingleBankAnswerPipeline(
+        retriever=retriever,
+        query_encoder=encoder,
+        client=SimpleNamespace(chat=SimpleNamespace(completions=MockCompletions())),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co."},
+        bank_aliases={"JPM": ("JPMorgan", "JP Morgan")},
+    )
+
+    run = pipeline.answer("Summarize the JP Morgans 2025 10-K doc")
+
+    assert run.output["ticker"] == "JPM"
+    assert len(encoder.calls) == len(retriever.calls) == 5
+    assert len(run.evidence) == 5
+    assert all(call[2]["ticker"] == "JPM" for call in retriever.calls)

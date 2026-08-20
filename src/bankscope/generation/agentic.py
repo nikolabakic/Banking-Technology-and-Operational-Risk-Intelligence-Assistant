@@ -13,12 +13,12 @@ from bankscope.generation.answer_generator import GPT51_MODEL_MARKERS, Generatio
 
 ROUTER_PROMPT_VERSION = "agentic-rag-router-v1"
 PLANNER_PROMPT_VERSION = "agentic-rag-evidence-planner-v1"
-AGENT_STEP_PROMPT_VERSION = "agentic-rag-loop-v2"
-VERIFIER_PROMPT_VERSION = "agentic-rag-verifier-v1"
+AGENT_STEP_PROMPT_VERSION = "agentic-rag-loop-v3-native-tools"
+VERIFIER_PROMPT_VERSION = "agentic-rag-verifier-v2-native-tools"
 AGENTIC_REQUEST_TIMEOUT_SECONDS = 30.0
-MAX_AGENT_MODEL_REQUESTS = 6
-MAX_AGENT_TOOL_ACTIONS = 4
-MAX_VERIFIER_REQUESTS = 2
+MAX_AGENT_MODEL_REQUESTS = 3
+MAX_AGENT_TOOL_ACTIONS = 1
+MAX_VERIFIER_REQUESTS = 1
 YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
 NUMBER_PATTERN = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?%?")
 TIER_ONE_PATTERN = re.compile(r"(?i)\btier\s+1\b")
@@ -28,8 +28,7 @@ def _numeric_facts(text: str) -> set[str]:
     """Extract numeric facts while allowing the canonical term ``Tier 1``."""
     without_tier_one = TIER_ONE_PATTERN.sub("tier one", text)
     return {
-        value.rstrip("%").replace(",", ".")
-        for value in NUMBER_PATTERN.findall(without_tier_one)
+        value.rstrip("%").replace(",", ".") for value in NUMBER_PATTERN.findall(without_tier_one)
     }
 
 
@@ -132,6 +131,60 @@ class EvidenceVerdict(BaseModel):
         return self
 
 
+class SearchHybridArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=2, max_length=4_000)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class SearchExactArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    terms: list[str] = Field(min_length=1, max_length=8)
+    reason: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_terms(self) -> SearchExactArgs:
+        if any(not 2 <= len(term.strip()) <= 120 for term in self.terms):
+            raise ValueError("Exact terms must contain 2 to 120 characters.")
+        return self
+
+
+class ReadContextArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_target_chunk_id: str = Field(min_length=1, max_length=256)
+    before: int = Field(ge=0, le=3)
+    after: int = Field(ge=0, le=3)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class FinishArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["sufficient", "unsupported"]
+    reason: str = Field(min_length=1, max_length=500)
+    supporting_target_chunk_ids: list[str] = Field(max_length=10)
+
+
+class EvidenceVerdictArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["sufficient", "missing", "unsupported"]
+    explanation: str = Field(min_length=1, max_length=700)
+    missing_aspects: list[str] = Field(max_length=8)
+    supporting_target_chunk_ids: list[str] = Field(max_length=10)
+
+    @model_validator(mode="after")
+    def validate_status_fields(self) -> EvidenceVerdictArgs:
+        if self.status == "missing" and not self.missing_aspects:
+            raise ValueError("A missing verdict requires missing_aspects.")
+        if self.status != "missing" and self.missing_aspects:
+            raise ValueError("Only a missing verdict may include missing_aspects.")
+        return self
+
+
 @dataclass
 class AgentState:
     ticker: str
@@ -174,6 +227,63 @@ def _request_options(model: str) -> dict[str, Any]:
     return options
 
 
+def _tool_request_options(model: str) -> dict[str, Any]:
+    normalized = model.strip().upper()
+    options: dict[str, Any] = {
+        "tool_choice": "required",
+        "parallel_tool_calls": False,
+    }
+    if any(marker in normalized for marker in GPT51_MODEL_MARKERS):
+        options["max_completion_tokens"] = 500
+    else:
+        options.update({"max_tokens": 500, "temperature": 0})
+    return options
+
+
+def _native_tool(name: str, description: str, model: type[BaseModel]) -> dict[str, Any]:
+    schema = model.model_json_schema()
+    schema.pop("title", None)
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "strict": True,
+            "parameters": schema,
+        },
+    }
+
+
+AGENT_STEP_TOOLS = (
+    _native_tool(
+        "search_hybrid",
+        "Run one semantic and lexical search within the current bank's filing corpus.",
+        SearchHybridArgs,
+    ),
+    _native_tool(
+        "search_exact",
+        "Search one to eight literal filing phrases within the current bank only.",
+        SearchExactArgs,
+    ),
+    _native_tool(
+        "read_context",
+        "Read a bounded canonical window around one supplied narrative target chunk ID.",
+        ReadContextArgs,
+    ),
+    _native_tool(
+        "finish",
+        "Finish retrieval from current evidence as sufficient or unsupported.",
+        FinishArgs,
+    ),
+)
+
+EVIDENCE_VERDICT_TOOL = _native_tool(
+    "submit_evidence_verdict",
+    "Submit the independent groundedness verdict for the supplied evidence.",
+    EvidenceVerdictArgs,
+)
+
+
 def _message_content(response: Any) -> tuple[str, str, str]:
     choices = getattr(response, "choices", None)
     if not choices and isinstance(response, Mapping):
@@ -182,9 +292,7 @@ def _message_content(response: Any) -> tuple[str, str, str]:
         return "", "", ""
     choice = choices[0]
     message = (
-        choice.get("message")
-        if isinstance(choice, Mapping)
-        else getattr(choice, "message", None)
+        choice.get("message") if isinstance(choice, Mapping) else getattr(choice, "message", None)
     )
     finish_reason = (
         str(choice.get("finish_reason") or "")
@@ -202,6 +310,72 @@ def _message_content(response: Any) -> tuple[str, str, str]:
         finish_reason,
         str(getattr(message, "refusal", "") or ""),
     )
+
+
+def _message_tool_calls(response: Any) -> tuple[list[Any], str, str]:
+    choices = getattr(response, "choices", None)
+    if not choices and isinstance(response, Mapping):
+        choices = response.get("choices")
+    if not choices:
+        return [], "", ""
+    choice = choices[0]
+    if isinstance(choice, Mapping):
+        message = choice.get("message") or {}
+        finish_reason = str(choice.get("finish_reason") or "")
+    else:
+        message = getattr(choice, "message", None)
+        finish_reason = str(getattr(choice, "finish_reason", "") or "")
+    if isinstance(message, Mapping):
+        return (
+            list(message.get("tool_calls") or []),
+            finish_reason,
+            str(message.get("refusal") or ""),
+        )
+    return (
+        list(getattr(message, "tool_calls", None) or []),
+        finish_reason,
+        str(getattr(message, "refusal", "") or ""),
+    )
+
+
+def _tool_name_and_arguments(tool_call: Any) -> tuple[str, str]:
+    function = (
+        tool_call.get("function")
+        if isinstance(tool_call, Mapping)
+        else getattr(tool_call, "function", None)
+    )
+    if isinstance(function, Mapping):
+        return str(function.get("name") or ""), str(function.get("arguments") or "")
+    return (
+        str(getattr(function, "name", "") or ""),
+        str(getattr(function, "arguments", "") or ""),
+    )
+
+
+def _call_tool_model(
+    *,
+    client: Any,
+    model: str,
+    system: str,
+    payload: Mapping[str, Any],
+    tools: Sequence[Mapping[str, Any]],
+) -> tuple[list[Any], float, str, str]:
+    started = perf_counter()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            },
+        ],
+        tools=[dict(tool) for tool in tools],
+        **_tool_request_options(model),
+        timeout=AGENTIC_REQUEST_TIMEOUT_SECONDS,
+    )
+    tool_calls, finish_reason, refusal = _message_tool_calls(response)
+    return tool_calls, (perf_counter() - started) * 1000, finish_reason, refusal
 
 
 def _call_json_model(
@@ -357,7 +531,6 @@ def evidence_previews(
 
 def request_agent_step(state: AgentState, *, client: Any, model: str) -> ModelDecision:
     """Request one bounded search/read/finish decision from the model."""
-    schema = json.dumps(AGENT_STEP_ADAPTER.json_schema(), separators=(",", ":"))
     system = (
         "You control retrieval for exactly one bank filing. Choose one action. search_hybrid may "
         "translate or augment a non-English question with canonical English filing terminology, "
@@ -367,11 +540,10 @@ def request_agent_step(state: AgentState, *, client: Any, model: str) -> ModelDe
         "of a comparison that belongs to current_ticker; missing peer-bank evidence is irrelevant. "
         "Do not finish unsupported merely because initial top results miss: try search first "
         "unless the requested period is explicitly beyond the filing corpus. Finish sufficient "
-        "only when all parts for current_ticker are supported. Return only JSON matching this "
-        "schema: " + schema
+        "only when all parts for current_ticker are supported. Call exactly one supplied function."
     )
     try:
-        text, latency_ms, finish_reason, refusal = _call_json_model(
+        tool_calls, latency_ms, finish_reason, refusal = _call_tool_model(
             client=client,
             model=model,
             system=system,
@@ -387,6 +559,7 @@ def request_agent_step(state: AgentState, *, client: Any, model: str) -> ModelDe
                 "verifier_feedback": state.verifier_feedback[-2:],
                 "recent_trace": state.trace[-4:],
             },
+            tools=AGENT_STEP_TOOLS,
         )
     except Exception as error:
         raise GenerationValidationError(
@@ -399,7 +572,7 @@ def request_agent_step(state: AgentState, *, client: Any, model: str) -> ModelDe
         code = "agentic_step_truncated"
     elif finish_reason == "content_filter" or refusal:
         code = "agentic_step_filtered"
-    elif not text:
+    elif len(tool_calls) != 1:
         code = "agentic_step_empty"
     else:
         code = ""
@@ -408,11 +581,25 @@ def request_agent_step(state: AgentState, *, client: Any, model: str) -> ModelDe
             code, "OpenAI returned an unusable agent step.", generation=metadata
         )
     try:
-        step = AGENT_STEP_ADAPTER.validate_json(text)
-    except ValidationError as error:
+        name, arguments = _tool_name_and_arguments(tool_calls[0])
+        if name == "search_hybrid":
+            args = SearchHybridArgs.model_validate_json(arguments)
+            step: AgentStep = SearchHybridStep(action="search_hybrid", **args.model_dump())
+        elif name == "search_exact":
+            exact_args = SearchExactArgs.model_validate_json(arguments)
+            step = SearchExactStep(action="search_exact", **exact_args.model_dump())
+        elif name == "read_context":
+            context_args = ReadContextArgs.model_validate_json(arguments)
+            step = ReadContextStep(action="read_context", **context_args.model_dump())
+        elif name == "finish":
+            finish_args = FinishArgs.model_validate_json(arguments)
+            step = FinishStep(action="finish", **finish_args.model_dump())
+        else:
+            raise ValueError(f"Unknown agent action: {name}")
+    except (TypeError, ValueError, ValidationError) as error:
         raise GenerationValidationError(
             "agentic_step_invalid_schema",
-            "OpenAI returned an invalid agent step.",
+            "OpenAI returned an invalid agent function call.",
             generation=metadata,
         ) from error
     return ModelDecision(step, latency_ms)
@@ -426,16 +613,15 @@ def verify_evidence(
     client: Any,
     model: str,
 ) -> ModelDecision:
-    schema = json.dumps(EvidenceVerdict.model_json_schema(), separators=(",", ":"))
     system = (
         "Independently verify whether the supplied evidence answers every part of the question for "
         "current_ticker only. Ignore missing peer-bank evidence. Use sufficient only for direct "
         "complete support, missing when another targeted search/read could fill named gaps, and "
         "unsupported only when the requested fact is outside the filing corpus. Supporting IDs "
-        "must come from supplied evidence. Return only JSON matching this schema: " + schema
+        "must come from supplied evidence. Call submit_evidence_verdict exactly once."
     )
     try:
-        text, latency_ms, finish_reason, refusal = _call_json_model(
+        tool_calls, latency_ms, finish_reason, refusal = _call_tool_model(
             client=client,
             model=model,
             system=system,
@@ -445,6 +631,7 @@ def verify_evidence(
                 "current_ticker": ticker,
                 "evidence": evidence_previews(evidence),
             },
+            tools=(EVIDENCE_VERDICT_TOOL,),
         )
     except Exception as error:
         raise GenerationValidationError(
@@ -453,18 +640,22 @@ def verify_evidence(
             generation={"stage": "verifying_evidence", "request_count": 1},
         ) from error
     metadata = {"stage": "verifying_evidence", "latency_ms": latency_ms, "request_count": 1}
-    if finish_reason in {"length", "content_filter"} or refusal or not text:
+    if finish_reason in {"length", "content_filter"} or refusal or len(tool_calls) != 1:
         raise GenerationValidationError(
             "agentic_verdict_unusable",
             "OpenAI returned an unusable evidence verdict.",
             generation=metadata,
         )
     try:
-        verdict = EvidenceVerdict.model_validate_json(text)
-    except ValidationError as error:
+        name, arguments = _tool_name_and_arguments(tool_calls[0])
+        if name != "submit_evidence_verdict":
+            raise ValueError(f"Unknown verifier action: {name}")
+        verdict_args = EvidenceVerdictArgs.model_validate_json(arguments)
+        verdict = EvidenceVerdict(**verdict_args.model_dump())
+    except (TypeError, ValueError, ValidationError) as error:
         raise GenerationValidationError(
             "agentic_verdict_invalid_schema",
-            "OpenAI returned an invalid evidence verdict.",
+            "OpenAI returned an invalid evidence-verdict function call.",
             generation=metadata,
         ) from error
     known_ids = {str(item.get("target_chunk_id") or "") for item in evidence}
@@ -538,8 +729,10 @@ def validate_agent_step(step: AgentStep, state: AgentState) -> None:
                 "Finish referenced evidence that was not retrieved.",
                 generation={"stage": "agentic_retrieval", "request_count": 1},
             )
-        if step.status == "unsupported" and state.tool_actions == 0 and not _is_future_question(
-            state.question, state.evidence
+        if (
+            step.status == "unsupported"
+            and state.tool_actions == 0
+            and not _is_future_question(state.question, state.evidence)
         ):
             raise GenerationValidationError(
                 "agentic_premature_unsupported",
@@ -674,9 +867,7 @@ class CanonicalContextExpander:
         ):
             candidate = self._chunks[candidate_index]
             metadata = (
-                candidate.get("metadata")
-                if isinstance(candidate.get("metadata"), Mapping)
-                else {}
+                candidate.get("metadata") if isinstance(candidate.get("metadata"), Mapping) else {}
             )
             if (
                 str(metadata.get("ticker") or "").upper() == ticker.upper()

@@ -55,12 +55,13 @@ flowchart TD
 `QuestionRequest` trims questions, normalizes an optional ticker, and deduplicates ordered tickers.
 `AppServices` combines the answer pipeline, chat store, source resolver, and model name without
 making them globals. Answer and error turns may include optional `diagnostics`. SSE status events
-can add `routing` and repeatable `assessing_evidence` progress to the baseline stages; the terminal
+are flushed immediately, include heartbeat comments during long work, and can add repeatable
+`assessing_evidence` progress to the baseline stages; the terminal
 diagnostics contain each hybrid/exact search, context read, verifier verdict, budget count, and
 schema-recovery event.
 
 When `AGENTIC_RAG_ENABLED=true`, `BankAnswerPipeline.retrieve_evidence()` performs initial hybrid
-retrieval and then an isolated bounded loop for each bank. Runtime, not the model, supplies ticker,
+retrieval and then an isolated additive bounded loop for each bank. Runtime, not the model, supplies ticker,
 accession, backend, windows, and limits. The API does not expose a generic tool endpoint; request
 and citation-context schemas are unchanged.
 

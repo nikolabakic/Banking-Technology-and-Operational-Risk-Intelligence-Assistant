@@ -14,9 +14,9 @@ from bankscope.generation.answer_generator import (
 class MockCompletions:
     def __init__(
         self,
-        payload: str,
+        payload: str | list[str],
         *,
-        finish_reason: str = "stop",
+        finish_reason: str | list[str] = "stop",
         refusal: str | None = None,
     ) -> None:
         self.payload = payload
@@ -26,14 +26,41 @@ class MockCompletions:
 
     def create(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
-        message = SimpleNamespace(content=self.payload, refusal=self.refusal)
+        payload = (
+            self.payload[min(len(self.calls) - 1, len(self.payload) - 1)]
+            if isinstance(self.payload, list)
+            else self.payload
+        )
+        try:
+            parsed = json.loads(payload)
+        except (TypeError, ValueError):
+            parsed = {}
+        if parsed.get("status") == "ambiguous":
+            function_name = "submit_ambiguous_answer"
+        elif parsed.get("status") == "unsupported":
+            function_name = "submit_unsupported_answer"
+        elif parsed.get("answer_type") == "narrative":
+            function_name = "submit_supported_narrative_answer"
+        else:
+            function_name = "submit_supported_numeric_answer"
+        function = SimpleNamespace(name=function_name, arguments=payload)
+        message = SimpleNamespace(
+            content=None,
+            refusal=self.refusal,
+            tool_calls=[SimpleNamespace(function=function)],
+        )
         usage = SimpleNamespace(prompt_tokens=100, completion_tokens=20, total_tokens=120)
-        choice = SimpleNamespace(message=message, finish_reason=self.finish_reason)
+        finish_reason = (
+            self.finish_reason[min(len(self.calls) - 1, len(self.finish_reason) - 1)]
+            if isinstance(self.finish_reason, list)
+            else self.finish_reason
+        )
+        choice = SimpleNamespace(message=message, finish_reason=finish_reason)
         return SimpleNamespace(id="chatcmpl_answer_1", choices=[choice], usage=usage)
 
 
 def mock_client(
-    payload: str, *, finish_reason: str = "stop", refusal: str | None = None
+    payload: str | list[str], *, finish_reason: str | list[str] = "stop", refusal: str | None = None
 ) -> tuple[Any, MockCompletions]:
     completions = MockCompletions(payload, finish_reason=finish_reason, refusal=refusal)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
@@ -80,7 +107,7 @@ def evidence(
     }
 
 
-def test_numeric_answer_uses_json_mode_facts_and_verified_citation() -> None:
+def test_numeric_answer_uses_strict_function_facts_and_verified_citation() -> None:
     client, completions = mock_client(model_payload())
 
     result = generate_answer(
@@ -100,8 +127,27 @@ def test_numeric_answer_uses_json_mode_facts_and_verified_citation() -> None:
     assert result["facts"]["value_text"] == "15"
     assert result["citations"][0]["target_chunk_id"] == "chunk-1"
     call = completions.calls[0]
-    assert call["response_format"] == {"type": "json_object"}
-    assert call["max_completion_tokens"] == 800
+    assert "response_format" not in call
+    assert call["tool_choice"] == "required"
+    assert call["parallel_tool_calls"] is False
+    assert {tool["function"]["name"] for tool in call["tools"]} == {
+        "submit_supported_numeric_answer",
+        "submit_supported_narrative_answer",
+        "submit_ambiguous_answer",
+        "submit_unsupported_answer",
+    }
+    assert all(tool["function"]["strict"] is True for tool in call["tools"])
+    for tool in call["tools"]:
+        parameters = tool["function"]["parameters"]
+        assert parameters["additionalProperties"] is False
+        assert set(parameters["required"]) == set(parameters["properties"])
+    schema = call["tools"][0]["function"]["parameters"]
+    assert set(schema["required"]) == set(schema["properties"])
+    numeric_schema = schema["$defs"]["NumericFacts"]
+    assert set(numeric_schema["required"]) == set(numeric_schema["properties"])
+    assert schema["additionalProperties"] is False
+    assert numeric_schema["additionalProperties"] is False
+    assert call["max_completion_tokens"] == 1_600
     assert "max_tokens" not in call
     assert "temperature" not in call
     assert "Expected bank: JPMorgan Chase & Co." in call["messages"][1]["content"]
@@ -110,7 +156,7 @@ def test_numeric_answer_uses_json_mode_facts_and_verified_citation() -> None:
     assert "never a JSON array or list" in call["messages"][0]["content"]
     assert "metric must contain only the base measure" in call["messages"][0]["content"]
     assert '"variant":"Standardized"' in call["messages"][0]["content"]
-    assert "Base measure only" in call["messages"][0]["content"]
+    assert "Base measure only" in numeric_schema["properties"]["metric"]["description"]
     assert len(completions.calls) == 1
     assert result["generation"]["request_count"] == 1
     assert result["generation"]["final_status"] == "supported"
@@ -314,9 +360,10 @@ def test_invalid_schema_refusal_and_truncation_have_stable_codes() -> None:
             expected_ticker="JPM",
         )
     assert invalid.value.code == "invalid_schema"
-    assert invalid.value.generation["request_count"] == 1
+    assert invalid.value.generation["request_count"] == 2
     assert invalid.value.generation["final_status"] == "validation_error"
     assert invalid.value.generation["usage"]["input_tokens"] == 100
+    assert invalid.value.generation["validation_errors"]
 
     refusal_client, _ = mock_client("{}", refusal="Cannot comply")
     with pytest.raises(GenerationValidationError) as refusal:
@@ -339,9 +386,10 @@ def test_invalid_schema_refusal_and_truncation_have_stable_codes() -> None:
             expected_ticker="JPM",
         )
     assert truncated.value.code == "response_truncated"
+    assert truncated.value.generation["request_count"] == 2
 
 
-def test_numeric_facts_array_is_rejected_without_retry() -> None:
+def test_numeric_facts_array_is_rejected_after_one_repair_retry() -> None:
     payload = json.loads(model_payload())
     payload["facts"] = [payload["facts"]]
     client, completions = mock_client(json.dumps(payload))
@@ -356,7 +404,70 @@ def test_numeric_facts_array_is_rejected_without_retry() -> None:
         )
 
     assert captured.value.code == "invalid_schema"
-    assert len(completions.calls) == 1
+    assert len(completions.calls) == 2
+
+
+def test_semantic_schema_failure_is_repaired_once() -> None:
+    client, completions = mock_client(['{"status":"supported"}', model_payload()])
+
+    result = generate_answer(
+        "What was JPM's CET1 ratio in 2025?",
+        [evidence()],
+        client=client,
+        model="AZURE_GPT_51_2025_1113",
+        expected_ticker="JPM",
+    )
+
+    assert result["status"] == "supported"
+    assert result["generation"]["request_count"] == 2
+    assert "failed local contract validation" in (
+        completions.calls[1]["messages"][0]["content"].casefold()
+    )
+
+
+def test_unsupported_model_text_is_replaced_by_local_abstention() -> None:
+    client, _ = mock_client(
+        model_payload(
+            status="unsupported",
+            answer_type="narrative",
+            answer="Here is a complete apple pie recipe.",
+            facts=None,
+            citation_ids=[],
+            reason="Unrelated request.",
+        )
+    )
+
+    result = generate_answer(
+        "Koji podatak JPM navodi?",
+        [evidence()],
+        client=client,
+        model="test-model",
+        expected_ticker="JPM",
+    )
+
+    assert result["status"] == "unsupported"
+    assert "apple pie" not in result["answer"].casefold()
+    assert "apple pie" not in result["reason"].casefold()
+    assert "dokazi" in result["answer"].casefold()
+
+
+def test_truncation_retries_once_with_larger_budget_and_concise_instruction() -> None:
+    client, completions = mock_client(model_payload(), finish_reason=["length", "stop"])
+
+    result = generate_answer(
+        "What was JPM's CET1 ratio in 2025?",
+        [evidence()],
+        client=client,
+        model="AZURE_GPT_51_2025_1113",
+        expected_ticker="JPM",
+    )
+
+    assert result["status"] == "supported"
+    assert result["generation"]["request_count"] == 2
+    assert completions.calls[1]["max_completion_tokens"] == 2_000
+    assert "previous attempt reached the output limit" in (
+        completions.calls[1]["messages"][0]["content"].casefold()
+    )
 
 
 def test_non_gpt51_model_keeps_compatible_completion_parameters() -> None:
@@ -372,6 +483,6 @@ def test_non_gpt51_model_keeps_compatible_completion_parameters() -> None:
     )
 
     call = completions.calls[0]
-    assert call["max_tokens"] == 800
+    assert call["max_tokens"] == 1_600
     assert call["temperature"] == 0
     assert "max_completion_tokens" not in call

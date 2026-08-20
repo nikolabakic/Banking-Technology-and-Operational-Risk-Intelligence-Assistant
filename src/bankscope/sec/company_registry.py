@@ -92,6 +92,23 @@ def normalize_bank_text(value: str) -> str:
     return " ".join(normalized.split())
 
 
+def bank_identifier_variants(value: str) -> tuple[str, ...]:
+    """Return exact identifier forms plus safe omitted-apostrophe possessives.
+
+    Multi-token names always receive the additional ``s`` form. A single-token name must be at
+    least six characters, which admits specific corporate aliases such as ``JPMorgans`` and
+    ``Truists`` without turning short/common aliases such as ``Chase`` into the verb ``chases``.
+    """
+
+    normalized = normalize_bank_text(value)
+    if not normalized:
+        return ()
+    variants = [normalized]
+    if not normalized.endswith("s") and (" " in normalized or len(normalized) >= 6):
+        variants.append(f"{normalized}s")
+    return tuple(variants)
+
+
 def load_bank_registry(path: str | Path) -> BankRegistry:
     registry_path = Path(path)
 

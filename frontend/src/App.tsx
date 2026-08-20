@@ -70,7 +70,10 @@ function DiagnosticsPanel({ diagnostics }: { diagnostics?: Diagnostics }) {
   const [expanded, setExpanded] = useState(false);
   const diagnosticsId = useId();
   if (!diagnostics) return null;
-  const checks = Object.entries(diagnostics.quality_gate.checks);
+  const qualityGate = diagnostics.quality_gate ?? { passed: false, checks: {} };
+  const checks = Object.entries(qualityGate.checks ?? {});
+  const stages = Array.isArray(diagnostics.stages) ? diagnostics.stages : [];
+  const bankPlans = Array.isArray(diagnostics.bank_plans) ? diagnostics.bank_plans : [];
   return (
     <>
       <Button
@@ -91,9 +94,9 @@ function DiagnosticsPanel({ diagnostics }: { diagnostics?: Diagnostics }) {
           <span>Evidence: <strong>{diagnostics.initial_evidence_count ?? "\u2014"} {"\u2192"} {diagnostics.final_evidence_count ?? "\u2014"}</strong></span>
           <span>Model requests: <strong>{diagnostics.model_request_count ?? "\u2014"}</strong></span>
         </div>
-        {diagnostics.stages.length > 0 && (
+        {stages.length > 0 && (
           <ol className="diagnostics-timeline">
-            {diagnostics.stages.map((stage, index) => (
+            {stages.map((stage, index) => (
               <li key={`${stage.stage}-${index}`}>
                 <span>{stage.stage.replace(/_/g, " ")}</span>
                 {typeof stage.latency_ms === "number" && <small>{stage.latency_ms.toFixed(1)} ms</small>}
@@ -101,7 +104,7 @@ function DiagnosticsPanel({ diagnostics }: { diagnostics?: Diagnostics }) {
             ))}
           </ol>
         )}
-        {diagnostics.bank_plans.map((plan) => (
+        {bankPlans.map((plan) => (
           <div className="diagnostics-plan" key={plan.ticker}>
             <strong>{plan.ticker}: {plan.action}{plan.final_status ? ` \u2192 ${plan.final_status}` : ""}</strong>
             {plan.reason_code && <span>{plan.reason_code}</span>}
@@ -126,8 +129,8 @@ function DiagnosticsPanel({ diagnostics }: { diagnostics?: Diagnostics }) {
             )}
           </div>
         ))}
-        <div className={`execution-checks ${diagnostics.quality_gate.passed ? "passed" : "failed"}`}>
-          <strong>Execution checks: {diagnostics.quality_gate.passed ? "passed" : "failed"}</strong>
+        <div className={`execution-checks ${qualityGate.passed ? "passed" : "failed"}`}>
+          <strong>Execution checks: {qualityGate.passed ? "passed" : "failed"}</strong>
           <ul>{checks.map(([name, passed]) => (
             <li key={name}>
               <span className={`diagnostics-check-icon ${passed ? "passed" : "failed"}`} aria-hidden="true">{passed ? "\u2713" : "\u2715"}</span>
@@ -373,6 +376,32 @@ function ComparisonResults({ response, onSource }: {
   );
 }
 
+function assistantSubtitle(turn: Turn): string {
+  if (turn.state === "loading") return turn.status || "Preparing the answer…";
+  if (turn.state !== "answered" || !turn.response) return "BankScope assistant";
+  switch (turn.response.dialog_act) {
+    case "clarification": return "One detail is needed";
+    case "retryable_error": return "Research paused safely";
+    case "answer": return "Grounded in indexed filings";
+    default:
+      return turn.response.citations.length > 0
+        ? "Grounded in indexed filings"
+        : "BankScope assistant";
+  }
+}
+
+function hasAnswerMetadata(response: AnswerResponse): boolean {
+  return Boolean(
+    response.ticker
+    || (response.tickers && response.tickers.length > 1)
+    || response.citations.length > 0
+    || response.dialog_act === "answer"
+    || response.dialog_act === "clarification"
+    || response.dialog_act === "retryable_error"
+    || response.mode === "comparison",
+  );
+}
+
 function AssistantTurn({ turn, copied, onCopy, onSource }: {
   turn: Turn;
   copied: boolean;
@@ -385,7 +414,7 @@ function AssistantTurn({ turn, copied, onCopy, onSource }: {
         <span className="assistant-mark" aria-hidden="true"><img src="/brand/bankscope-target.svg" alt="" /></span>
         <div>
           <strong>BankScope</strong>
-          <small>{turn.state === "loading" ? turn.status || "Preparing the answer…" : "Grounded in indexed filings"}</small>
+          <small>{assistantSubtitle(turn)}</small>
         </div>
       </div>
       {turn.state === "loading" && (
@@ -401,15 +430,22 @@ function AssistantTurn({ turn, copied, onCopy, onSource }: {
         <div className="answer-body">
           <AnswerText response={turn.response} onSource={(index) => onSource(turn.response!, index)} />
           <ComparisonResults response={turn.response} onSource={(index) => onSource(turn.response!, index)} />
-          <div className="answer-meta">
-            {turn.response.ticker && <Badge variant="secondary">{turn.response.ticker} detected</Badge>}
-            {turn.response.tickers && turn.response.tickers.length > 1 && (
-              <Badge variant="secondary">{turn.response.tickers.join(" vs ")}</Badge>
-            )}
-            <span>{turn.response.citations.length} {turn.response.citations.length === 1 ? "source" : "sources"}</span>
-            <span className="meta-separator" />
-            <StatusBadge status={turn.response.status} />
-          </div>
+          {hasAnswerMetadata(turn.response) && (
+            <div className="answer-meta">
+              {turn.response.ticker && <Badge variant="secondary">{turn.response.ticker} detected</Badge>}
+              {turn.response.tickers && turn.response.tickers.length > 1 && (
+                <Badge variant="secondary">{turn.response.tickers.join(" vs ")}</Badge>
+              )}
+              {turn.response.citations.length > 0 && (
+                <span>{turn.response.citations.length} {turn.response.citations.length === 1 ? "source" : "sources"}</span>
+              )}
+              {turn.response.dialog_act === "clarification" && <Badge variant="secondary">Clarification</Badge>}
+              {turn.response.dialog_act === "retryable_error" && <Badge variant="secondary">Try again</Badge>}
+              {(turn.response.dialog_act === "answer" || turn.response.citations.length > 0 || turn.response.mode === "comparison") && (
+                <><span className="meta-separator" /><StatusBadge status={turn.response.status} /></>
+              )}
+            </div>
+          )}
           <div className="answer-actions">
             <Button variant="ghost" size="sm" onClick={onCopy}><Copy size={14} /> {copied ? "Copied" : "Copy"}</Button>
             {turn.response.citations.length > 0 && (
@@ -771,7 +807,7 @@ export default function App() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {openSource && (
+        {openSource && openSource.response.citations[openSource.index] && (
           <SourcePanel key={openSource.response.citations[openSource.index].citation_id} source={openSource} onChange={(index) => setOpenSource({ ...openSource, index })} onClose={() => setOpenSource(null)} />
         )}
       </div>

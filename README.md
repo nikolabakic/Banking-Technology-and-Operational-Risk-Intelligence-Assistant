@@ -28,8 +28,17 @@ supporting excerpts for each bank in a comparison.
 - builds bounded retrieval records while preserving canonical evidence;
 - stores dense vectors in local Qdrant and lexical records in BM25S;
 - fuses dense and lexical rankings with reciprocal-rank fusion (RRF);
-- answers single-bank and two-to-four-bank comparison questions with citations;
-- contextualizes bounded conversation history without treating prior answers as evidence;
+- answers single-bank and two-to-four-bank comparison questions with independently retrieved,
+  bank-owned evidence and citations;
+- handles greetings, capabilities, general explanations, clarifications, and natural follow-ups
+  through a strict conversational function router;
+- sends no history for standalone questions and uses at most two compact, fact-free turns for
+  referential follow-ups without allowing a rewrite to override the current message;
+- preserves original wording beside validated rewrites and adds bank-scoped concept searches for
+  operational risk, cybersecurity, third-party risk, and CET1;
+- returns grounded results through one of four strict answer functions with one bounded repair retry;
+- blocks out-of-scope requests before retrieval and clarifies vague CET1 amount-versus-ratio intent;
+- diversifies retrieval across five filing aspects for whole-10-K summary requests;
 - persists local threads and citation metadata in SQLite;
 - evaluates retrieval, generation, conversation memory, and comparisons separately.
 
@@ -82,10 +91,11 @@ process before launching another application instance.
 
 Bounded agentic RAG is experimental and remains disabled by default. Set
 `AGENTIC_RAG_ENABLED=true` only for local evaluation; the initial Qdrant + BM25S + RRF retrieval
-is unchanged. After that initial evidence, each bank gets an isolated, bounded loop that may run
+is unchanged and remains first in the final evidence order. After that initial evidence, each bank
+gets an isolated, bounded loop that may run
 `search_hybrid`, literal `search_exact`, bounded `read_context`, or `finish`. Runtime limits the
-loop to six orchestration model requests, four retrieval/read actions, and two verifier requests
-per bank.
+loop to three orchestration model requests, one retrieval/read action, and one verifier request per
+bank.
 
 ```dotenv
 # .env
@@ -105,9 +115,10 @@ python scripts/evaluate_agentic_rag.py --prerequisite-gates-passed
 ```
 
 The switch must remain off unless that report and the existing frozen quality gates pass. See
-[ADR 012](docs/decisions/012-bounded-hybrid-agent-loop.md) for the current design and rollout
-contract. [ADR 011](docs/decisions/011-eval-first-agentic-rag.md) preserves the superseded
-one-step experiment and its measured result.
+[ADR 013](docs/decisions/013-rag-reliability-hardening.md) for the current design and rollout
+contract. [ADR 012](docs/decisions/012-bounded-hybrid-agent-loop.md) and
+[ADR 011](docs/decisions/011-eval-first-agentic-rag.md) preserve the superseded experiments and
+their measured results.
 
 For separate terminals:
 
@@ -152,25 +163,36 @@ Glossary locators are lexical-only records that point to the same canonical tabl
 flowchart TD
     UI[React client] -->|SSE request| API[FastAPI]
     API --> History[SQLite thread history]
-    History --> Context[Question contextualizer]
-    Context --> Resolve[Deterministic bank resolver]
+    History --> FrontDoor{Strict conversation function}
+    FrontDoor -->|respond_directly| Direct[Conversation response]
+    FrontDoor -->|ask_clarification| Clarify[One concise question]
+    FrontDoor -->|research_filings| Context[Validated internal search question]
+    Context --> Resolve[Deterministic bank resolver + session scope]
     Resolve -->|one bank| Single[Single-bank pipeline]
-    Resolve -->|2-4 banks| Multi[Independent per-bank pipelines]
+    Resolve -->|2-4 banks| Plan[Peer-free subquestion per bank]
+    Plan --> Multi[Independent per-bank pipelines]
     Single --> Retrieval[Qdrant dense + BM25S + app RRF]
     Multi --> Retrieval
     Retrieval --> Evidence[Hydrated canonical evidence]
     Evidence --> Generate[Validated answer generation]
     Multi --> Synthesis[Validated comparison synthesis]
-    Generate --> Persist[Persist turn and citation metadata]
+    Generate --> Persist[Persist normal assistant turn]
     Synthesis --> Persist
+    Direct --> Persist
+    Clarify --> Persist
+    API -->|safe model/pipeline failure| Recovery[Retryable assistant response]
+    Recovery --> Persist
     Persist --> UI
     UI -->|open citation| Sources[Canonical source resolver]
 ```
 
-The current question selects a bank or an ordered set of two to four banks. When it does not,
-the server-owned thread scope supplies follow-up context. Up to four completed turns from the
-same thread may rewrite the latest question for retrieval; previous assistant text never becomes
-filing evidence.
+The current question selects a bank or an ordered set of two to four banks. When it does not, the
+server-owned thread scope and bounded history can supply follow-up context. The router may answer
+directly, decline an unrelated request, ask one clarification, or request filing research. Research rewrites are disposable,
+validated search inputs; the original message remains authoritative. Prior assistant answer text
+never re-enters model context; only compact routing state may clarify a reference. Expected model
+failures return a normal
+retryable assistant turn rather than an empty/error-only conversation.
 
 ## Repository map
 
@@ -242,4 +264,6 @@ acceptance gates in [docs/roadmap.md](docs/roadmap.md) and record measured decis
 - Retrieval scores are rankings, not answerability probabilities.
 - The accepted GPT-5.1 generation candidate retains one documented rounded-citation caveat; see
   [docs/generation_hardening.md](docs/generation_hardening.md).
+- Agentic RAG remains an opt-in experiment until its live additive-retrieval gate passes; the
+  deterministic baseline is the safe default.
 - Authentication, multi-user infrastructure, cloud persistence, and deployment are out of scope.

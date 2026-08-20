@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from bankscope.sec.company_registry import normalize_bank_text
+from bankscope.sec.company_registry import bank_identifier_variants, normalize_bank_text
 
 ResolutionStatus = Literal["resolved", "missing", "multiple", "too_many"]
 ResolutionSource = Literal["question", "session"]
@@ -31,8 +31,21 @@ class BankResolution:
         return payload
 
 
-def _contains_phrase(question: str, phrase: str) -> bool:
-    return f" {phrase} " in f" {question} "
+def _phrase_positions(question: str, phrase: str) -> tuple[int, ...]:
+    """Return safe exact-match positions, including a common omitted-apostrophe possessive.
+
+    ``normalize_bank_text`` already turns ``JP Morgan's`` into ``jp morgan``. Users also
+    frequently type ``JP Morgans`` or ``JPMorgans``. Accept that form for multi-token or
+    sufficiently specific single-token identifiers so an ordinary verb such as ``chases`` cannot
+    accidentally resolve the short ``Chase`` alias.
+    """
+
+    padded_question = f" {question} "
+    return tuple(
+        position
+        for candidate in bank_identifier_variants(phrase)
+        if (position := padded_question.find(f" {candidate} ")) >= 0
+    )
 
 
 def _mentions_c_ticker(question: str) -> bool:
@@ -64,9 +77,10 @@ def resolve_bank(
         if ticker != "C":
             identifiers.add(normalize_bank_text(ticker))
         positions = [
-            normalized_question.find(identifier)
+            position
             for identifier in identifiers
-            if identifier and _contains_phrase(normalized_question, identifier)
+            if identifier
+            for position in _phrase_positions(normalized_question, identifier)
         ]
         if positions:
             detected_positions[ticker] = min(position for position in positions if position >= 0)

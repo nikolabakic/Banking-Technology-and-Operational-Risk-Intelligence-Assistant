@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 import pytest
@@ -55,10 +56,10 @@ def test_chat_store_errors_do_not_replace_session_bank(tmp_path) -> None:
     assert store.get_thread(thread["id"])["session_ticker"] == "JPM"
     assert store.list_turns(thread["id"])[1]["error_code"] == "pipeline_failed"
     assert store.list_turns(thread["id"])[1]["diagnostics"]["failed_stage"] == "retrieving"
-    assert store.conversation_history(thread["id"]) == [
-        {"role": "user", "content": "JPM question"},
-        {"role": "assistant", "content": "Answer [E1]"},
-    ]
+    history = store.conversation_history(thread["id"])
+    assert history[0] == {"role": "user", "content": "JPM question"}
+    assert json.loads(history[1]["content"])["tickers"] == ["JPM"]
+    assert "Answer [E1]" not in history[1]["content"]
 
 
 def test_conversation_history_is_thread_scoped_and_bounded_by_complete_pairs(tmp_path) -> None:
@@ -74,22 +75,80 @@ def test_conversation_history_is_thread_scoped_and_bounded_by_complete_pairs(tmp
 
     history = store.conversation_history(first["id"])
 
-    assert [item["content"] for item in history] == [
+    assert [item["content"] for item in history if item["role"] == "user"] == [
         "Question 2",
-        "Answer 2 [E1]",
         "Question 3",
-        "Answer 3 [E1]",
         "Question 4",
-        "Answer 4 [E1]",
         "Question 5",
-        "Answer 5 [E1]",
     ]
+    assert all("Answer" not in item["content"] for item in history if item["role"] == "assistant")
     assert all(item["content"] != "Other thread" for item in history)
-    assert store.conversation_history(first["id"], max_chars=23) == [
-        {"role": "user", "content": "Question 5"},
-        {"role": "assistant", "content": "Answer 5 [E1]"},
-    ]
-    assert store.conversation_history(first["id"], max_chars=22) == []
+    one_pair = store.conversation_history(first["id"], max_turns=1)
+    assert one_pair[0] == {"role": "user", "content": "Question 5"}
+    assert store.conversation_history(first["id"], max_chars=1) == []
+    assert store.conversation_history(first["id"], max_tokens=1) == []
+
+
+def test_retryable_answer_turns_do_not_pollute_conversation_history(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+    store.append_answer_turn(thread["id"], "JPM topic", answer(), corpus_hash="hash-1")
+    recovery = answer()
+    recovery.update(
+        {
+            "dialog_act": "retryable_error",
+            "answer": "Research paused safely.",
+            "citations": [],
+            "status": "unsupported",
+        }
+    )
+    store.append_answer_turn(thread["id"], "Tell me more", recovery, corpus_hash="hash-1")
+
+    history = store.conversation_history(thread["id"])
+    assert [item["content"] for item in history if item["role"] == "user"] == ["JPM topic"]
+    assert "Answer [E1]" not in history[1]["content"]
+
+
+def test_out_of_scope_turn_resets_research_memory_without_entering_it(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+    store.append_answer_turn(thread["id"], "JPM topic", answer(), corpus_hash="hash-1")
+    declined = answer("")
+    declined.update(
+        {
+            "dialog_act": "out_of_scope",
+            "ticker": None,
+            "tickers": [],
+            "status": "unsupported",
+            "answer": "Scope boundary.",
+            "citations": [],
+        }
+    )
+    store.append_answer_turn(thread["id"], "Apple pie recipe", declined, corpus_hash="hash-1")
+
+    assert store.conversation_history(thread["id"]) == []
+
+
+def test_acknowledgement_does_not_displace_latest_research_topic(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+    store.append_answer_turn(thread["id"], "JPM topic", answer(), corpus_hash="hash-1")
+    acknowledgement = answer("")
+    acknowledgement.update(
+        {
+            "dialog_act": "acknowledgement",
+            "ticker": None,
+            "answer": "You're welcome.",
+            "citations": [],
+        }
+    )
+    store.append_answer_turn(thread["id"], "Thanks", acknowledgement, corpus_hash="hash-1")
+
+    history = store.conversation_history(thread["id"])
+    assert [item["content"] for item in history if item["role"] == "user"] == ["JPM topic"]
 
 
 def test_chat_store_cascade_deletes_messages_and_citations(tmp_path) -> None:

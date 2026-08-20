@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import ErrorBoundary from "./ErrorBoundary";
 import type { AnswerResponse, CitationContext, ThreadSummary, Turn } from "./api";
 
 const mocks = vi.hoisted(() => ({
@@ -125,6 +126,49 @@ describe("persistent chat workspace", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("5 → 5")).toBeInTheDocument();
     expect(screen.getByText("✓")).toBeInTheDocument();
+  });
+
+  it("renders legacy error turns with empty diagnostics instead of crashing", async () => {
+    mocks.loadThread.mockResolvedValue({
+      thread,
+      turns: [{
+        id: "55555555-5555-4555-8555-555555555555",
+        question: "A failed question",
+        state: "error",
+        error: "The answer failed.",
+        diagnostics: {},
+      } as Turn],
+    });
+
+    renderThread();
+
+    expect(await screen.findByText("The answer failed.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Diagnostics" }));
+    expect(await screen.findByText("Execution checks: failed")).toBeInTheDocument();
+  });
+
+  it("renders clarification as a normal assistant turn without fake source metadata", async () => {
+    const clarification: AnswerResponse = {
+      ...response,
+      dialog_act: "clarification",
+      ticker: null,
+      status: "ambiguous",
+      answer: "Which bank should I research?",
+      reason: "A bank is required.",
+      citations: [],
+    };
+    mocks.loadThread.mockResolvedValue({
+      thread,
+      turns: [{ ...turn, response: clarification }],
+    });
+
+    renderThread();
+
+    expect(await screen.findByText("Which bank should I research?")).toBeInTheDocument();
+    expect(screen.getByText("One detail is needed")).toBeInTheDocument();
+    expect(screen.getByText("Clarification")).toBeInTheDocument();
+    expect(screen.queryByText("0 sources")).not.toBeInTheDocument();
+    expect(screen.queryByText("Grounded in indexed filings")).not.toBeInTheDocument();
   });
 
   it("renames and deletes conversations through confirmed sidebar actions", async () => {
@@ -320,5 +364,22 @@ describe("persistent chat workspace", () => {
     expect(screen.getByText("BankScope")).toBeInTheDocument();
     expect(screen.queryByText("Banking risk intelligence")).not.toBeInTheDocument();
     expect(screen.queryByText("Evidence corpus ready")).not.toBeInTheDocument();
+  });
+});
+
+describe("render recovery", () => {
+  it("shows a reload action when an unexpected child render fails", () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const Broken = () => {
+      throw new Error("invalid payload reached render");
+    };
+
+    try {
+      render(<ErrorBoundary><Broken /></ErrorBoundary>);
+      expect(screen.getByRole("alert")).toHaveTextContent("interface recovered");
+      expect(screen.getByRole("button", { name: "Reload BankScope" })).toBeInTheDocument();
+    } finally {
+      consoleSpy.mockRestore();
+    }
   });
 });

@@ -35,6 +35,7 @@ def test_resolves_names_aliases_tickers_and_punctuation() -> None:
     cases = {
         "What did JPMorgan report?": "JPM",
         "What did J.P. Morgan Chase report?": "JPM",
+        "Summarize the JP Morgans 10-K doc": "JPM",
         "What did BofA report?": "BAC",
         "What did Citi report?": "C",
         "What did ticker C report?": "C",
@@ -92,6 +93,15 @@ def test_resolves_comparison_session_and_rejects_more_than_four_banks() -> None:
     assert switched.tickers == ("COF",)
     assert too_many.status == "too_many"
     assert too_many.tickers == ("JPM", "BAC", "C", "COF", "GS")
+
+
+def test_omitted_apostrophe_possessives_work_without_matching_short_alias_verbs() -> None:
+    spaced = resolve("Compare JP Morgans and Bank of Americas CET1 ratios.")
+    compact = resolve("Compare JPMorgans CET1 ratio with Bank of Americas for 2025.")
+
+    assert spaced.status == compact.status == "multiple"
+    assert spaced.tickers == compact.tickers == ("JPM", "BAC")
+    assert resolve("The strategy chases higher returns.").status == "missing"
 
 
 def test_frozen_questions_cover_single_multiple_and_missing_resolution() -> None:
