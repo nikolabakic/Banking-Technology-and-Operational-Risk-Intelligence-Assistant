@@ -244,8 +244,51 @@ Prihvatni kriterijumi:
 ## Kratka početna poruka za sledeći chat
 
 ```text
-Pročitaj docs/multi-bank-comparison-handoff.md i nastavi stabilizaciju multi-bank poređenja. Prvo
-implementiraj bezbedno čišćenje model-generated ticker anotacija u build_bank_subquestion(), dodaj
-regresione testove i pokreni postojeće retrieval/comparison gate-ove. Ne hardkodiraj banke ili CET1
-vrednosti i ne menjaj bank isolation/citation invarijante.
+Pročitaj docs/multi-bank-comparison-handoff.md, posebno završni status od 2026-08-21. Faze 1–4 su
+implementirane i automated gate-ovi prolaze. Restartuj backend i pomozi mi da ručno proverim C/JPM,
+BAC/JPM i trostruka poređenja. Ne hardkodiraj banke ili CET1 vrednosti i ne menjaj bank
+isolation/citation invarijante bez nove evaluacije.
 ```
+
+## Implementirano i evaluirano 2026-08-21
+
+Faze 1–4 iz ovog dokumenta su implementirane:
+
+- `build_bank_subquestion()` bezbedno uklanja samo strukturne anotacije za već razrešene tickere i
+  sažima neposredno duplirane topic fraze;
+- prepoznata fokusirana metrika dobija jedan bank-scoped drugi retrieval samo kada prvi evidence
+  paket nema potrebne concept/period/numeric signale;
+- jak evidence paket dobija najviše jedan bank-only generation recheck posle model abstention-a;
+- post-validation `invalid_citations` dobija isti ograničeni recheck, ali `invalid_schema` ostaje
+  fail-closed;
+- numeric odgovor sa nepoznatom citation labelom može se lokalno uskladiti samo sa evidence labelama
+  koje doslovno sadrže isti `facts.value_text`; bez exact-value dokaza odgovor se odbija;
+- comparison evaluator podržava `--repetitions` i ispravno razlikuje preskočen semantic judge od
+  neuspešnog semantic gate-a.
+
+Tokom evaluacije je potvrđeno da Truist Table 37 target
+`d46c08d204efc3fe045283f309ca5f409886b2f73f31726d80e4d8e3686832c0` direktno navodi
+Corporation CET1 od 10.8% za 2025. Target je već bio ručno prihvaćen u
+`generation_citation_audit_v2.jsonl`, pa je dodat kao dozvoljena alternativa odgovarajućoj frozen
+cross-bank evidence grupi.
+
+Rezultati:
+
+- kompletan backend suite: **302 passed**;
+- Ruff: **all checks passed**;
+- mixed-hybrid frozen retrieval: Hit@5 **31/32**, Hit@10 **32/32**, cross-bank **3/3 pitanja i 6/6
+  grupa**, bez Top-5 ili Top-10 regresija;
+- finalni comparison stability run (`--skip-judge --repetitions 3`): **9/9 runs**, **3/3 stable
+  queries**, **18/18 evidence groups**, **0 citation ownership violations**, deterministic i overall
+  gate **pass**;
+- semantic judge nije pokrenut u finalnom stability run-u i zato je zabeležen kao `null`, ne kao
+  neuspeh.
+
+Generisani lokalni izveštaji:
+
+- `data/evaluation/results/codex-multibank-retrieval.json`;
+- `data/evaluation/results/codex-multi-bank-comparison.json`;
+- `data/evaluation/results/codex-multi-bank-comparison-stability.json`.
+
+Za ručni UI test potreban je restart backend-a, jer trenutno pokrenuti proces ne učitava ove poslednje
+izmene dok se ne restartuje.

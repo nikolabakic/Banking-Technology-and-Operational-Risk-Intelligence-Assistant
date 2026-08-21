@@ -663,6 +663,7 @@ def generate_answer(
     resolved_question: str | None = None,
     comparison_scope: bool = False,
     presentation_guidance: str | None = None,
+    evidence_recheck: bool = False,
 ) -> dict[str, Any]:
     """Generate one fail-closed answer using only hydrated retrieval evidence."""
     question = question.strip()
@@ -721,6 +722,13 @@ def generate_answer(
             " This is one bank-specific stage of a comparison. Answer only for the expected "
             "bank, even when the user question names other banks. Do not compare banks or treat "
             "missing evidence for another bank as a reason to abstain."
+        )
+    if evidence_recheck:
+        instructions += (
+            " This is one bounded evidence recheck after an earlier abstention. Re-evaluate only "
+            "the expected bank and requested period. Inspect the supplied table and text for the "
+            "requested metric. Do not require evidence for peer banks. Continue to abstain unless "
+            "the supplied evidence directly supports the answer."
         )
     if presentation_guidance:
         instructions += (
@@ -848,6 +856,24 @@ def generate_answer(
             # locally; unknown inline markers still fail closed below.
             answer.citation_ids = inline_citations
     unknown = set(answer.citation_ids) - evidence_by_label.keys()
+    if (
+        unknown
+        and answer.status == "supported"
+        and answer.answer_type == "numeric"
+        and answer.facts is not None
+    ):
+        expected_value = _canonical_value_token(answer.facts.value_text)
+        matching_labels = []
+        for label, item in evidence_by_label.items():
+            actual_values = {
+                match.group(0).replace(",", "").replace(" ", "")
+                for match in NUMBER_TOKEN_PATTERN.finditer(_document(item))
+            }
+            if expected_value in actual_values:
+                matching_labels.append(label)
+        if matching_labels:
+            answer.citation_ids = matching_labels
+            unknown = set()
     if unknown:
         raise GenerationValidationError(
             "invalid_citations",

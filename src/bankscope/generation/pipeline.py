@@ -45,7 +45,9 @@ from bankscope.generation.conversation import (
 from bankscope.generation.memory import summarize_conversation
 from bankscope.generation.query_planner import (
     build_bank_subquestion,
+    build_focused_recovery_queries,
     build_retrieval_queries,
+    focused_evidence_signals,
     remove_untrusted_numeric_facts,
     round_robin_evidence,
     validate_contextualized_rewrite,
@@ -306,7 +308,8 @@ class BankAnswerPipeline:
         # Routing/contextualization and answer generation are outside the per-bank retrieval loop.
         request_budget = orchestration_budget + 2 + 2 * max(1, len(bank_plans))
         if not self.agentic_rag_enabled:
-            request_budget = 6
+            selected_bank_count = len((output or {}).get("tickers") or [])
+            request_budget = 2 + (2 * max(1, selected_bank_count))
         bank_isolation_ok = all(bool(plan.get("bank_isolation_ok", True)) for plan in bank_plans)
         citations_ok = True
         if output is not None and route == "domain_rag":
@@ -824,6 +827,50 @@ class BankAnswerPipeline:
             agentic_plans=tuple(plans),
         )
 
+    def _retrieve_focused_recovery(
+        self,
+        question: str,
+        *,
+        ticker: str,
+        record_type: str | None,
+        limit: int,
+        candidate_k: int,
+        rrf_k: int,
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...], float, float]:
+        """Run one deterministic, bank-scoped second pass for a recognized focused metric."""
+
+        bank_name = self.bank_names.get(ticker, ticker)
+        queries = build_focused_recovery_queries(
+            question,
+            ticker=ticker,
+            bank_name=bank_name,
+        )
+        results: list[list[dict[str, Any]]] = []
+        embedding_ms = 0.0
+        retrieval_ms = 0.0
+        for query in queries:
+            started = perf_counter()
+            vector = self.query_encoder.encode(query)
+            embedding_ms += (perf_counter() - started) * 1000
+            started = perf_counter()
+            found = self.retriever.search_hybrid(
+                query,
+                vector,
+                limit=min(3, limit),
+                candidate_k=candidate_k,
+                rrf_k=rrf_k,
+                ticker=ticker,
+                record_type=record_type,
+            )
+            retrieval_ms += (perf_counter() - started) * 1000
+            results.append([dict(item) for item in found])
+        return (
+            [dict(item) for item in round_robin_evidence(results, limit=max(limit, 5))],
+            queries,
+            embedding_ms,
+            retrieval_ms,
+        )
+
     def answer(
         self,
         question: str,
@@ -1307,6 +1354,41 @@ class BankAnswerPipeline:
             orchestration_request_count += retrieval_run.model_request_count
             bank_plans.extend(dict(plan) for plan in retrieval_run.agentic_plans)
             stages.extend({**dict(stage), "ticker": ticker} for stage in retrieval_run.stage_trace)
+            evidence_signals = focused_evidence_signals(bank_question, evidence)
+            recovery_queries: tuple[str, ...] = ()
+            if evidence_signals["focused"] and not evidence_signals["strong"]:
+                recovered, recovery_queries, recovery_embedding_ms, recovery_retrieval_ms = (
+                    self._retrieve_focused_recovery(
+                        bank_question,
+                        ticker=ticker,
+                        record_type=record_type,
+                        limit=limit,
+                        candidate_k=candidate_k,
+                        rrf_k=rrf_k,
+                    )
+                )
+                evidence = deduplicate_evidence(evidence, recovered, limit=max(limit, 10))
+                embedding_latency_ms += recovery_embedding_ms
+                retrieval_latency_ms += recovery_retrieval_ms
+                stages.extend(
+                    (
+                        {
+                            "stage": "embedding",
+                            "status": "completed",
+                            "latency_ms": recovery_embedding_ms,
+                            "ticker": ticker,
+                            "recovery": True,
+                        },
+                        {
+                            "stage": "retrieving",
+                            "status": "completed",
+                            "latency_ms": recovery_retrieval_ms,
+                            "ticker": ticker,
+                            "recovery": True,
+                        },
+                    )
+                )
+                evidence_signals = focused_evidence_signals(bank_question, evidence)
             all_evidence.extend(evidence)
             per_bank_retrieval.append(
                 {
@@ -1315,6 +1397,9 @@ class BankAnswerPipeline:
                     "queries": list(retrieval_run.diagnostics.get("queries") or []),
                     "evidence_count": len(evidence),
                     "latency_ms": retrieval_run.retrieval_latency_ms,
+                    "recovery_queries": list(recovery_queries),
+                    "evidence_signals": evidence_signals,
+                    "generation_retry": False,
                 }
             )
 
@@ -1342,27 +1427,87 @@ class BankAnswerPipeline:
                     comparison_scope=True,
                     presentation_guidance=presentation_guidance,
                 )
+                if answer["status"] == "unsupported" and evidence_signals["strong"]:
+                    first_generation = dict(answer.get("generation") or {})
+                    answer = generate_answer(
+                        original_bank_question,
+                        evidence,
+                        client=self.client,
+                        model=self.generation_model,
+                        expected_ticker=ticker,
+                        expected_bank_name=bank_name,
+                        expected_record_type=record_type,
+                        temperature=self.temperature,
+                        resolved_question=bank_question,
+                        comparison_scope=True,
+                        presentation_guidance=presentation_guidance,
+                        evidence_recheck=True,
+                    )
+                    answer_generation = dict(answer.get("generation") or {})
+                    answer_generation["request_count"] = int(
+                        first_generation.get("request_count") or 0
+                    ) + int(answer_generation.get("request_count") or 0)
+                    answer_generation["bank_generation_retry"] = True
+                    answer_generation["retry_reason"] = "strong_focused_evidence_after_abstention"
+                    answer["generation"] = answer_generation
+                    per_bank_retrieval[-1]["generation_retry"] = True
             except GenerationValidationError as error:
-                generation = dict(error.generation)
-                answer = {
-                    "status": "unsupported",
-                    "answer_type": "narrative",
-                    "answer": render_unsupported_answer(question),
-                    "facts": None,
-                    "reason": (
-                        f"The {ticker} answer failed output validation ({error.code}); "
-                        "the other banks were still evaluated."
-                    ),
-                    "citations": [],
-                    "generation": {
-                        **generation,
-                        "model": self.generation_model,
-                        "request_count": int(generation.get("request_count") or 0),
-                        "final_status": "unsupported",
-                        "error_code": error.code,
-                    },
-                }
-                per_bank_retrieval[-1]["generation_error_code"] = error.code
+                first_generation = dict(error.generation)
+                retry_error: GenerationValidationError | None = None
+                if evidence_signals["strong"] and error.code == "invalid_citations":
+                    try:
+                        answer = generate_answer(
+                            original_bank_question,
+                            evidence,
+                            client=self.client,
+                            model=self.generation_model,
+                            expected_ticker=ticker,
+                            expected_bank_name=bank_name,
+                            expected_record_type=record_type,
+                            temperature=self.temperature,
+                            resolved_question=bank_question,
+                            comparison_scope=True,
+                            presentation_guidance=presentation_guidance,
+                            evidence_recheck=True,
+                        )
+                        answer_generation = dict(answer.get("generation") or {})
+                        answer_generation["request_count"] = int(
+                            first_generation.get("request_count") or 0
+                        ) + int(answer_generation.get("request_count") or 0)
+                        answer_generation["bank_generation_retry"] = True
+                        answer_generation["retry_reason"] = "invalid_citations_with_strong_evidence"
+                        answer["generation"] = answer_generation
+                        per_bank_retrieval[-1]["generation_retry"] = True
+                    except GenerationValidationError as second_error:
+                        retry_error = second_error
+                else:
+                    retry_error = error
+                if retry_error is not None:
+                    generation = dict(retry_error.generation)
+                    request_count = int(first_generation.get("request_count") or 0)
+                    if retry_error is not error:
+                        request_count += int(generation.get("request_count") or 0)
+                    answer = {
+                        "status": "unsupported",
+                        "answer_type": "narrative",
+                        "answer": render_unsupported_answer(question),
+                        "facts": None,
+                        "reason": (
+                            f"The {ticker} answer failed output validation ({retry_error.code}); "
+                            "the other banks were still evaluated."
+                        ),
+                        "citations": [],
+                        "generation": {
+                            **generation,
+                            "model": self.generation_model,
+                            "request_count": request_count,
+                            "final_status": "unsupported",
+                            "error_code": retry_error.code,
+                            "bank_generation_retry": retry_error is not error,
+                        },
+                    }
+                    per_bank_retrieval[-1]["generation_error_code"] = retry_error.code
+                    per_bank_retrieval[-1]["generation_retry"] = retry_error is not error
             bank_generation_latency_ms += (perf_counter() - started) * 1000
             relabeled, next_citation_index = self._relabel_bank_result(answer, next_citation_index)
             bank_results.append({"ticker": ticker, "bank_name": bank_name, **relabeled})

@@ -67,7 +67,7 @@ class MockRetriever:
                 "target_chunk_id": "chunk-1",
                 "record_type": "text",
                 "ticker": kwargs["ticker"],
-                "evidence": "The filing states that the ratio was 14.6%.",
+                "evidence": "The filing states that the CET1 ratio was 14.6%.",
                 "metadata": {"report_date": "2025-12-31"},
             }
         ]
@@ -296,6 +296,93 @@ class PartialCompletions(ComparisonCompletions):
         return super().create(**kwargs)
 
 
+class AbstainOnceCompletions(ComparisonCompletions):
+    def __init__(self) -> None:
+        super().__init__()
+        self.abstained = False
+
+    def create(self, **kwargs):
+        prompt = kwargs["messages"][1]["content"]
+        system = kwargs["messages"][0]["content"]
+        if "Expected ticker: JPM" in prompt and not self.abstained:
+            self.abstained = True
+            self.calls.append(kwargs)
+            function = SimpleNamespace(
+                name="submit_unsupported_answer",
+                arguments=json.dumps(
+                    {
+                        "status": "unsupported",
+                        "answer_type": "narrative",
+                        "answer": "Insufficient evidence.",
+                        "facts": None,
+                        "citation_ids": [],
+                        "reason": "The evidence appears insufficient.",
+                    }
+                ),
+            )
+            message = SimpleNamespace(
+                content=None,
+                refusal=None,
+                tool_calls=[SimpleNamespace(function=function)],
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+            )
+        if "Expected ticker: JPM" in prompt and "bounded evidence recheck" not in system:
+            raise AssertionError("The second JPM request must be the bounded evidence recheck.")
+        return super().create(**kwargs)
+
+
+class InvalidCitationOnceCompletions(ComparisonCompletions):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed = False
+
+    def create(self, **kwargs):
+        prompt = kwargs["messages"][1]["content"]
+        if "Expected ticker: JPM" in prompt and not self.failed:
+            self.failed = True
+            self.calls.append(kwargs)
+            function = SimpleNamespace(
+                name="submit_supported_narrative_answer",
+                arguments=json.dumps(
+                    {
+                        "status": "supported",
+                        "answer_type": "narrative",
+                        "answer": "The CET1 ratio was 14.6% [E9].",
+                        "facts": None,
+                        "citation_ids": ["E9"],
+                        "reason": "Direct support.",
+                    }
+                ),
+            )
+            message = SimpleNamespace(
+                content=None,
+                refusal=None,
+                tool_calls=[SimpleNamespace(function=function)],
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+            )
+        return super().create(**kwargs)
+
+
+class FocusedRecoveryRetriever(MockRetriever):
+    def search_hybrid(self, question, query_vector, **kwargs):
+        self.calls.append((question, query_vector, kwargs))
+        if kwargs["ticker"] == "BAC" and "relevant filing table or section" not in question:
+            return []
+        return [
+            {
+                "target_chunk_id": f"{kwargs['ticker']}-cet1",
+                "record_type": "table",
+                "ticker": kwargs["ticker"],
+                "evidence": "Common Equity Tier 1 (CET1) capital ratio was 14.6%.",
+                "metadata": {"report_date": "2025-12-31"},
+            }
+        ]
+
+
 class PerBankValidationCompletions(ComparisonCompletions):
     def create(self, **kwargs):
         prompt = kwargs["messages"][1]["content"]
@@ -500,6 +587,74 @@ def test_comparison_retrieves_independent_bank_subquestions_before_synthesis() -
         encoder.calls[:2],
         encoder.calls[2:],
     ]
+
+
+def test_comparison_rechecks_one_abstention_when_focused_evidence_is_strong() -> None:
+    completions = AbstainOnceCompletions()
+    pipeline = SingleBankAnswerPipeline(
+        retriever=MockRetriever(),
+        query_encoder=MockEncoder(),
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co.", "BAC": "Bank of America Corporation"},
+        bank_aliases={"JPM": ("JPMorgan",), "BAC": ("Bank of America",)},
+    )
+
+    run = pipeline.answer("Compare JPMorgan and Bank of America CET1 ratios in 2025.")
+
+    assert run.output["status"] == "supported"
+    assert run.output["bank_results"][0]["generation"]["bank_generation_retry"] is True
+    assert run.output["bank_results"][0]["generation"]["request_count"] == 2
+    assert run.output["retrieval"]["per_bank"][0]["generation_retry"] is True
+    assert run.output["retrieval"]["per_bank"][1]["generation_retry"] is False
+    assert run.output["generation"]["request_count"] == 4
+    assert run.output["diagnostics"]["quality_gate"]["checks"]["request_budget"] is True
+
+
+def test_comparison_rechecks_invalid_citations_when_focused_evidence_is_strong() -> None:
+    completions = InvalidCitationOnceCompletions()
+    pipeline = SingleBankAnswerPipeline(
+        retriever=MockRetriever(),
+        query_encoder=MockEncoder(),
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co.", "BAC": "Bank of America Corporation"},
+        bank_aliases={"JPM": ("JPMorgan",), "BAC": ("Bank of America",)},
+    )
+
+    run = pipeline.answer("Compare JPMorgan and Bank of America CET1 ratios in 2025.")
+
+    assert run.output["status"] == "supported"
+    generation = run.output["bank_results"][0]["generation"]
+    assert generation["bank_generation_retry"] is True
+    assert generation["retry_reason"] == "invalid_citations_with_strong_evidence"
+    assert generation["request_count"] == 2
+    assert run.output["retrieval"]["per_bank"][0]["generation_retry"] is True
+
+
+def test_comparison_runs_targeted_retrieval_only_for_evidence_miss() -> None:
+    encoder = MockEncoder()
+    retriever = FocusedRecoveryRetriever()
+    pipeline = SingleBankAnswerPipeline(
+        retriever=retriever,
+        query_encoder=encoder,
+        client=SimpleNamespace(chat=SimpleNamespace(completions=ComparisonCompletions())),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co.", "BAC": "Bank of America Corporation"},
+        bank_aliases={"JPM": ("JPMorgan",), "BAC": ("Bank of America",)},
+    )
+
+    run = pipeline.answer("Compare JPMorgan and Bank of America CET1 ratios in 2025.")
+
+    per_bank = {item["ticker"]: item for item in run.output["retrieval"]["per_bank"]}
+    assert run.output["status"] == "supported"
+    assert per_bank["JPM"]["recovery_queries"] == []
+    assert len(per_bank["BAC"]["recovery_queries"]) == 1
+    assert "relevant filing table or section" in per_bank["BAC"]["recovery_queries"][0]
+    recovery_calls = [call for call in retriever.calls if "relevant filing" in call[0]]
+    assert len(recovery_calls) == 1
+    assert recovery_calls[0][2]["ticker"] == "BAC"
+    assert any(stage.get("recovery") for stage in run.output["diagnostics"]["stages"])
 
 
 def test_comparison_returns_partial_or_all_unsupported_without_unvalidated_facts() -> None:

@@ -98,6 +98,10 @@ disable the feature, restore `AGENTIC_RAG_ENABLED=false` and restart the API.
 
 Run the live acceptance comparison only after the existing frozen gates pass:
 
+Use `python scripts/evaluate_comparisons.py --repetitions 3` when checking intermittent multi-bank
+`partial` results. Every frozen comparison is rerun independently and the report records per-query
+stability in addition to evidence coverage and citation ownership.
+
 ```powershell
 python scripts/evaluate_agentic_rag.py --prerequisite-gates-passed
 ```

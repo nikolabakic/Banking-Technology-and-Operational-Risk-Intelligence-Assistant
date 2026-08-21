@@ -250,7 +250,20 @@ def build_bank_subquestion(
 ) -> str:
     """Create one deterministic bank-only retrieval question from a comparison."""
 
-    normalized = f" {normalize_bank_text(question)} "
+    cleaned_question = question
+    for selected in selected_tickers:
+        escaped = re.escape(selected)
+        cleaned_question = re.sub(
+            rf"(?i)\(\s*(?:ticker\s*:\s*)?{escaped}\s*\)",
+            " ",
+            cleaned_question,
+        )
+        cleaned_question = re.sub(
+            rf"(?i)\bticker\s*:\s*{escaped}\b|\bticker\s+{escaped}\b",
+            " ",
+            cleaned_question,
+        )
+    normalized = f" {normalize_bank_text(cleaned_question)} "
     identifiers: set[str] = set()
     for selected in selected_tickers:
         values = [bank_names.get(selected, selected), *bank_aliases.get(selected, ())]
@@ -272,6 +285,17 @@ def build_bank_subquestion(
     )
     topic = re.sub(r"\s+", " ", topic).strip(" ,.;:-")
     topic = re.sub(r"(?i)^(?:and|i)\s+|\s+(?:and|i)$", "", topic).strip()
+    topic_tokens = topic.split()
+    for width in range(min(6, len(topic_tokens) // 2), 0, -1):
+        index = 0
+        while index + (2 * width) <= len(topic_tokens):
+            if topic_tokens[index : index + width] == topic_tokens[
+                index + width : index + (2 * width)
+            ]:
+                del topic_tokens[index + width : index + (2 * width)]
+            else:
+                index += 1
+    topic = " ".join(topic_tokens)
     if not topic:
         topic = "requested filing information"
     bank_name = bank_names.get(ticker, ticker)
@@ -312,6 +336,79 @@ def build_retrieval_queries(
         if pattern.search(concept_text):
             queries.append(f"{bank_name} ({ticker}) Form 10-K: {canonical_terms}")
     return tuple(dict.fromkeys(query for query in queries if query.strip()))
+
+
+def build_focused_recovery_queries(
+    question: str,
+    *,
+    ticker: str,
+    bank_name: str,
+) -> tuple[str, ...]:
+    """Build one bounded second-pass query for a recognized focused filing metric."""
+
+    years = " ".join(dict.fromkeys(YEAR_PATTERN.findall(question)))
+    period = f" {years}" if years else ""
+    queries = []
+    for pattern, canonical_terms in FOCUSED_QUERY_VARIANTS:
+        if pattern.search(question):
+            queries.append(
+                f"{bank_name} ({ticker}) Form 10-K{period}: relevant filing table or section "
+                f"{canonical_terms}"
+            )
+    return tuple(dict.fromkeys(queries))
+
+
+def focused_evidence_signals(
+    question: str,
+    evidence: Sequence[Mapping[str, object]],
+) -> dict[str, bool]:
+    """Assess whether retrieved evidence visibly contains a focused numeric answer candidate."""
+
+    matched_variants = [
+        (pattern, canonical_terms)
+        for pattern, canonical_terms in FOCUSED_QUERY_VARIANTS
+        if pattern.search(question)
+    ]
+    focused = bool(matched_variants)
+    documents = []
+    has_table = False
+    for item in evidence:
+        metadata = item.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        documents.append(
+            " ".join(
+                (
+                    str(item.get("evidence") or item.get("document") or ""),
+                    str(item.get("section_title") or metadata.get("section_title") or ""),
+                    str(item.get("report_date") or metadata.get("report_date") or ""),
+                )
+            )
+        )
+        record_type = str(item.get("record_type") or metadata.get("record_type") or "")
+        has_table = has_table or record_type.casefold() == "table"
+    evidence_text = "\n".join(documents)
+    requested_years = set(YEAR_PATTERN.findall(question))
+    period = not requested_years or requested_years <= set(YEAR_PATTERN.findall(evidence_text))
+    numeric = bool(re.search(r"(?<!\w)\d+(?:[.,]\d+)?\s*%", evidence_text))
+    concept = False
+    for pattern, canonical_terms in matched_variants:
+        canonical_tokens = {
+            token
+            for token in normalize_bank_text(canonical_terms).split()
+            if len(token) >= 4
+        }
+        evidence_tokens = set(normalize_bank_text(evidence_text).split())
+        concept = concept or bool(pattern.search(evidence_text)) or len(
+            canonical_tokens & evidence_tokens
+        ) >= 2
+    return {
+        "focused": focused,
+        "period": period,
+        "numeric": numeric,
+        "concept": concept,
+        "table": has_table,
+        "strong": focused and period and numeric and concept,
+    }
 
 
 def round_robin_evidence(

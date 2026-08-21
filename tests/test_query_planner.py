@@ -3,7 +3,9 @@ import pytest
 from bankscope.generation.answer_generator import GenerationValidationError
 from bankscope.generation.query_planner import (
     build_bank_subquestion,
+    build_focused_recovery_queries,
     build_retrieval_queries,
+    focused_evidence_signals,
     needs_contextualization,
     recent_conversation_history,
     remove_untrusted_numeric_facts,
@@ -150,6 +152,75 @@ def test_comparison_is_decomposed_into_peer_free_bank_queries() -> None:
         bank_aliases=aliases,
     )
     assert compact == "Bank of America Corporation (BAC) Form 10-K: cet1 ratio for 2025"
+
+
+def test_comparison_removes_only_structural_ticker_annotations() -> None:
+    bank_names = {"C": "Citigroup Inc.", "JPM": "JPMorgan Chase & Co."}
+    aliases = {"C": ("Citigroup", "Citi"), "JPM": ("JPMorgan", "JP Morgan")}
+    question = (
+        "Compare Citigroup Inc. (ticker: C) CET1 ratio with "
+        "JPMorgan Chase & Co. (ticker: JPM) CET1 ratio for 2025."
+    )
+
+    citi = build_bank_subquestion(
+        question,
+        ticker="C",
+        selected_tickers=("C", "JPM"),
+        bank_names=bank_names,
+        bank_aliases=aliases,
+    )
+    jpm = build_bank_subquestion(
+        question,
+        ticker="JPM",
+        selected_tickers=("C", "JPM"),
+        bank_names=bank_names,
+        bank_aliases=aliases,
+    )
+
+    assert "ticker" not in citi.casefold()
+    assert "ticker" not in jpm.casefold()
+    assert " c " not in f" {citi.casefold()} "
+    assert citi == "Citigroup Inc. (C) Form 10-K: cet1 ratio for 2025"
+    assert jpm == "JPMorgan Chase & Co. (JPM) Form 10-K: cet1 ratio for 2025"
+
+
+def test_focused_recovery_query_and_evidence_signals_are_bounded() -> None:
+    question = "Citigroup Inc. (C) Form 10-K: CET1 ratio for 2025"
+    queries = build_focused_recovery_queries(
+        question,
+        ticker="C",
+        bank_name="Citigroup Inc.",
+    )
+    assert queries == (
+        "Citigroup Inc. (C) Form 10-K 2025: relevant filing table or section "
+        "CET1 common equity tier 1 capital ratio",
+    )
+    assert build_focused_recovery_queries(
+        "Citigroup operational expenses for 2025",
+        ticker="C",
+        bank_name="Citigroup Inc.",
+    ) == ()
+
+    weak = focused_evidence_signals(question, [])
+    strong = focused_evidence_signals(
+        question,
+        [
+            {
+                "record_type": "table",
+                "evidence": "Common Equity Tier 1 (CET1) capital ratio | 13.18%",
+                "metadata": {"report_date": "2025-12-31"},
+            }
+        ],
+    )
+    assert weak == {
+        "focused": True,
+        "period": False,
+        "numeric": False,
+        "concept": False,
+        "table": False,
+        "strong": False,
+    }
+    assert strong["strong"] is True
 
 
 def test_whole_filing_summary_uses_diverse_queries_and_balanced_merge() -> None:

@@ -300,13 +300,31 @@ def test_mismatched_entity_or_evidence_type_fails_closed() -> None:
         )
 
 
-def test_unknown_citation_is_rejected_with_stable_code() -> None:
+def test_unknown_numeric_citation_is_reconciled_to_exact_value_evidence() -> None:
+    client, _ = mock_client(model_payload(citation_ids=["E2"]))
+
+    result = generate_answer(
+        "What was JPM's ratio?",
+        [evidence()],
+        client=client,
+        model="test-model",
+        expected_ticker="JPM",
+    )
+
+    assert [citation["label"] for citation in result["citations"]] == ["E1"]
+
+
+def test_unknown_numeric_citation_without_exact_value_is_rejected() -> None:
     client, _ = mock_client(model_payload(citation_ids=["E2"]))
 
     with pytest.raises(GenerationValidationError) as captured:
         generate_answer(
             "What was JPM's ratio?",
-            [evidence()],
+            [
+                evidence(
+                    document="The filing discusses CET1 but does not state the requested value."
+                )
+            ],
             client=client,
             model="test-model",
             expected_ticker="JPM",
@@ -480,6 +498,25 @@ def test_narrative_citation_array_is_reconciled_to_known_inline_markers() -> Non
     )
 
     assert [citation["label"] for citation in result["citations"]] == ["E1"]
+
+
+def test_evidence_recheck_adds_bank_only_fail_closed_instruction() -> None:
+    client, completions = mock_client(model_payload())
+
+    generate_answer(
+        "JPMorgan CET1 ratio for 2025",
+        [evidence()],
+        client=client,
+        model="AZURE_GPT_51_2025_1113",
+        expected_ticker="JPM",
+        comparison_scope=True,
+        evidence_recheck=True,
+    )
+
+    system = completions.calls[0]["messages"][0]["content"]
+    assert "bounded evidence recheck" in system
+    assert "Do not require evidence for peer banks" in system
+    assert "Continue to abstain" in system
 
 
 def test_unsupported_model_text_is_replaced_by_local_abstention() -> None:

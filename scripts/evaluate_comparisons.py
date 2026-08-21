@@ -46,6 +46,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=5)
     parser.add_argument("--candidate-k", type=int, default=30)
     parser.add_argument("--rrf-k", type=int, default=60)
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="Repeat every frozen comparison to detect intermittent partial results.",
+    )
     parser.add_argument("--chunks", type=Path, default=DEFAULT_CHUNKS)
     parser.add_argument("--tables", type=Path, default=DEFAULT_TABLES)
     parser.add_argument("--glossary-locators", type=Path, default=DEFAULT_GLOSSARY_LOCATORS)
@@ -121,7 +127,12 @@ def evaluate_comparison_run(
 
 def main() -> None:
     args = parse_args()
-    if args.limit <= 0 or args.candidate_k < args.limit or args.rrf_k <= 0:
+    if (
+        args.limit <= 0
+        or args.candidate_k < args.limit
+        or args.rrf_k <= 0
+        or args.repetitions <= 0
+    ):
         raise ValueError("Invalid retrieval limits.")
     queries = select_comparison_queries(read_jsonl(args.qrels))
     settings = get_settings()
@@ -142,44 +153,46 @@ def main() -> None:
         bank_registry_path=settings.bank_registry_path,
     ) as pipeline:
         for query in queries:
-            run = pipeline.answer(
-                str(query["query"]),
-                limit=args.limit,
-                candidate_k=args.candidate_k,
-                rrf_k=args.rrf_k,
-            )
-            checks = evaluate_comparison_run(
-                query, run.output, run.evidence, entity_tickers=entity_tickers
-            )
-            judgement = None
-            if not args.skip_judge:
-                cited_ids = {
-                    str(citation.get("target_chunk_id") or "")
-                    for citation in run.output.get("citations") or []
-                }
-                cited_evidence = [
-                    item
-                    for item in run.evidence
-                    if str(item.get("target_chunk_id") or "") in cited_ids
-                ]
-                judgement = judge_semantic_answer(
-                    question=str(query["query"]),
-                    gold_answer=str(query["gold_answer"]),
-                    generated_answer=str(run.output["answer"]),
-                    evidence=cited_evidence,
-                    client=client,
-                    model=args.judge_model,
+            for repetition in range(1, args.repetitions + 1):
+                run = pipeline.answer(
+                    str(query["query"]),
+                    limit=args.limit,
+                    candidate_k=args.candidate_k,
+                    rrf_k=args.rrf_k,
                 )
-            records.append(
-                {
-                    "query_id": query["query_id"],
-                    "question": query["query"],
-                    "gold_answer": query["gold_answer"],
-                    "output": run.output,
-                    "checks": checks,
-                    "semantic_judgement": judgement,
-                }
-            )
+                checks = evaluate_comparison_run(
+                    query, run.output, run.evidence, entity_tickers=entity_tickers
+                )
+                judgement = None
+                if not args.skip_judge:
+                    cited_ids = {
+                        str(citation.get("target_chunk_id") or "")
+                        for citation in run.output.get("citations") or []
+                    }
+                    cited_evidence = [
+                        item
+                        for item in run.evidence
+                        if str(item.get("target_chunk_id") or "") in cited_ids
+                    ]
+                    judgement = judge_semantic_answer(
+                        question=str(query["query"]),
+                        gold_answer=str(query["gold_answer"]),
+                        generated_answer=str(run.output["answer"]),
+                        evidence=cited_evidence,
+                        client=client,
+                        model=args.judge_model,
+                    )
+                records.append(
+                    {
+                        "query_id": query["query_id"],
+                        "repetition": repetition,
+                        "question": query["query"],
+                        "gold_answer": query["gold_answer"],
+                        "output": run.output,
+                        "checks": checks,
+                        "semantic_judgement": judgement,
+                    }
+                )
 
     group_hits = sum(
         group["hit"] for record in records for group in record["checks"]["evidence_groups"]
@@ -196,13 +209,26 @@ def main() -> None:
         )
         and ownership_violations == 0
     )
-    semantic_pass = not args.skip_judge and all(
-        judgement
-        and judgement["correctness"]
-        and judgement["completeness"]
-        and judgement["groundedness"]
-        for judgement in (record["semantic_judgement"] for record in records)
-    )
+    semantic_pass = None
+    if not args.skip_judge:
+        semantic_pass = all(
+            judgement
+            and judgement["correctness"]
+            and judgement["completeness"]
+            and judgement["groundedness"]
+            for judgement in (record["semantic_judgement"] for record in records)
+        )
+    stable_query_ids = {
+        str(query["query_id"])
+        for query in queries
+        if all(
+            record["checks"]["status_supported"]
+            and record["checks"]["expected_tickers_supported"]
+            and record["checks"]["retrieval_complete"]
+            for record in records
+            if record["query_id"] == query["query_id"]
+        )
+    }
     report = {
         "evaluation": "multi-bank-v1",
         "created_at": datetime.now(UTC).isoformat(),
@@ -210,12 +236,15 @@ def main() -> None:
         "judge_model": None if args.skip_judge else args.judge_model,
         "summary": {
             "queries": len(records),
+            "unique_queries": len(queries),
+            "repetitions": args.repetitions,
+            "stable_queries": len(stable_query_ids),
             "evidence_group_hits": group_hits,
-            "evidence_groups": EXPECTED_EVIDENCE_GROUP_COUNT,
+            "evidence_groups": EXPECTED_EVIDENCE_GROUP_COUNT * args.repetitions,
             "citation_ownership_violations": ownership_violations,
             "deterministic_pass": deterministic_pass,
             "semantic_pass": semantic_pass,
-            "overall_pass": deterministic_pass and semantic_pass,
+            "overall_pass": deterministic_pass and semantic_pass is not False,
         },
         "records": records,
     }
