@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-    Question[original question + newest 2 history pairs] --> FrontDoor{strict conversation function}
+    Question[question + summary + bounded raw history] --> FrontDoor{strict conversation function}
     FrontDoor -->|respond_directly| General[greeting / help / general explanation]
     FrontDoor -->|ask_clarification| Clarify[one concise assistant question]
     FrontDoor -->|research_filings| Context[validated standalone search question]
@@ -31,12 +31,13 @@ flowchart TD
 
 | File | Public symbols | Responsibility |
 |---|---|---|
-| `conversation.py` | `ConversationDecision`, conversation argument models, `request_conversation_action()` | Choose direct response, clarification, or filing research through strict native function calling and safe deterministic fallback |
+| `conversation.py` | `ConversationGraph`, `RouteDecision`, execution argument models | Run the once-compiled LangGraph semantic router, validate source policy, and fail over to the bounded deterministic policy |
+| `memory.py` | `ConversationSummary`, `summarize_conversation()` | Compact old complete pairs while retaining user preferences and referents without treating history as evidence |
 | `agentic.py` | `AgentStep`, `AgentState`, `EvidenceVerdict`, `CanonicalContextExpander` | Strict native retrieval tools, loop state, evidence verification, scope validation, and bounded context reads |
 | `pipeline.py` | `QueryEncoder`, `RetrievalRun`, `AnswerRun`, `BankAnswerPipeline` | Load services and orchestrate retrieval-only runs, generation, and comparisons |
 | `answer_generator.py` | `NumericFacts`, `ModelAnswer`, `GenerationValidationError`, `generate_answer()` | Build evidence payload, require a strict answer function call, validate citations/facts, and render supported or abstaining answers |
 | `contextualizer.py` | `StandaloneQuestion`, `ContextualizationResult`, `contextualize_question()` | Rewrite a follow-up from bounded clean history while preserving the original question |
-| `query_planner.py` | `needs_contextualization()`, `build_bank_subquestion()`, `build_retrieval_queries()` | Select history, validate rewrites, decompose comparisons, and diversify full-filing summaries |
+| `query_planner.py` | `build_bank_subquestion()`, `build_retrieval_queries()` | Validate rewrites, decompose comparisons, and diversify full-filing summaries |
 | `comparison_generator.py` | `ComparisonClaim`, `ComparisonSynthesis`, `synthesize_comparison()` | Validate a final synthesis over already validated, bank-owned results |
 
 ## Answer contracts
@@ -93,9 +94,11 @@ presenting the already validated supported bank answers.
 
 ## Model calls and failure modes
 
-- The conversational front door receives at most two compact pairs only for referential follow-ups
-  and must select one function. Standalone questions receive no history; prior assistant answers,
-  facts, values, and citations are omitted.
+- The conversational front door always receives available bounded context: a thread summary, raw
+  messages after its checkpoint, and the previous grounded answer with allowed citation labels.
+  Above 12,000 estimated tokens, older turns are summarized and the newest six pairs remain raw.
+- A direct contextual transformation can shorten, reformat, simplify, or translate the previous
+  grounded answer without retrieval. Runtime rejects new citations, numbers, banks, or qualifiers.
 - A model-authored research rewrite is only an internal search query. The original user question
   remains authoritative; a rewrite that drops or adds bank, period, or numeric scope falls back to
   the original question instead of terminating the turn. Focused retrieval searches the validated
@@ -106,8 +109,8 @@ presenting the already validated supported bank answers.
 - Single-bank generation selects one of four strict tools for supported numeric, supported
   narrative, ambiguous, or unsupported results. Truncation and contract-shape failures receive at
   most one repair retry; unsupported display text is server-rendered.
-- Deterministic out-of-scope and vague-CET1 guards run before retrieval, and one bank's validation
-  failure cannot abort the remaining banks in a comparison.
+- The model handles out-of-scope and vague-CET1 semantics; deterministic policy validates its
+  source choice. One bank's validation failure cannot abort the remaining comparison banks.
 - A fully supported comparison adds one synthesis request after its per-bank calls; partial and
   fully unsupported comparisons do not.
 - Model-specific request options are explicit; responses pass strict Pydantic validation.
@@ -115,9 +118,8 @@ presenting the already validated supported bank answers.
 - Enabled agentic mode adds up to three bounded orchestration requests per bank; diagnostics expose
   every action, effective query, verifier verdict, fallback, latency, and budget check.
 - Expected threaded pipeline/model failures are persisted as normal `retryable_error` assistant
-  turns with diagnostics and HTTP 200. Recovery turns are excluded from later model history so
-  they cannot displace the last successful topic. Infrastructure/API contract failures may still
-  be errors.
+  turns with diagnostics and HTTP 200. They remain conversational context but never filing
+  evidence. Infrastructure/API contract failures may still be errors.
 
 Changes require generator, pipeline, contextualizer, comparison, evaluator, and frontend contract
 tests plus the relevant frozen live gate before a default changes.

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from bankscope.chat import ChatStore, CitationSourceResolver, StaleCitationError
 from bankscope.generation.answer_generator import GenerationValidationError, question_language
+from bankscope.generation.memory import CONVERSATION_SUMMARY_PROMPT_VERSION
 
 LOGGER = logging.getLogger("bankscope.api")
 GENERATION_ERROR_MESSAGE = "The model could not produce a valid grounded answer. Please try again."
@@ -150,7 +151,24 @@ class AppServices:
         on_progress: Callable[[str, Mapping[str, Any]], None] | None = None,
     ) -> tuple[dict[str, Any], int]:
         thread = self.store.get_thread(thread_id)
-        conversation_history = self.store.conversation_history(thread_id)
+        context = self.store.conversation_context(thread_id)
+        summary_updated = False
+        if context["needs_compaction"]:
+            try:
+                with self.pipeline_lock:
+                    summary = self.pipeline.compact_conversation(
+                        str(context["summary"]), context["compaction_messages"]
+                    )
+                self.store.save_conversation_summary(
+                    thread_id,
+                    summary,
+                    through_sequence=int(context["compaction_through_sequence"]),
+                    prompt_version=CONVERSATION_SUMMARY_PROMPT_VERSION,
+                )
+                context = self.store.conversation_context(thread_id)
+                summary_updated = True
+            except Exception:
+                LOGGER.exception("conversation_compaction_failed", extra={"thread_id": thread_id})
         stage_trace: list[dict[str, Any]] = []
         latest_stage: str | None = None
 
@@ -196,6 +214,9 @@ class AppServices:
             validation_errors = (generation or {}).get("validation_errors")
             if isinstance(validation_errors, list):
                 diagnostics["validation_errors"] = validation_errors
+            citation_ids_received = (generation or {}).get("citation_ids_received")
+            if isinstance(citation_ids_received, list):
+                diagnostics["citation_ids_received"] = citation_ids_received[:20]
             return diagnostics
 
         try:
@@ -204,7 +225,13 @@ class AppServices:
                     question,
                     ticker=thread["session_ticker"],
                     tickers=thread["session_tickers"],
-                    conversation_history=conversation_history,
+                    conversation_history=context["messages"],
+                    conversation_summary=str(context["summary"]),
+                    previous_answer=context["previous_answer"],
+                    conversation_metadata={
+                        "estimated_tokens": context["estimated_tokens"],
+                        "summary_updated": summary_updated,
+                    },
                     on_progress=tracked_progress,
                 )
             turn = self.store.append_answer_turn(

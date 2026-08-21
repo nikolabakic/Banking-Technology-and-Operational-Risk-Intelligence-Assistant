@@ -11,11 +11,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_THREAD_TITLE = "New conversation"
-DEFAULT_MEMORY_MAX_TURNS = 4
-DEFAULT_MEMORY_MAX_CHARS = 12_000
-DEFAULT_MEMORY_MAX_TOKENS = 1_500
+DEFAULT_MEMORY_MAX_TOKENS = 12_000
+DEFAULT_MEMORY_MIN_RECENT_TURNS = 6
 
 
 def _now() -> str:
@@ -65,6 +64,9 @@ class ChatStore:
                         title TEXT NOT NULL,
                         session_ticker TEXT,
                         session_tickers_json TEXT NOT NULL DEFAULT '[]',
+                        conversation_summary TEXT NOT NULL DEFAULT '',
+                        summary_through_sequence INTEGER NOT NULL DEFAULT 0,
+                        summary_prompt_version TEXT,
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL
                     );
@@ -93,11 +95,11 @@ class ChatStore:
                     );
                     CREATE INDEX ix_message_citations_message
                         ON message_citations(message_id, citation_index);
-                    PRAGMA user_version = 2;
+                    PRAGMA user_version = 3;
                     """
                 )
                 connection.commit()
-            elif version == 1:
+            if version == 1:
                 connection.execute(
                     "ALTER TABLE chat_threads ADD COLUMN "
                     "session_tickers_json TEXT NOT NULL DEFAULT '[]'"
@@ -108,6 +110,21 @@ class ChatStore:
                        WHERE session_ticker IS NOT NULL AND session_ticker != ''"""
                 )
                 connection.execute("PRAGMA user_version = 2")
+                connection.commit()
+                version = 2
+            if version == 2:
+                connection.execute(
+                    "ALTER TABLE chat_threads ADD COLUMN "
+                    "conversation_summary TEXT NOT NULL DEFAULT ''"
+                )
+                connection.execute(
+                    "ALTER TABLE chat_threads ADD COLUMN "
+                    "summary_through_sequence INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execute(
+                    "ALTER TABLE chat_threads ADD COLUMN summary_prompt_version TEXT"
+                )
+                connection.execute("PRAGMA user_version = 3")
                 connection.commit()
 
     @staticmethod
@@ -125,6 +142,22 @@ class ChatStore:
             "session_tickers": session_tickers,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+        }
+
+    def _conversation_state(self, thread_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            row = connection.execute(
+                """SELECT conversation_summary, summary_through_sequence,
+                          summary_prompt_version
+                   FROM chat_threads WHERE id = ?""",
+                (thread_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(thread_id)
+        return {
+            "conversation_summary": str(row["conversation_summary"] or ""),
+            "summary_through_sequence": int(row["summary_through_sequence"] or 0),
+            "summary_prompt_version": row["summary_prompt_version"],
         }
 
     def create_thread(self, title: str | None = None) -> dict[str, Any]:
@@ -224,91 +257,152 @@ class ChatStore:
             turns.append(turn)
         return turns
 
-    def conversation_history(
+    def conversation_context(
         self,
         thread_id: str,
         *,
-        max_turns: int = DEFAULT_MEMORY_MAX_TURNS,
-        max_chars: int = DEFAULT_MEMORY_MAX_CHARS,
         max_tokens: int = DEFAULT_MEMORY_MAX_TOKENS,
-    ) -> list[dict[str, str]]:
-        """Return compact research state while preserving the full transcript in SQLite."""
-        if max_turns <= 0:
-            raise ValueError("max_turns must be positive.")
-        if max_chars <= 0:
-            raise ValueError("max_chars must be positive.")
+        min_recent_turns: int = DEFAULT_MEMORY_MIN_RECENT_TURNS,
+    ) -> dict[str, Any]:
+        """Return raw model context and a compaction plan for one thread."""
         if max_tokens <= 0:
             raise ValueError("max_tokens must be positive.")
+        if min_recent_turns <= 0:
+            raise ValueError("min_recent_turns must be positive.")
 
+        memory_state = self._conversation_state(thread_id)
         messages = self.list_messages(thread_id)
         completed_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
         for index in range(0, len(messages), 2):
             user = messages[index]
             assistant = messages[index + 1] if index + 1 < len(messages) else None
-            assistant_payload = (assistant or {}).get("payload") or {}
-            dialog_act = str(assistant_payload.get("dialog_act") or "answer")
-            if dialog_act == "out_of_scope":
-                # A declined topic is a barrier: a later pronoun must not jump back over it and
-                # accidentally revive stale filing research.
-                completed_pairs.clear()
-                continue
             if (
                 user["role"] == "user"
                 and assistant is not None
                 and assistant["role"] == "assistant"
                 and assistant["status"] == "complete"
-                and dialog_act in {"answer", "clarification"}
             ):
                 completed_pairs.append((user, assistant))
 
-        selected: list[tuple[dict[str, Any], dict[str, Any]]] = []
-        used_chars = 0
-        used_tokens = 0
-        for user, assistant in reversed(completed_pairs):
-            compact_assistant = self._compact_assistant_state(user, assistant)
-            pair_chars = len(user["content"]) + len(compact_assistant)
-            pair_tokens = max(1, (pair_chars + 3) // 4)
-            if pair_chars + used_chars > max_chars or pair_tokens + used_tokens > max_tokens:
-                break
-            selected.append((user, assistant))
-            used_chars += pair_chars
-            used_tokens += pair_tokens
-            if len(selected) == max_turns:
-                break
-
-        history: list[dict[str, str]] = []
-        for user, assistant in reversed(selected):
-            history.extend(
-                [
-                    {"role": "user", "content": user["content"]},
-                    {
-                        "role": "assistant",
-                        "content": self._compact_assistant_state(user, assistant),
-                    },
-                ]
+        checkpoint = int(memory_state["summary_through_sequence"] or 0)
+        unsummarized = [
+            pair for pair in completed_pairs if int(pair[1]["sequence"]) > checkpoint
+        ]
+        raw_messages = [
+            {"role": message["role"], "content": str(message["content"])}
+            for pair in unsummarized
+            for message in pair
+        ]
+        summary = str(memory_state["conversation_summary"] or "")
+        total_estimated_tokens = max(
+            1,
+            (len(summary) + sum(len(message["content"]) for message in raw_messages) + 3) // 4,
+        )
+        compact_pair_count = max(0, len(unsummarized) - min_recent_turns)
+        compact_pairs = (
+            unsummarized[:compact_pair_count]
+            if total_estimated_tokens > max_tokens
+            else []
+        )
+        compaction_messages = [
+            {
+                "role": message["role"],
+                "content": str(message["content"]),
+                "sequence": message["sequence"],
+            }
+            for pair in compact_pairs
+            for message in pair
+        ]
+        recent_pairs = unsummarized[compact_pair_count:] if compact_pairs else unsummarized
+        recent_messages = [
+            {"role": message["role"], "content": str(message["content"])}
+            for pair in recent_pairs
+            for message in pair
+        ]
+        context_messages = raw_messages if not compact_pairs else recent_messages
+        estimated_tokens = max(
+            1,
+            (
+                len(summary)
+                + sum(len(message["content"]) for message in context_messages)
+                + 3
             )
-        return history
-
-    @staticmethod
-    def _compact_assistant_state(user: Mapping[str, Any], assistant: Mapping[str, Any]) -> str:
-        """Keep conversational routing state, never prior answers, facts, or citations."""
-
-        payload = assistant.get("payload") or {}
-        contextualization = payload.get("contextualization") or {}
-        tickers = payload.get("tickers") or []
-        if not tickers and payload.get("ticker"):
-            tickers = [payload["ticker"]]
-        state = {
-            "dialog_act": str(payload.get("dialog_act") or "answer"),
-            "status": str(payload.get("status") or "unknown"),
-            "tickers": [str(value) for value in tickers],
-            "mode": str(payload.get("mode") or "single"),
-            "answer_type": str(payload.get("answer_type") or "narrative"),
-            "resolved_question": str(
-                contextualization.get("standalone_question") or user.get("content") or ""
+            // 4,
+        )
+        previous_answer = None
+        if completed_pairs:
+            previous_user, previous_assistant = completed_pairs[-1]
+            payload = previous_assistant.get("payload") or {}
+            if str(payload.get("dialog_act") or "answer") in {
+                "answer",
+                "contextual_transform",
+            }:
+                previous_answer = {
+                    "message_id": previous_assistant["id"],
+                    "question": previous_user["content"],
+                    "answer": previous_assistant["content"],
+                    "citations": [dict(item) for item in payload.get("citations") or []],
+                    "ticker": payload.get("ticker"),
+                    "tickers": list(payload.get("tickers") or []),
+                }
+        return {
+            "summary": summary,
+            "summary_through_sequence": checkpoint,
+            "summary_prompt_version": memory_state["summary_prompt_version"],
+            "messages": context_messages,
+            "estimated_tokens": estimated_tokens,
+            "pre_compaction_estimated_tokens": total_estimated_tokens,
+            "needs_compaction": bool(compact_pairs),
+            "compaction_messages": compaction_messages,
+            "compaction_through_sequence": (
+                int(compaction_messages[-1]["sequence"]) if compaction_messages else checkpoint
             ),
+            "previous_answer": previous_answer,
         }
-        return _json(state)
+
+    def save_conversation_summary(
+        self,
+        thread_id: str,
+        summary: str,
+        *,
+        through_sequence: int,
+        prompt_version: str,
+    ) -> None:
+        normalized = " ".join(summary.split())
+        if not normalized:
+            raise ValueError("conversation summary cannot be empty.")
+        if through_sequence <= 0 or through_sequence % 2:
+            raise ValueError("summary checkpoint must end on an assistant message.")
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """UPDATE chat_threads
+                   SET conversation_summary = ?, summary_through_sequence = ?,
+                       summary_prompt_version = ?
+                   WHERE id = ? AND summary_through_sequence < ?""",
+                (normalized, through_sequence, prompt_version, thread_id, through_sequence),
+            )
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    "SELECT summary_through_sequence FROM chat_threads WHERE id = ?", (thread_id,)
+                ).fetchone()
+                if row is None:
+                    raise KeyError(thread_id)
+                raise ValueError("conversation summary checkpoint did not advance.")
+            connection.commit()
+
+    def conversation_history(
+        self,
+        thread_id: str,
+        *,
+        max_tokens: int = DEFAULT_MEMORY_MAX_TOKENS,
+    ) -> list[dict[str, str]]:
+        """Backward-compatible raw history view used by older callers."""
+
+        context = self.conversation_context(thread_id, max_tokens=max_tokens)
+        return [
+            {"role": str(message["role"]), "content": str(message["content"])}
+            for message in context["messages"]
+        ]
 
     def append_answer_turn(
         self,

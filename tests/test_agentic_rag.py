@@ -17,7 +17,6 @@ from bankscope.generation.agentic import (
     SearchExactStep,
     SearchHybridStep,
     deduplicate_evidence,
-    route_question,
     validate_agent_step,
     validate_plan_scope,
 )
@@ -164,20 +163,6 @@ def test_preferred_evidence_is_first_deduplicated_and_bounded() -> None:
         "old-2",
         "old-3",
     ]
-
-
-def test_invalid_router_output_falls_back_to_domain_rag() -> None:
-    response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="not-json"), finish_reason="stop")]
-    )
-    completions = SimpleNamespace(create=lambda **_: response)
-    result = route_question(
-        "What is JPM operational risk?",
-        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
-        model="test-model",
-    )
-    assert result.value.route == "domain_rag"
-    assert result.fallback is True
 
 
 @pytest.mark.parametrize(

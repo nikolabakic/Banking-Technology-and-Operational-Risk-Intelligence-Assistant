@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
@@ -28,27 +28,25 @@ from bankscope.generation.answer_generator import (
     CITATION_PATTERN,
     GenerationValidationError,
     generate_answer,
-    question_language,
     render_unsupported_answer,
 )
 from bankscope.generation.comparison_generator import synthesize_comparison
 from bankscope.generation.conversation import (
     ClarificationArgs,
+    ConversationGraph,
     DeclineOutOfScopeArgs,
     DirectResponseArgs,
     ResearchFilingsArgs,
-    cet1_metric_clarification,
-    is_banking_domain_question,
-    is_clearly_out_of_scope,
+    WebResearchArgs,
     render_capability_answer,
     render_out_of_scope_answer,
-    request_conversation_action,
+    render_web_unavailable_answer,
 )
+from bankscope.generation.memory import summarize_conversation
 from bankscope.generation.query_planner import (
     build_bank_subquestion,
     build_retrieval_queries,
-    needs_contextualization,
-    recent_conversation_history,
+    remove_untrusted_numeric_facts,
     round_robin_evidence,
     validate_contextualized_rewrite,
 )
@@ -142,6 +140,8 @@ class BankAnswerPipeline:
         bank_aliases: dict[str, tuple[str, ...]] | None = None,
         agentic_rag_enabled: bool = False,
         context_expander: CanonicalContextExpander | None = None,
+        conversation_model: Any | None = None,
+        conversation_router_backend: Literal["langgraph", "legacy"] = "langgraph",
     ) -> None:
         if not generation_model.strip():
             raise ValueError("generation_model cannot be empty.")
@@ -165,6 +165,18 @@ class BankAnswerPipeline:
         }
         self.agentic_rag_enabled = agentic_rag_enabled
         self.context_expander = context_expander
+        self.conversation_graph = ConversationGraph(
+            client=client,
+            model=generation_model,
+            bank_names=self.bank_names,
+            bank_aliases=self.bank_aliases,
+            chat_model=conversation_model,
+            backend=conversation_router_backend,
+        )
+        self._research_handlers: dict[str, Callable[..., AnswerRun | ResearchFilingsArgs]] = {
+            "filing_research": self._filing_research_handler,
+            "web_research": self._web_unavailable_run,
+        }
 
     @classmethod
     def from_paths(
@@ -182,6 +194,8 @@ class BankAnswerPipeline:
         query_encoder: QueryEncoder | None = None,
         bank_registry_path: str | Path = DEFAULT_BANK_REGISTRY,
         agentic_rag_enabled: bool = False,
+        conversation_model: Any | None = None,
+        conversation_router_backend: Literal["langgraph", "legacy"] = "langgraph",
     ) -> BankAnswerPipeline:
         chunks_path = Path(chunks_path)
         tables_path = Path(tables_path)
@@ -237,6 +251,8 @@ class BankAnswerPipeline:
                 bank_aliases=bank_aliases,
                 agentic_rag_enabled=agentic_rag_enabled,
                 context_expander=CanonicalContextExpander(records),
+                conversation_model=conversation_model,
+                conversation_router_backend=conversation_router_backend,
             )
         except Exception:
             qdrant.close()
@@ -252,6 +268,20 @@ class BankAnswerPipeline:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+    def compact_conversation(
+        self,
+        existing_summary: str,
+        messages: Sequence[Mapping[str, Any]],
+    ) -> str:
+        """Compact older thread turns with the configured generation model."""
+
+        return summarize_conversation(
+            existing_summary,
+            messages,
+            client=self.client,
+            model=self.generation_model,
+        )
 
     def _diagnostics(
         self,
@@ -296,8 +326,36 @@ class BankAnswerPipeline:
             "action_budget": action_budget_ok,
             "request_budget": 0 <= model_request_count <= request_budget,
         }
+        routing_stage = next(
+            (dict(stage) for stage in stages if str(stage.get("stage")) == "routing"),
+            {},
+        )
+        presentation_guidance = (
+            (output or {}).get("contextualization", {}).get("presentation_guidance")
+            if isinstance((output or {}).get("contextualization"), Mapping)
+            else None
+        )
+        citation_source = "none"
+        if output and output.get("citations"):
+            citation_source = (
+                "previous_grounded_answer"
+                if output.get("dialog_act") == "contextual_transform"
+                else "retrieved_evidence"
+            )
         return {
             "route": route,
+            "router_backend": routing_stage.get("router_backend"),
+            "route_action": routing_stage.get("route_action"),
+            "route_confidence": routing_stage.get("route_confidence"),
+            "route_reason": routing_stage.get("route_reason"),
+            "graph_nodes": list(routing_stage.get("graph_nodes") or []),
+            "source_policy": routing_stage.get("source_policy"),
+            "context_message_count": routing_stage.get("context_message_count", 0),
+            "context_estimated_tokens": routing_stage.get("context_estimated_tokens", 0),
+            "summary_used": bool(routing_stage.get("summary_used")),
+            "summary_updated": bool(routing_stage.get("summary_updated")),
+            "presentation_guidance": presentation_guidance,
+            "citation_source": citation_source,
             "agentic_rag_enabled": self.agentic_rag_enabled,
             "outcome": outcome,
             "failed_stage": failed_stage,
@@ -773,6 +831,9 @@ class BankAnswerPipeline:
         ticker: str | None = None,
         tickers: Sequence[str] = (),
         conversation_history: Sequence[Mapping[str, str]] | None = None,
+        conversation_summary: str = "",
+        previous_answer: Mapping[str, Any] | None = None,
+        conversation_metadata: Mapping[str, Any] | None = None,
         record_type: str | None = None,
         limit: int = 5,
         candidate_k: int = 30,
@@ -803,9 +864,8 @@ class BankAnswerPipeline:
         )
 
         available_history_turns = len(history) // 2
-        selected_history: list[Mapping[str, str]] = []
-        if history and needs_contextualization(question):
-            selected_history = recent_conversation_history(history, max_turns=2)
+        selected_history: list[Mapping[str, str]] = history
+        presentation_guidance: str | None = None
 
         standalone_question = question
         contextualization_model: str | None = None
@@ -823,88 +883,12 @@ class BankAnswerPipeline:
                     if value and value.strip()
                 )
             )
-            deterministic_clarification = cet1_metric_clarification(question)
-            if deterministic_clarification is not None:
-                stages.append(
-                    {
-                        "stage": "routing",
-                        "status": "completed",
-                        "latency_ms": 0.0,
-                        "source": "deterministic_scope_guard",
-                        "action": type(deterministic_clarification).__name__,
-                        "fallback": False,
-                        "error_code": None,
-                    }
-                )
-                return self._clarification_run(
-                    question,
-                    deterministic_clarification,
-                    stages=stages,
-                    model_request_count=0,
-                    history_turns=len(selected_history) // 2,
-                    available_history_turns=available_history_turns,
-                    fallback=False,
-                    error_code=None,
-                )
-            if is_clearly_out_of_scope(question, self.bank_names):
-                stages.append(
-                    {
-                        "stage": "routing",
-                        "status": "completed",
-                        "latency_ms": 0.0,
-                        "source": "deterministic_scope_guard",
-                        "action": "DeclineOutOfScopeArgs",
-                        "fallback": False,
-                        "error_code": None,
-                    }
-                )
-                return self._out_of_scope_run(
-                    question,
-                    stages=stages,
-                    model_request_count=0,
-                    history_turns=0,
-                    available_history_turns=available_history_turns,
-                    fallback=False,
-                    error_code=None,
-                )
-            if (
-                needs_contextualization(question)
-                and not selected_history
-                and not is_banking_domain_question(question, self.bank_names)
-            ):
-                if question_language(question) == "Serbian":
-                    clarification_text = "Na koje bankarsko pitanje želite da se nadovežem?"
-                else:
-                    clarification_text = "Which banking question would you like me to continue?"
-                action = ClarificationArgs(question=clarification_text, missing="intent")
-                stages.append(
-                    {
-                        "stage": "routing",
-                        "status": "completed",
-                        "latency_ms": 0.0,
-                        "source": "deterministic_context_guard",
-                        "action": type(action).__name__,
-                        "fallback": False,
-                        "error_code": None,
-                    }
-                )
-                return self._clarification_run(
-                    question,
-                    action,
-                    stages=stages,
-                    model_request_count=0,
-                    history_turns=0,
-                    available_history_turns=available_history_turns,
-                    fallback=False,
-                    error_code=None,
-                )
-            decision = request_conversation_action(
+            decision = self.conversation_graph.route(
                 question,
                 selected_history,
-                client=self.client,
-                model=self.generation_model,
-                bank_names=self.bank_names,
                 session_tickers=session_scope,
+                conversation_summary=conversation_summary,
+                previous_answer=previous_answer,
             )
             orchestration_request_count += decision.request_count
             action = decision.action
@@ -913,22 +897,49 @@ class BankAnswerPipeline:
                     "stage": "routing",
                     "status": "completed",
                     "latency_ms": decision.latency_ms,
-                    "source": "native_function_call",
+                    "source": "conversation_graph",
                     "action": type(action).__name__,
+                    "router_backend": decision.router_backend,
+                    "route_action": decision.route_action,
+                    "route_confidence": decision.confidence,
+                    "route_reason": decision.reason,
+                    "graph_nodes": list(decision.graph_nodes),
+                    "source_policy": decision.source_policy,
                     "fallback": decision.fallback,
                     "error_code": decision.error_code,
+                    "context_message_count": len(selected_history),
+                    "context_estimated_tokens": int(
+                        (conversation_metadata or {}).get("estimated_tokens") or 0
+                    ),
+                    "summary_used": bool(conversation_summary),
+                    "summary_updated": bool(
+                        (conversation_metadata or {}).get("summary_updated")
+                    ),
                 }
             )
+            if isinstance(action, (ResearchFilingsArgs, WebResearchArgs)):
+                handled = self._research_handlers[decision.route_action](
+                    question,
+                    action,
+                    stages=stages,
+                    model_request_count=orchestration_request_count,
+                    history_turns=len(selected_history) // 2,
+                    available_history_turns=available_history_turns,
+                    fallback=decision.fallback,
+                    error_code=decision.error_code,
+                    history=selected_history,
+                    session_tickers=session_scope,
+                )
+                if isinstance(handled, AnswerRun):
+                    return handled
+                action = handled
             if isinstance(action, DirectResponseArgs):
                 if action.category == "capability":
                     action = DirectResponseArgs(
                         answer=render_capability_answer(question, self.bank_names),
                         category="capability",
                     )
-                elif action.category == "general_explanation" and (
-                    explicit_resolution.tickers
-                    or (session_scope and needs_contextualization(question))
-                ):
+                elif action.category == "general_explanation" and explicit_resolution.tickers:
                     action = ResearchFilingsArgs(
                         search_question=question,
                         reason="Bank-specific context requires grounded filing research.",
@@ -943,6 +954,7 @@ class BankAnswerPipeline:
                         available_history_turns=available_history_turns,
                         fallback=decision.fallback,
                         error_code=decision.error_code,
+                        source_answer=previous_answer,
                     )
             if isinstance(action, ClarificationArgs):
                 return self._clarification_run(
@@ -968,6 +980,7 @@ class BankAnswerPipeline:
             if not isinstance(action, ResearchFilingsArgs):
                 raise RuntimeError("Conversation routing returned an unexpected action.")
             standalone_question = action.search_question
+            presentation_guidance = action.presentation_guidance
             contextualization_model = self.generation_model
             contextualization_latency_ms = decision.latency_ms
             contextualization_fallback = decision.fallback
@@ -982,6 +995,14 @@ class BankAnswerPipeline:
                 for message in selected_history
                 if message.get("role") == "user"
             ]
+            standalone_question, removed_assistant_number = remove_untrusted_numeric_facts(
+                standalone_question,
+                current_question=question,
+                allowed_user_context=user_history,
+            )
+            if removed_assistant_number:
+                contextualization_fallback = True
+                contextualization_error_code = "contextualization_removed_assistant_numeric_fact"
             try:
                 validate_contextualized_rewrite(
                     question,
@@ -1043,9 +1064,11 @@ class BankAnswerPipeline:
             "standalone_question": standalone_question,
             "model": contextualization_model,
             "latency_ms": contextualization_latency_ms,
-            "source": "conversation_tool" if chat_mode else "not_requested",
+            "source": "conversation_graph" if chat_mode else "not_requested",
             "fallback": contextualization_fallback,
             "error_code": contextualization_error_code,
+            "conversation_summary_used": bool(conversation_summary),
+            "presentation_guidance": presentation_guidance,
             "skip_reason": (
                 None
                 if contextualization_applied
@@ -1119,6 +1142,7 @@ class BankAnswerPipeline:
                 on_progress=on_progress,
                 stages=stages,
                 orchestration_request_count=orchestration_request_count,
+                presentation_guidance=presentation_guidance,
             )
         resolved_ticker = str(resolution.ticker)
 
@@ -1156,6 +1180,7 @@ class BankAnswerPipeline:
             expected_record_type=record_type,
             temperature=self.temperature,
             resolved_question=standalone_question,
+            presentation_guidance=presentation_guidance,
         )
         generation_latency_ms = (perf_counter() - started) * 1000
         stages.append(
@@ -1237,6 +1262,7 @@ class BankAnswerPipeline:
         on_progress: Callable[[str, Mapping[str, Any]], None] | None,
         stages: list[dict[str, Any]],
         orchestration_request_count: int,
+        presentation_guidance: str | None,
     ) -> AnswerRun:
         selected_tickers = resolution.tickers
         embedding_latency_ms = 0.0
@@ -1304,7 +1330,7 @@ class BankAnswerPipeline:
             started = perf_counter()
             try:
                 answer = generate_answer(
-                    question,
+                    original_bank_question,
                     evidence,
                     client=self.client,
                     model=self.generation_model,
@@ -1314,6 +1340,7 @@ class BankAnswerPipeline:
                     temperature=self.temperature,
                     resolved_question=bank_question,
                     comparison_scope=True,
+                    presentation_guidance=presentation_guidance,
                 )
             except GenerationValidationError as error:
                 generation = dict(error.generation)
@@ -1360,6 +1387,7 @@ class BankAnswerPipeline:
             client=self.client,
             model=self.generation_model,
             resolved_question=standalone_question,
+            presentation_guidance=presentation_guidance,
         )
         synthesis_latency_ms = (perf_counter() - started) * 1000
         generation_latency_ms = bank_generation_latency_ms + synthesis_latency_ms
@@ -1450,11 +1478,27 @@ class BankAnswerPipeline:
         available_history_turns: int,
         fallback: bool,
         error_code: str | None,
+        source_answer: Mapping[str, Any] | None,
     ) -> AnswerRun:
+        source_citations = {
+            str(item.get("label") or "").strip().upper(): dict(item)
+            for item in (source_answer or {}).get("citations") or []
+        }
+        citations = [
+            source_citations[label]
+            for label in action.citation_ids
+            if label in source_citations
+        ]
+        contextual_transform = action.category == "contextual_transform"
         output: dict[str, Any] = {
             "question": question,
             "dialog_act": action.category,
-            "ticker": None,
+            "ticker": (source_answer or {}).get("ticker") if contextual_transform else None,
+            "tickers": (
+                list((source_answer or {}).get("tickers") or [])
+                if contextual_transform
+                else []
+            ),
             "contextualization": {
                 "applied": False,
                 "history_turns": history_turns,
@@ -1462,14 +1506,15 @@ class BankAnswerPipeline:
                 "standalone_question": question,
                 "model": self.generation_model,
                 "latency_ms": 0.0,
-                "source": "conversation_tool",
+                "source": "conversation_graph",
                 "fallback": fallback,
                 "error_code": error_code,
+                "presentation_guidance": None,
                 "skip_reason": "retrieval_not_required",
             },
             "bank_resolution": {
                 "status": "not_required",
-                "source": "conversation_tool",
+                "source": "conversation_graph",
                 "ticker": None,
                 "detected_tickers": [],
             },
@@ -1478,9 +1523,13 @@ class BankAnswerPipeline:
             "answer_type": "narrative",
             "answer": action.answer,
             "facts": None,
-            "reason": "The conversation action does not require filing evidence.",
+            "reason": (
+                "The model transformed the immediately previous grounded answer."
+                if contextual_transform
+                else "The conversation action does not require filing evidence."
+            ),
             "reason_code": f"conversation_{action.category}",
-            "citations": [],
+            "citations": citations,
             "generation": {
                 "model": self.generation_model,
                 "final_status": "supported",
@@ -1530,14 +1579,14 @@ class BankAnswerPipeline:
                 "standalone_question": question,
                 "model": self.generation_model,
                 "latency_ms": 0.0,
-                "source": "deterministic_scope_guard",
+                "source": "conversation_graph",
                 "fallback": fallback,
                 "error_code": error_code,
                 "skip_reason": "outside_banking_research_scope",
             },
             "bank_resolution": {
                 "status": "not_required",
-                "source": "deterministic_scope_guard",
+                "source": "conversation_graph",
                 "ticker": None,
                 "detected_tickers": [],
             },
@@ -1575,6 +1624,140 @@ class BankAnswerPipeline:
             stage_trace=tuple(dict(stage) for stage in stages),
         )
 
+    def _web_unavailable_run(
+        self,
+        question: str,
+        action: WebResearchArgs,
+        *,
+        stages: Sequence[Mapping[str, Any]],
+        model_request_count: int,
+        history_turns: int,
+        available_history_turns: int,
+        fallback: bool,
+        error_code: str | None,
+        history: Sequence[Mapping[str, str]],
+        session_tickers: Sequence[str],
+    ) -> AnswerRun:
+        standalone_question = action.search_question
+        try:
+            user_history = [
+                str(message.get("content") or "")
+                for message in history
+                if message.get("role") == "user"
+            ]
+            validate_contextualized_rewrite(
+                question,
+                standalone_question,
+                allowed_user_context=user_history,
+            )
+            explicit_scope = set(
+                resolve_bank(
+                    question,
+                    bank_names=self.bank_names,
+                    bank_aliases=self.bank_aliases,
+                ).tickers
+            )
+            planned_scope = set(
+                resolve_bank(
+                    standalone_question,
+                    bank_names=self.bank_names,
+                    bank_aliases=self.bank_aliases,
+                    session_tickers=session_tickers,
+                ).tickers
+            )
+            history_scope = {
+                ticker
+                for message in history
+                if message.get("role") == "user"
+                for ticker in resolve_bank(
+                    str(message.get("content") or ""),
+                    bank_names=self.bank_names,
+                    bank_aliases=self.bank_aliases,
+                ).tickers
+            }
+            allowed_scope = explicit_scope | set(session_tickers) | history_scope
+            if explicit_scope - planned_scope:
+                raise GenerationValidationError(
+                    "contextualization_lost_bank_scope",
+                    "The web search dropped a bank named in the current question.",
+                )
+            if planned_scope - allowed_scope:
+                raise GenerationValidationError(
+                    "contextualization_added_bank_scope",
+                    "The web search introduced a bank outside the conversation scope.",
+                )
+        except GenerationValidationError as error:
+            standalone_question = question
+            fallback = True
+            error_code = error.code
+        output: dict[str, Any] = {
+            "question": question,
+            "dialog_act": "web_research_unavailable",
+            "ticker": None,
+            "tickers": [],
+            "contextualization": {
+                "applied": standalone_question != question,
+                "history_turns": history_turns,
+                "available_history_turns": available_history_turns,
+                "standalone_question": standalone_question,
+                "model": self.generation_model,
+                "latency_ms": 0.0,
+                "source": "conversation_graph",
+                "fallback": fallback,
+                "error_code": error_code,
+                "skip_reason": "web_search_unavailable",
+            },
+            "bank_resolution": {
+                "status": "not_required",
+                "source": "conversation_graph",
+                "ticker": None,
+                "detected_tickers": [],
+            },
+            "retrieval": {"backend": "none", "mode": "none", "evidence_count": 0},
+            "status": "unsupported",
+            "answer_type": "narrative",
+            "answer": render_web_unavailable_answer(question),
+            "facts": None,
+            "reason": action.reason,
+            "reason_code": "web_search_unavailable",
+            "citations": [],
+            "generation": {
+                "model": self.generation_model,
+                "final_status": "unsupported",
+                "request_count": 0,
+            },
+        }
+        diagnostics = self._diagnostics(
+            route="web_research",
+            outcome="unsupported",
+            stages=stages,
+            initial_evidence_count=0,
+            final_evidence_count=0,
+            model_request_count=model_request_count,
+            output=output,
+        )
+        output["diagnostics"] = diagnostics
+        return AnswerRun(
+            output=output,
+            evidence=[],
+            embedding_latency_ms=0.0,
+            retrieval_latency_ms=0.0,
+            generation_latency_ms=0.0,
+            diagnostics=diagnostics,
+            stage_trace=tuple(dict(stage) for stage in stages),
+        )
+
+    @staticmethod
+    def _filing_research_handler(
+        question: str,
+        action: ResearchFilingsArgs,
+        **routing_context: Any,
+    ) -> ResearchFilingsArgs:
+        """Keep filing retrieval behind the same registry used by future source handlers."""
+
+        del question, routing_context
+        return action
+
     def _clarification_run(
         self,
         question: str,
@@ -1598,14 +1781,14 @@ class BankAnswerPipeline:
                 "standalone_question": question,
                 "model": self.generation_model,
                 "latency_ms": 0.0,
-                "source": "conversation_tool",
+                "source": "conversation_graph",
                 "fallback": fallback,
                 "error_code": error_code,
                 "skip_reason": f"missing_{action.missing}",
             },
             "bank_resolution": {
                 "status": "not_required",
-                "source": "conversation_tool",
+                "source": "conversation_graph",
                 "ticker": None,
                 "detected_tickers": [],
             },

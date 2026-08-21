@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,13 +26,14 @@ class ApplicationSettings(BaseSettings):
 
     openai_api_key: SecretStr | None = None
     openai_api_base_url: str | None = None
-    openai_model: str = "AZURE_GPT_4o_2024_1120"
+    openai_model: str = "AZURE_GPT_51_2025_1113"
     openai_x_app_id: SecretStr | None = None
     openai_x_user_id: SecretStr | None = None
     openai_x_company_id: SecretStr | None = None
     openai_x_api_version: SecretStr | None = None
     llm_temperature: float = Field(default=0, ge=0, le=2)
     agentic_rag_enabled: bool = False
+    conversation_router_backend: Literal["langgraph", "legacy"] = "langgraph"
 
     @field_validator("sec_user_agent")
     @classmethod

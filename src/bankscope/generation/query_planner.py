@@ -11,6 +11,7 @@ YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
 NUMBER_PATTERN = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?%?")
 TIER_ONE_PATTERN = re.compile(r"(?i)\btier\s+1\b")
 FORM_10K_PATTERN = re.compile(r"(?i)\b10\s*[-\u2010-\u2015 ]?\s*k\b")
+FORM_10Q_PATTERN = re.compile(r"(?i)\b10\s*[-\u2010-\u2015 ]?\s*q\b")
 FOLLOW_UP_PREFIX = re.compile(
     r"(?i)^\s*(?:and|but|then|also|what\s+about|how\s+about|compare\s+(?:it|that)|"
     r"tell\s+me\s+more|more\s+(?:detail|details|about)|go\s+on|continue|"
@@ -144,7 +145,35 @@ def recent_conversation_history(
 def _numeric_facts(text: str) -> set[str]:
     without_terms = TIER_ONE_PATTERN.sub("tier one", text)
     without_terms = FORM_10K_PATTERN.sub("form ten k", without_terms)
+    without_terms = FORM_10Q_PATTERN.sub("form ten q", without_terms)
     return {value.rstrip("%").replace(",", ".") for value in NUMBER_PATTERN.findall(without_terms)}
+
+
+def remove_untrusted_numeric_facts(
+    standalone_question: str,
+    *,
+    current_question: str,
+    allowed_user_context: Sequence[str] = (),
+) -> tuple[str, bool]:
+    """Remove numeric tokens copied only from assistant-authored history."""
+
+    allowed = _numeric_facts("\n".join((current_question, *allowed_user_context)))
+    form_spans = [
+        match.span()
+        for pattern in (FORM_10K_PATTERN, FORM_10Q_PATTERN)
+        for match in pattern.finditer(standalone_question)
+    ]
+
+    def replace(match: re.Match[str]) -> str:
+        if any(start <= match.start() and match.end() <= end for start, end in form_spans):
+            return match.group(0)
+        normalized = match.group(0).rstrip("%").replace(",", ".")
+        return match.group(0) if normalized in allowed else ""
+
+    sanitized = NUMBER_PATTERN.sub(replace, standalone_question)
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    sanitized = re.sub(r"\s+([,.;:?!])", r"\1", sanitized)
+    return sanitized, sanitized != standalone_question
 
 
 def validate_contextualized_rewrite(

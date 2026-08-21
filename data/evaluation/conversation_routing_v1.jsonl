@@ -1,0 +1,45 @@
+{"case_id":"filing_citi_cyber_01","question":"What were Citigroup's material cybersecurity risks in 2025?","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_citi_cyber_02","question":"Summarize Citi's cyber-security disclosures for 2025.","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_citi_cyber_03","question":"Kako Citi opisuje sajber rizike?","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_citi_cyber_04","question":"Šta Citigroup navodi o cyber incidentima u 10-K?","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_citi_typo_05","question":"What are Citi's cybersecurty risks?","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_jpm_operational_06","question":"How does JPMorgan Chase describe its operational risk framework?","expected_action":"filing_research","expected_tickers":["JPM"],"history":[],"session_tickers":[]}
+{"case_id":"filing_jpm_possessive_07","question":"What changed in JPMorgan's risk disclosures in 2025?","expected_action":"filing_research","expected_tickers":["JPM"],"history":[],"session_tickers":[]}
+{"case_id":"filing_jpm_metric_08","question":"What was JPM's CET1 capital ratio in 2025?","expected_action":"filing_research","expected_tickers":["JPM"],"history":[],"session_tickers":[]}
+{"case_id":"filing_bac_alias_09","question":"What liquidity risks did BofA disclose?","expected_action":"filing_research","expected_tickers":["BAC"],"history":[],"session_tickers":[]}
+{"case_id":"filing_bac_legal_10","question":"Report Bank of America's total deposits for 2025.","expected_action":"filing_research","expected_tickers":["BAC"],"history":[],"session_tickers":[]}
+{"case_id":"filing_comparison_11","question":"Compare JPMorgan and Citi operational risk disclosures.","expected_action":"filing_research","expected_tickers":["JPM","C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_comparison_12","question":"Uporedi CET1 koeficijent Citi i Bank of America za 2025.","expected_action":"filing_research","expected_tickers":["C","BAC"],"history":[],"session_tickers":[]}
+{"case_id":"filing_period_13","question":"Which material risks did Citigroup report for fiscal year 2024?","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_number_14","question":"Did JPM report CET1 above 14% in 2025?","expected_action":"filing_research","expected_tickers":["JPM"],"history":[],"session_tickers":[]}
+{"case_id":"filing_third_party_15","question":"Describe Citi's third-party technology risk controls.","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_conduct_16","question":"What does Citigroup say about conduct risk?","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_serbian_17","question":"Navedi JPM operativne rizike iz izveštaja za 2025.","expected_action":"filing_research","expected_tickers":["JPM"],"history":[],"session_tickers":[]}
+{"case_id":"filing_pita_word_18","question":"Korisnik pita kako Citi opisuje rizik modela.","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"filing_followup_19","question":"What about 2024?","expected_action":"filing_research","expected_tickers":["JPM"],"history":[{"role":"user","content":"What was JPM's CET1 ratio in 2025?"},{"role":"assistant","content":"The filing answer was provided with citations."}],"session_tickers":["JPM"]}
+{"case_id":"filing_followup_20","question":"A kako su opisali sajber rizik?","expected_action":"filing_research","expected_tickers":["C"],"history":[{"role":"user","content":"Šta je Citi naveo o operativnom riziku?"},{"role":"assistant","content":"Odgovor je zasnovan na 10-K izveštaju."}],"session_tickers":["C"]}
+{"case_id":"out_recipe_21","question":"Give me an apple pie recipe.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_recipe_sr_22","question":"Daj mi recept za pitu sa jabukama.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":["JPM"]}
+{"case_id":"out_weather_23","question":"What is the weather forecast for Budapest?","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_football_24","question":"Who won the football match last night?","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_horoscope_25","question":"Tell me today's horoscope.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_cooking_26","question":"How long should I cook pasta?","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_basketball_27","question":"Objasni pravila košarke.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_travel_28","question":"Plan a three-day beach holiday.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"direct_greeting_29","question":"Hello!","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"direct_greeting_sr_30","question":"Zdravo!","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"direct_thanks_31","question":"Thank you.","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"direct_thanks_sr_32","question":"Hvala ti.","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"direct_capability_33","question":"Which banks do you support?","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"direct_capability_sr_34","question":"Koje banke podržavaš?","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"direct_concept_35","question":"What is operational risk in banking?","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"clarify_bank_36","question":"What was the CET1 ratio in 2025?","expected_action":"clarification","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"clarify_metric_37","question":"Compare the capital measure for the two banks.","expected_action":"clarification","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"clarify_orphan_38","question":"Tell me more.","expected_action":"clarification","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"clarify_orphan_sr_39","question":"Reci mi više.","expected_action":"clarification","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"web_price_40","question":"What is Citi's share price today?","expected_action":"web_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"web_news_41","question":"What is the latest news about JPMorgan?","expected_action":"web_research","expected_tickers":["JPM"],"history":[],"session_tickers":[]}
+{"case_id":"web_ceo_42","question":"Who is Citigroup's current CEO?","expected_action":"web_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"web_market_43","question":"How did Bank of America stock trade this morning?","expected_action":"web_research","expected_tickers":["BAC"],"history":[],"session_tickers":[]}
+{"case_id":"web_price_sr_44","question":"Kolika je današnja cena Citi akcije?","expected_action":"web_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
+{"case_id":"web_external_45","question":"What did regulators announce about JPM yesterday?","expected_action":"web_research","expected_tickers":["JPM"],"history":[],"session_tickers":[]}

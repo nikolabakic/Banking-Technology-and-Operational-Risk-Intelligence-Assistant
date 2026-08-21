@@ -12,6 +12,8 @@ from sec2md.table_parser import TableParser
 PARSER_NAME = "sec2md"
 PARSER_VERSION = "0.1.23"
 TABLE_STORE_VERSION = "bankscope-table-store-v1"
+TABLE_DESCRIPTION_PROMPT_VERSION = "table-semantic-description-v1"
+TABLE_DESCRIPTION_TIMEOUT_SECONDS = 30.0
 
 MARKDOWN_TABLE_SEPARATOR = re.compile(r"^\s*\|?(?:\s*:?-+:?\s*\|)+\s*$")
 PERIOD_PATTERN = re.compile(
@@ -371,6 +373,7 @@ def build_openai_description(
     )
     prompt = "\n".join(
         [
+            f"Prompt version: {TABLE_DESCRIPTION_PROMPT_VERSION}",
             f"Bank: {filing.get('ticker', metadata.get('ticker', ''))}",
             f"Report date: {filing.get('report_date', metadata.get('report_date', ''))}",
             f"Section: {metadata.get('section_title') or 'Unassigned'}",
@@ -382,13 +385,23 @@ def build_openai_description(
     )
 
     try:
+        request_options: dict[str, Any] = {
+            "max_tokens": 300,
+            "temperature": 0,
+            "timeout": TABLE_DESCRIPTION_TIMEOUT_SECONDS,
+        }
+        if "GPT_51" in model.strip().upper() or "GPT-5.1" in model.strip().upper():
+            request_options = {
+                "max_completion_tokens": 300,
+                "timeout": TABLE_DESCRIPTION_TIMEOUT_SECONDS,
+            }
         response = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": instructions},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=300,
+            **request_options,
         )
     except Exception as error:
         raise RuntimeError(
@@ -404,6 +417,7 @@ def build_openai_description(
         "provider": "openai",
         "api": "chat.completions",
         "model": model,
+        "prompt_version": TABLE_DESCRIPTION_PROMPT_VERSION,
     }
     response_id = getattr(response, "id", None)
     if response_id:

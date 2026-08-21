@@ -140,6 +140,8 @@ def test_openai_mode_uses_chat_completions_and_records_provenance() -> None:
     assert len(completions.calls) == 1
     assert completions.calls[0]["model"] == "gpt-4o-test"
     assert completions.calls[0]["max_tokens"] == 300
+    assert completions.calls[0]["temperature"] == 0
+    assert completions.calls[0]["timeout"] == 30.0
     assert "Original markdown table" in completions.calls[0]["messages"][1]["content"]
     chunk = next(chunk for chunk in chunks if chunk["record_type"] == "table")
     assert "Significant rows: Loans; Securities" in chunk["document"]
@@ -152,6 +154,7 @@ def test_openai_mode_uses_chat_completions_and_records_provenance() -> None:
         "provider": "openai",
         "api": "chat.completions",
         "model": "gpt-4o-test",
+        "prompt_version": "table-semantic-description-v1",
         "response_id": "chatcmpl_test_1",
         "base_generator": "bankscope-local-table-description-v1",
     }

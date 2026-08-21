@@ -56,3 +56,10 @@ reports remain ignored local artifacts; the durable decision and findings belong
 Retrieval, generation, conversation-memory, and comparison gates answer different questions and
 must not be collapsed into one score. See [the evaluation package](../../src/bankscope/evaluation/README.md)
 and [architectural decisions](../../docs/decisions/README.md).
+
+`conversation_routing_v1.jsonl` is the frozen 45-case English/Serbian route contract used by
+`scripts/evaluate_conversation_routing.py`. It covers all five actions, supported-bank aliases and
+possessives, cyber/sajber variants, typos, natural follow-ups, unrelated requests, and the
+unavailable-web contract. Its gate requires 100% filing-route recall for supported-bank cases, 100%
+no-retrieval behavior for unrelated requests, at least 95% overall route accuracy, and no
+bank/period/number scope violations.

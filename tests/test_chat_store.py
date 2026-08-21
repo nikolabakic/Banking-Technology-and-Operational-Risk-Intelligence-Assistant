@@ -1,4 +1,3 @@
-import json
 import sqlite3
 
 import pytest
@@ -58,11 +57,10 @@ def test_chat_store_errors_do_not_replace_session_bank(tmp_path) -> None:
     assert store.list_turns(thread["id"])[1]["diagnostics"]["failed_stage"] == "retrieving"
     history = store.conversation_history(thread["id"])
     assert history[0] == {"role": "user", "content": "JPM question"}
-    assert json.loads(history[1]["content"])["tickers"] == ["JPM"]
-    assert "Answer [E1]" not in history[1]["content"]
+    assert history[1] == {"role": "assistant", "content": "Answer [E1]"}
 
 
-def test_conversation_history_is_thread_scoped_and_bounded_by_complete_pairs(tmp_path) -> None:
+def test_conversation_history_is_thread_scoped_and_preserves_raw_pairs(tmp_path) -> None:
     store = ChatStore(tmp_path / "chat.db")
     store.initialize()
     first = store.create_thread()
@@ -76,20 +74,24 @@ def test_conversation_history_is_thread_scoped_and_bounded_by_complete_pairs(tmp
     history = store.conversation_history(first["id"])
 
     assert [item["content"] for item in history if item["role"] == "user"] == [
+        "Question 0",
+        "Question 1",
         "Question 2",
         "Question 3",
         "Question 4",
         "Question 5",
     ]
-    assert all("Answer" not in item["content"] for item in history if item["role"] == "assistant")
+    assert [item["content"] for item in history if item["role"] == "assistant"] == [
+        f"Answer {index} [E1]" for index in range(6)
+    ]
     assert all(item["content"] != "Other thread" for item in history)
-    one_pair = store.conversation_history(first["id"], max_turns=1)
-    assert one_pair[0] == {"role": "user", "content": "Question 5"}
-    assert store.conversation_history(first["id"], max_chars=1) == []
-    assert store.conversation_history(first["id"], max_tokens=1) == []
+
+    context = store.conversation_context(first["id"], max_tokens=1)
+    assert context["needs_compaction"] is False
+    assert len(context["messages"]) == 12
 
 
-def test_retryable_answer_turns_do_not_pollute_conversation_history(tmp_path) -> None:
+def test_retryable_answer_turns_remain_visible_as_conversation_context(tmp_path) -> None:
     store = ChatStore(tmp_path / "chat.db")
     store.initialize()
     thread = store.create_thread()
@@ -106,11 +108,14 @@ def test_retryable_answer_turns_do_not_pollute_conversation_history(tmp_path) ->
     store.append_answer_turn(thread["id"], "Tell me more", recovery, corpus_hash="hash-1")
 
     history = store.conversation_history(thread["id"])
-    assert [item["content"] for item in history if item["role"] == "user"] == ["JPM topic"]
-    assert "Answer [E1]" not in history[1]["content"]
+    assert [item["content"] for item in history if item["role"] == "user"] == [
+        "JPM topic",
+        "Tell me more",
+    ]
+    assert history[-1]["content"] == "Research paused safely."
 
 
-def test_out_of_scope_turn_resets_research_memory_without_entering_it(tmp_path) -> None:
+def test_out_of_scope_turn_remains_in_thread_scoped_memory(tmp_path) -> None:
     store = ChatStore(tmp_path / "chat.db")
     store.initialize()
     thread = store.create_thread()
@@ -128,10 +133,15 @@ def test_out_of_scope_turn_resets_research_memory_without_entering_it(tmp_path) 
     )
     store.append_answer_turn(thread["id"], "Apple pie recipe", declined, corpus_hash="hash-1")
 
-    assert store.conversation_history(thread["id"]) == []
+    assert [item["content"] for item in store.conversation_history(thread["id"])] == [
+        "JPM topic",
+        "Answer [E1]",
+        "Apple pie recipe",
+        "Scope boundary.",
+    ]
 
 
-def test_acknowledgement_does_not_displace_latest_research_topic(tmp_path) -> None:
+def test_acknowledgement_remains_available_to_the_model(tmp_path) -> None:
     store = ChatStore(tmp_path / "chat.db")
     store.initialize()
     thread = store.create_thread()
@@ -148,7 +158,53 @@ def test_acknowledgement_does_not_displace_latest_research_topic(tmp_path) -> No
     store.append_answer_turn(thread["id"], "Thanks", acknowledgement, corpus_hash="hash-1")
 
     history = store.conversation_history(thread["id"])
-    assert [item["content"] for item in history if item["role"] == "user"] == ["JPM topic"]
+    assert [item["content"] for item in history if item["role"] == "user"] == [
+        "JPM topic",
+        "Thanks",
+    ]
+
+
+def test_conversation_context_compacts_old_pairs_and_keeps_six_raw_turns(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+    for index in range(8):
+        output = answer()
+        output["answer"] = f"Grounded answer {index} [E1]"
+        store.append_answer_turn(
+            thread["id"], f"Question {index}", output, corpus_hash="hash-1"
+        )
+
+    pending = store.conversation_context(thread["id"], max_tokens=1)
+    assert pending["needs_compaction"] is True
+    assert [item["content"] for item in pending["compaction_messages"]] == [
+        "Question 0",
+        "Grounded answer 0 [E1]",
+        "Question 1",
+        "Grounded answer 1 [E1]",
+    ]
+    assert len(pending["messages"]) == 12
+
+    store.save_conversation_summary(
+        thread["id"],
+        "The user prefers concise answers and is discussing JPMorgan.",
+        through_sequence=pending["compaction_through_sequence"],
+        prompt_version="conversation-summary-tool-v1",
+    )
+    compacted = store.conversation_context(thread["id"], max_tokens=12_000)
+    assert compacted["summary"].startswith("The user prefers concise answers")
+    assert compacted["summary_through_sequence"] == 4
+    assert len(compacted["messages"]) == 12
+    assert compacted["messages"][0]["content"] == "Question 2"
+
+
+def test_thread_payload_does_not_expose_internal_conversation_summary(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+
+    assert "conversation_summary" not in thread
+    assert "summary_through_sequence" not in thread
 
 
 def test_chat_store_cascade_deletes_messages_and_citations(tmp_path) -> None:

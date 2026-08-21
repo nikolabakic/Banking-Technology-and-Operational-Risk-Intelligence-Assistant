@@ -30,7 +30,7 @@ from bankscope.generation.pipeline import (  # noqa: E402
     DEFAULT_QDRANT_PATH,
     DEFAULT_TABLES,
 )
-from bankscope.llm import create_openai_client  # noqa: E402
+from bankscope.llm import create_langchain_chat_model, create_openai_client  # noqa: E402
 from bankscope.retrieval.qdrant_retriever import DEFAULT_COLLECTION_NAME  # noqa: E402
 
 DEFAULT_CHAT_DB = Path("data/local/bankscope_chat.db")
@@ -111,9 +111,10 @@ def build_services(args: argparse.Namespace) -> AppServices:
     chunks = _project_path(args.chunks)
     tables = _project_path(args.tables)
     settings = get_settings()
+    generation_model = args.model or GPT51_CANDIDATE_MODEL
     pipeline = BankAnswerPipeline.from_paths(
         client=create_openai_client(settings),
-        generation_model=args.model or GPT51_CANDIDATE_MODEL,
+        generation_model=generation_model,
         temperature=settings.llm_temperature,
         chunks_path=chunks,
         tables_path=tables,
@@ -123,6 +124,8 @@ def build_services(args: argparse.Namespace) -> AppServices:
         collection_name=args.collection,
         bank_registry_path=_project_path(settings.bank_registry_path),
         agentic_rag_enabled=settings.agentic_rag_enabled,
+        conversation_model=create_langchain_chat_model(settings, model=generation_model),
+        conversation_router_backend=settings.conversation_router_backend,
     )
     store = ChatStore(_project_path(args.chat_db))
     store.initialize()

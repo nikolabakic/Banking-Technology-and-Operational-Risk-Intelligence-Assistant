@@ -15,7 +15,14 @@ class MockCompletions:
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        message = SimpleNamespace(content=self.content)
+        function = SimpleNamespace(
+            name="submit_semantic_judgement",
+            arguments=self.content,
+        )
+        message = SimpleNamespace(
+            content=None,
+            tool_calls=[SimpleNamespace(function=function)],
+        )
         return SimpleNamespace(id="judge-1", choices=[SimpleNamespace(message=message)])
 
 
@@ -43,6 +50,9 @@ def test_semantic_judge_returns_validated_advisory_result() -> None:
     assert result["response_id"] == "judge-1"
     call = completions.calls[0]
     assert call["temperature"] == 0
+    assert call["tool_choice"] == "required"
+    assert call["parallel_tool_calls"] is False
+    assert call["tools"][0]["function"]["strict"] is True
     assert "target_chunk_id=chunk-1" in call["messages"][1]["content"]
 
 

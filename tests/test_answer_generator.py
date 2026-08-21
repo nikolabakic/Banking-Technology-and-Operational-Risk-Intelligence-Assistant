@@ -153,9 +153,9 @@ def test_numeric_answer_uses_strict_function_facts_and_verified_citation() -> No
     assert "Expected bank: JPMorgan Chase & Co." in call["messages"][1]["content"]
     assert "REQUIRED OUTPUT LANGUAGE: English" in call["messages"][0]["content"]
     assert "Required output language: English" in call["messages"][1]["content"]
-    assert "never a JSON array or list" in call["messages"][0]["content"]
-    assert "metric must contain only the base measure" in call["messages"][0]["content"]
-    assert '"variant":"Standardized"' in call["messages"][0]["content"]
+    assert "never a JSON array or list" not in call["messages"][0]["content"]
+    assert "Required JSON schema" not in call["messages"][0]["content"]
+    assert '"variant":"Standardized"' not in call["messages"][0]["content"]
     assert "Base measure only" in numeric_schema["properties"]["metric"]["description"]
     assert len(completions.calls) == 1
     assert result["generation"]["request_count"] == 1
@@ -219,6 +219,20 @@ def test_numeric_renderer_does_not_duplicate_percent_unit() -> None:
 
     assert result["answer"].endswith("11.4 percent [E1]")
     assert "% percent" not in result["answer"]
+
+
+def test_redundant_citation_id_format_is_normalized_before_validation() -> None:
+    client, _ = mock_client(model_payload(citation_ids=["[e1], E1"]))
+
+    result = generate_answer(
+        "What was JPM's CET1 ratio in 2025?",
+        [evidence()],
+        client=client,
+        model="test-model",
+        expected_ticker="JPM",
+    )
+
+    assert [item["label"] for item in result["citations"]] == ["E1"]
 
 
 def test_model_can_abstain_as_ambiguous() -> None:
@@ -423,6 +437,49 @@ def test_semantic_schema_failure_is_repaired_once() -> None:
     assert "failed local contract validation" in (
         completions.calls[1]["messages"][0]["content"].casefold()
     )
+
+
+def test_explicit_presentation_word_limit_is_repaired_once() -> None:
+    long_payload = model_payload(
+        answer=" ".join(["supported"] * 12) + " [E1]",
+        citation_ids=["E1"],
+    )
+    short_payload = model_payload(answer="Short supported answer. [E1]", citation_ids=["E1"])
+    client, completions = mock_client([long_payload, short_payload])
+
+    result = generate_answer(
+        "What was JPM's CET1 ratio in 2025?",
+        [evidence()],
+        client=client,
+        model="AZURE_GPT_51_2025_1113",
+        expected_ticker="JPM",
+        presentation_guidance="Keep the answer under 8 words.",
+    )
+
+    assert result["status"] == "supported"
+    assert result["generation"]["request_count"] == 2
+    assert "at most 8 words" in completions.calls[1]["messages"][0]["content"]
+
+
+def test_narrative_citation_array_is_reconciled_to_known_inline_markers() -> None:
+    client, _ = mock_client(
+        model_payload(
+            answer="Short supported answer. [E1]",
+            answer_type="narrative",
+            facts=None,
+            citation_ids=["E1", "E2"],
+        )
+    )
+
+    result = generate_answer(
+        "What does JPM disclose?",
+        [evidence()],
+        client=client,
+        model="AZURE_GPT_51_2025_1113",
+        expected_ticker="JPM",
+    )
+
+    assert [citation["label"] for citation in result["citations"]] == ["E1"]
 
 
 def test_unsupported_model_text_is_replaced_by_local_abstention() -> None:

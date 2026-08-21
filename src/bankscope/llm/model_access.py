@@ -13,16 +13,10 @@ def _environment_value(primary: str, fallback: str) -> str | None:
     return os.getenv(primary) or os.getenv(fallback)
 
 
-def access_model() -> Any:
-    """Create the authenticated Unique OpenAI-compatible client."""
-    load_dotenv(PROJECT_ROOT / ".env", override=True)
-    try:
-        from openai import OpenAI
-    except ImportError as error:
-        raise RuntimeError(
-            "Install the optional LLM dependencies with 'pip install -e .[llm]'."
-        ) from error
+def model_access_parameters() -> dict[str, Any]:
+    """Return validated credentials shared by native and LangChain clients."""
 
+    load_dotenv(PROJECT_ROOT / ".env", override=True)
     api_key = _environment_value("api_key", "OPENAI_API_KEY")
     base_url = _environment_value("base_url", "OPENAI_API_BASE_URL")
     headers = {
@@ -38,4 +32,16 @@ def access_model() -> Any:
     ]
     if missing:
         raise ValueError(f"Missing model access environment values: {', '.join(missing)}.")
-    return OpenAI(api_key=api_key, base_url=base_url, default_headers=headers)
+    return {"api_key": api_key, "base_url": base_url, "default_headers": headers}
+
+
+def access_model() -> Any:
+    """Create the authenticated Unique OpenAI-compatible client."""
+
+    try:
+        from openai import OpenAI
+    except ImportError as error:
+        raise RuntimeError(
+            "Install the optional LLM dependencies with 'pip install -e .[llm]'."
+        ) from error
+    return OpenAI(**model_access_parameters())

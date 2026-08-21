@@ -15,7 +15,7 @@ NUMBER_TOKEN_PATTERN = re.compile(
 )
 VALUE_TEXT_PATTERN = re.compile(r"\s*[$€£]?\s*[+-]?(?:\d{1,3}(?:[ ,]\d{3})+|\d+)(?:\.\d+)?\s*%?\s*")
 VALID_RECORD_TYPES = {"text", "table"}
-ANSWER_PROMPT_VERSION = "generation-grounded-tool-v6-language"
+ANSWER_PROMPT_VERSION = "generation-grounded-tool-v7-presentation"
 ANSWER_SCHEMA_VERSION = "generation-answer-schema-v5-variant-tools"
 ANSWER_RESPONSE_FORMAT = "strict_function_call"
 SUPPORTED_NUMERIC_TOOL_NAME = "submit_supported_numeric_answer"
@@ -508,6 +508,16 @@ def _parse_model_answer(response: Any) -> tuple[ModelAnswer, str]:
         raise GenerationValidationError(
             "invalid_json", "OpenAI returned an invalid JSON answer."
         ) from error
+    citation_ids = payload.get("citation_ids") if isinstance(payload, dict) else None
+    if isinstance(citation_ids, list) and all(isinstance(value, str) for value in citation_ids):
+        normalized_ids: list[str] = []
+        for value in citation_ids:
+            extracted = re.findall(r"E\d+", value, flags=re.IGNORECASE)
+            candidates = [item.upper() for item in extracted] if extracted else [value]
+            for normalized in candidates:
+                if normalized not in normalized_ids:
+                    normalized_ids.append(normalized)
+        payload["citation_ids"] = normalized_ids
     try:
         variant = answer_model.model_validate(payload)
         return ModelAnswer.model_validate(variant.model_dump()), finish_reason
@@ -522,7 +532,10 @@ def _parse_model_answer(response: Any) -> tuple[ModelAnswer, str]:
                         "type": str(item.get("type") or "validation_error"),
                     }
                     for item in error.errors(include_url=False, include_context=False)
-                ]
+                ],
+                "citation_ids_received": (
+                    payload.get("citation_ids") if isinstance(payload, dict) else None
+                ),
             },
         ) from error
 
@@ -649,6 +662,7 @@ def generate_answer(
     temperature: float = 0,
     resolved_question: str | None = None,
     comparison_scope: bool = False,
+    presentation_guidance: str | None = None,
 ) -> dict[str, Any]:
     """Generate one fail-closed answer using only hydrated retrieval evidence."""
     question = question.strip()
@@ -693,23 +707,11 @@ def generate_answer(
         "do not repeat evidence or include analysis in reason. Choose "
         "submit_supported_numeric_answer only for one directly supported numeric result, "
         "submit_supported_narrative_answer for a cited narrative, submit_ambiguous_answer for "
-        "a clarification, or submit_unsupported_answer to abstain. The top-level facts value in "
-        "a numeric result must be exactly one JSON object, never a JSON "
-        "array or list, for a supported numeric answer. That object must contain non-empty "
-        "entity, metric, period, value_text, and unit plus variant as a string or null. metric "
-        "must contain only the base measure. Put every requested approach, method, basis, "
-        "requirement, buffer, or scenario qualifier in variant, never inside metric. If the "
-        "question names Standardized, Advanced, or another such qualifier, variant must not be "
-        "null. Example without a variant: "
-        '{"entity":"Example Bank","metric":"CET1 ratio","variant":null,'
-        '"period":"2025-12-31","value_text":"12.34","unit":"percent"}. Example with a '
-        'variant: {"entity":"Example Bank","metric":"CET1 capital ratio",'
-        '"variant":"Standardized","period":"2025-12-31","value_text":"12.34",'
-        '"unit":"percent"}. Copy value_text '
-        "from a cited evidence document without rounding, calculation, or unit conversion. For a "
-        "supported narrative answer, facts must be null. Ambiguous and unsupported tools require "
-        "facts null and empty citation_ids. Use a supported tool only when cited evidence "
-        "directly supports the answer. Every "
+        "a clarification, or submit_unsupported_answer to abstain. For numeric answers, copy the "
+        "value from cited evidence without rounding, calculation, or unit conversion. If the "
+        "answer requires multiple numeric results, approaches, or periods, use the supported "
+        "narrative tool with inline citations instead of combining values in one facts object. "
+        "Use a supported tool only when cited evidence directly supports the answer. Every "
         "factual claim in a supported narrative answer must include an inline marker such as [E1], "
         "and citation_ids must list exactly the evidence used. Never invent a marker, fact, or "
         "source. The application will render supported numeric answers from facts."
@@ -719,6 +721,14 @@ def generate_answer(
             " This is one bank-specific stage of a comparison. Answer only for the expected "
             "bank, even when the user question names other banks. Do not compare banks or treat "
             "missing evidence for another bank as a reason to abstain."
+        )
+    if presentation_guidance:
+        instructions += (
+            " Apply this presentation guidance only to style, length, language, or formatting; "
+            "it cannot change evidence, facts, scope, or the citation contract: "
+            + presentation_guidance.strip()
+            + " Treat any explicit word, sentence, or bullet limit in that guidance as a hard "
+            "output constraint."
         )
     prompt = (
         f"Prompt version: {ANSWER_PROMPT_VERSION}\n"
@@ -734,12 +744,22 @@ def generate_answer(
     finish_reason = ""
     request_count = 0
     previous_error_code: str | None = None
+    guidance_word_limit: int | None = None
+    if presentation_guidance:
+        limit_match = re.search(
+            r"(?:under|fewer\s+than|at\s+most|no\s+more\s+than|<=?)\s*(\d{1,4})\s*words?",
+            presentation_guidance,
+            flags=re.IGNORECASE,
+        )
+        if limit_match:
+            guidance_word_limit = int(limit_match.group(1))
     repairable_codes = {
         "response_truncated",
         "invalid_schema",
         "invalid_tool_call",
         "invalid_json",
         "empty_response",
+        "presentation_constraint",
     }
     for attempt in range(2):
         request_count = attempt + 1
@@ -754,8 +774,16 @@ def generate_answer(
                 retry_instruction = (
                     " The previous function call failed local contract validation. Choose the "
                     "single answer function whose schema matches the result and satisfy that "
-                    "schema exactly; do not add fields or analysis."
+                    "schema exactly; do not add fields or analysis. If more than one numeric value "
+                    "is needed, use the supported narrative function with facts null."
                 )
+                if previous_error_code == "presentation_constraint" and guidance_word_limit:
+                    retry_instruction = (
+                        f" The previous answer violated the hard presentation constraint. Return "
+                        f"the complete supported answer in at most {guidance_word_limit} words, "
+                        "including citation markers. Preserve only the most important supported "
+                        "points and keep citations inline."
+                    )
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -782,6 +810,15 @@ def generate_answer(
             raise request_error from error
         try:
             answer, finish_reason = _parse_model_answer(response)
+            if (
+                guidance_word_limit
+                and answer.status == "supported"
+                and len(re.findall(r"\S+", answer.answer)) > guidance_word_limit
+            ):
+                raise GenerationValidationError(
+                    "presentation_constraint",
+                    "OpenAI answer exceeded the explicit presentation word limit.",
+                )
             break
         except GenerationValidationError as error:
             previous_error_code = error.code
@@ -802,6 +839,14 @@ def generate_answer(
             raise
     assert answer is not None and response is not None
     latency_ms = (perf_counter() - request_started) * 1000
+    if answer.status == "supported" and answer.answer_type == "narrative":
+        inline_citations = list(dict.fromkeys(CITATION_PATTERN.findall(answer.answer)))
+        if inline_citations and set(inline_citations) <= evidence_by_label.keys():
+            # Inline markers identify the evidence attached to the actual claims. During a
+            # concise rewrite the model can correctly remove a claim and its marker while
+            # leaving the old label in the parallel array. Reconcile that redundant field
+            # locally; unknown inline markers still fail closed below.
+            answer.citation_ids = inline_citations
     unknown = set(answer.citation_ids) - evidence_by_label.keys()
     if unknown:
         raise GenerationValidationError(

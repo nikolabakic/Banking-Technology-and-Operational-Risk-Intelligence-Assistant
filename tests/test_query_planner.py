@@ -6,6 +6,7 @@ from bankscope.generation.query_planner import (
     build_retrieval_queries,
     needs_contextualization,
     recent_conversation_history,
+    remove_untrusted_numeric_facts,
     round_robin_evidence,
     validate_contextualized_rewrite,
 )
@@ -89,6 +90,29 @@ def test_contextualization_rejects_stale_periods_and_new_numeric_facts() -> None
             "And on December 31, 2025?",
             "What was the ratio in 2025?",
         )
+
+
+def test_assistant_numeric_fact_is_removed_without_losing_follow_up_context() -> None:
+    sanitized, changed = remove_untrusted_numeric_facts(
+        "What was JPMorgan's 14.6% CET1 ratio in 2024?",
+        current_question="What about 2024?",
+        allowed_user_context=("What was JPMorgan's CET1 ratio in 2025?",),
+    )
+
+    assert changed is True
+    assert sanitized == "What was JPMorgan's CET1 ratio in 2024?"
+    validate_contextualized_rewrite(
+        "What about 2024?",
+        sanitized,
+        allowed_user_context=("What was JPMorgan's CET1 ratio in 2025?",),
+    )
+
+    filing_query, filing_changed = remove_untrusted_numeric_facts(
+        "Check the 2024 Form 10-Q and Form 10-K for a reported 14.6% ratio.",
+        current_question="What about 2024?",
+    )
+    assert filing_changed is True
+    assert filing_query == "Check the 2024 Form 10-Q and Form 10-K for a reported ratio."
 
 
 def test_comparison_is_decomposed_into_peer_free_bank_queries() -> None:

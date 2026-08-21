@@ -102,6 +102,16 @@ Run the live acceptance comparison only after the existing frozen gates pass:
 python scripts/evaluate_agentic_rag.py --prerequisite-gates-passed
 ```
 
+Evaluate the LangGraph conversation router separately from retrieval and answer generation:
+
+```powershell
+python scripts/evaluate_conversation_routing.py
+```
+
+This writes `data/evaluation/results/conversation-routing-v1.json` and exits non-zero if supported
+bank recall, unrelated-request isolation, overall route accuracy, or rewrite scope preservation
+misses its acceptance threshold.
+
 The evaluator toggles baseline/agentic mode internally, obtains authoritative retrieval evidence
 through `retrieve_evidence()`, writes `data/evaluation/results/agentic-rag-v1.json`, and exits
 non-zero unless every rollout check passes. The gate preserves baseline Top 5 and counts recovery

@@ -32,12 +32,14 @@ supporting excerpts for each bank in a comparison.
   bank-owned evidence and citations;
 - handles greetings, capabilities, general explanations, clarifications, and natural follow-ups
   through a strict conversational function router;
-- sends no history for standalone questions and uses at most two compact, fact-free turns for
-  referential follow-ups without allowing a rewrite to override the current message;
+- sends each threaded request a 12,000-token-bounded summary plus raw transcript, retaining at
+  least the six newest complete pairs during compaction;
+- lets the model shorten, translate, simplify, or reformat the previous grounded answer while
+  preserving its citation subset and blocking new numbers, banks, and qualifiers;
 - preserves original wording beside validated rewrites and adds bank-scoped concept searches for
   operational risk, cybersecurity, third-party risk, and CET1;
 - returns grounded results through one of four strict answer functions with one bounded repair retry;
-- blocks out-of-scope requests before retrieval and clarifies vague CET1 amount-versus-ratio intent;
+- validates the model's out-of-scope, source-selection, and clarification decisions before retrieval;
 - diversifies retrieval across five filing aspects for whole-10-K summary requests;
 - persists local threads and citation metadata in SQLite;
 - evaluates retrieval, generation, conversation memory, and comparisons separately.
@@ -189,9 +191,9 @@ flowchart TD
 The current question selects a bank or an ordered set of two to four banks. When it does not, the
 server-owned thread scope and bounded history can supply follow-up context. The router may answer
 directly, decline an unrelated request, ask one clarification, or request filing research. Research rewrites are disposable,
-validated search inputs; the original message remains authoritative. Prior assistant answer text
-never re-enters model context; only compact routing state may clarify a reference. Expected model
-failures return a normal
+validated search inputs; the original message remains authoritative. Previous answers re-enter only
+as conversational context and may support their own transformation, never a new filing claim.
+Expected model failures return a normal
 retryable assistant turn rather than an empty/error-only conversation.
 
 ## Repository map

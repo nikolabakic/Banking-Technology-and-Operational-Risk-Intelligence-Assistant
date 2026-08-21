@@ -30,7 +30,18 @@ def test_settings_load_valid_values(
     assert settings.sec_user_agent == "BankScopeRAG test@example.com"
     assert settings.sec_requests_per_second == 5
     assert settings.sec_timeout_seconds == 30
-    assert settings.openai_model == "AZURE_GPT_4o_2024_1120"
+    assert settings.openai_model == "AZURE_GPT_51_2025_1113"
+    assert settings.conversation_router_backend == "langgraph"
+
+
+def test_settings_reject_unknown_conversation_router_backend(
+    valid_settings_data: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        ApplicationSettings(
+            **valid_settings_data,
+            conversation_router_backend="custom",
+        )
 
 
 def test_settings_reject_user_agent_without_email(

@@ -17,7 +17,7 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Generation hardening | Complete | The current manual audit accepts all 29 supported answers and the UI API uses the validated GPT-5.1 candidate |
 | Automatic bank resolution | Complete | Names, aliases and tickers resolve before retrieval; missing/multiple banks fail locally |
 | Durable local conversations | Complete | SQLite threads survive refresh/restart and retain server-owned bank context |
-| Short-term conversation memory | Hardened | Only referential follow-ups use the newest two completed pairs; rewrites preserve periods, numeric facts, and bank scope, while standalone switches bypass history |
+| Model-first conversation memory | Hardened | Every threaded turn receives bounded raw context; long threads use a summary plus six newest pairs, and prior grounded answers can be safely transformed |
 | Streaming progress | Complete | The UI receives real bank-resolution, embedding, retrieval, generation and validation stages |
 | Citation context | Complete | Persisted citations reopen canonical narrative/table evidence and fail closed after corpus changes |
 | Local product interface | Complete | Routed chat history supports create, reopen, rename, delete and source inspection |

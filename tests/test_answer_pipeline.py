@@ -105,14 +105,21 @@ class MockCompletions:
     def create(self, **kwargs):
         self.calls.append(kwargs)
         tool_names = {tool["function"]["name"] for tool in (kwargs.get("tools") or [])}
-        if "research_filings" in tool_names:
+        if "route_conversation" in tool_names:
             payload = json.loads(kwargs["messages"][1]["content"])
             function = SimpleNamespace(
-                name="research_filings",
+                name="route_conversation",
                 arguments=json.dumps(
                     {
+                        "action": "filing_research",
+                        "confidence": 0.98,
                         "search_question": payload["current_question"],
                         "reason": "The question requires filing evidence.",
+                        "response_text": None,
+                        "category": None,
+                        "missing": None,
+                        "citation_ids": [],
+                        "presentation_guidance": None,
                     }
                 ),
             )
@@ -148,11 +155,18 @@ class ContextualizedCompletions(MockCompletions):
         if not self.calls:
             self.calls.append(kwargs)
             function = SimpleNamespace(
-                name="research_filings",
+                name="route_conversation",
                 arguments=json.dumps(
                     {
+                        "action": "filing_research",
+                        "confidence": 0.98,
                         "search_question": ("What was JPMorgan Chase & Co. CET1 ratio in 2024?"),
                         "reason": "Resolve the natural follow-up from recent user context.",
+                        "response_text": None,
+                        "category": None,
+                        "missing": None,
+                        "citation_ids": [],
+                        "presentation_guidance": None,
                     }
                 ),
             )
@@ -178,8 +192,18 @@ class ComparisonCompletions(MockCompletions):
                 '14.6% [E2].","tickers":["JPM","BAC"],'
                 '"citation_ids":["E1","E2"]}]}'
             )
-            message = SimpleNamespace(content=content, refusal=None)
-            return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
+            function = SimpleNamespace(
+                name="submit_comparison_synthesis",
+                arguments=content,
+            )
+            message = SimpleNamespace(
+                content=None,
+                refusal=None,
+                tool_calls=[SimpleNamespace(function=function)],
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+            )
         else:
             entity = (
                 "Bank of America Corporation"
@@ -457,6 +481,10 @@ def test_comparison_retrieves_independent_bank_subquestions_before_synthesis() -
     assert all("bank of america" not in call[0].casefold() for call in retriever.calls[:2])
     assert all("jpmorgan" not in call[0].casefold() for call in retriever.calls[2:])
     assert len(completions.calls) == 3
+    jpm_generation_prompt = completions.calls[0]["messages"][1]["content"].casefold()
+    bac_generation_prompt = completions.calls[1]["messages"][1]["content"].casefold()
+    assert "bank of america" not in jpm_generation_prompt
+    assert "jpmorgan" not in bac_generation_prompt
     assert run.output["mode"] == "comparison"
     assert run.output["tickers"] == ["JPM", "BAC"]
     assert run.output["status"] == "supported"
@@ -544,10 +572,18 @@ def test_comparison_synthesis_fails_closed_on_invalid_schema() -> None:
     def invalid_synthesis(**kwargs):
         if "concise comparison" in kwargs["messages"][0]["content"]:
             completions.calls.append(kwargs)
-            message = SimpleNamespace(
-                content='{"answer":"No citations","citation_ids":[]}', refusal=None
+            function = SimpleNamespace(
+                name="submit_comparison_synthesis",
+                arguments='{"answer":"No citations","citation_ids":[]}',
             )
-            return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
+            message = SimpleNamespace(
+                content=None,
+                refusal=None,
+                tool_calls=[SimpleNamespace(function=function)],
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+            )
         return original_create(**kwargs)
 
     completions.create = invalid_synthesis
@@ -601,18 +637,18 @@ def test_pipeline_contextualizes_follow_up_before_retrieval() -> None:
     assert retriever.calls[0][0] == standalone
     assert run.output["question"] == "What about 2024?"
     assert run.output["contextualization"]["applied"] is True
-    assert run.output["contextualization"]["history_turns"] == 2
+    assert run.output["contextualization"]["history_turns"] == 3
     assert run.output["contextualization"]["available_history_turns"] == 3
     assert run.output["contextualization"]["standalone_question"] == standalone
     assert progress[:2] == ["routing", "contextualizing"]
-    assert "Stale question" not in completions.calls[0]["messages"][1]["content"]
-    assert "14.6" not in completions.calls[0]["messages"][1]["content"]
+    assert "Stale question" in completions.calls[0]["messages"][1]["content"]
+    assert "14.6" in completions.calls[0]["messages"][1]["content"]
     generation_prompt = completions.calls[-1]["messages"][1]["content"]
     assert "Current user question:\nWhat about 2024?" in generation_prompt
     assert f"Resolved standalone question:\n{standalone}" in generation_prompt
 
 
-def test_pipeline_skips_history_for_a_new_standalone_question() -> None:
+def test_pipeline_includes_history_even_for_a_new_standalone_question() -> None:
     encoder = MockEncoder()
     retriever = MockRetriever()
     completions = MockCompletions()
@@ -641,10 +677,10 @@ def test_pipeline_skips_history_for_a_new_standalone_question() -> None:
     assert len(completions.calls) == 2
     assert completions.calls[0]["tool_choice"] == "required"
     routing_payload = json.loads(completions.calls[0]["messages"][1]["content"])
-    assert routing_payload["conversation_history"] == []
+    assert routing_payload["conversation_history"] == history
 
 
-def test_standalone_question_ignores_thirty_turns_of_mixed_history() -> None:
+def test_standalone_question_receives_all_bounded_raw_history() -> None:
     completions = MockCompletions()
     pipeline = SingleBankAnswerPipeline(
         retriever=MockRetriever(),
@@ -667,9 +703,9 @@ def test_standalone_question_ignores_thirty_turns_of_mixed_history() -> None:
     )
 
     routing_payload = json.loads(completions.calls[0]["messages"][1]["content"])
-    assert routing_payload["conversation_history"] == []
+    assert routing_payload["conversation_history"] == history
     assert run.output["contextualization"]["available_history_turns"] == 30
-    assert run.output["contextualization"]["history_turns"] == 0
+    assert run.output["contextualization"]["history_turns"] == 30
 
 
 def test_contextualization_falls_back_when_tool_introduces_bank_outside_thread_scope() -> None:
@@ -680,11 +716,18 @@ def test_contextualization_falls_back_when_tool_introduces_bank_outside_thread_s
         if not completions.calls:
             completions.calls.append(kwargs)
             function = SimpleNamespace(
-                name="research_filings",
+                name="route_conversation",
                 arguments=json.dumps(
                     {
+                        "action": "filing_research",
+                        "confidence": 0.98,
                         "search_question": "What was Citi CET1 in 2024?",
                         "reason": "Resolve the follow-up.",
+                        "response_text": None,
+                        "category": None,
+                        "missing": None,
+                        "citation_ids": [],
+                        "presentation_guidance": None,
                     }
                 ),
             )

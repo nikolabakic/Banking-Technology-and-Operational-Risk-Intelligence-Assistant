@@ -28,6 +28,10 @@ and the pipeline is constructed once, so changing the value requires an API rest
 session, either set `AGENTIC_RAG_ENABLED=true` in `.env` or set the process environment before
 starting BankScope; process environment values take precedence over `.env`.
 
+`CONVERSATION_ROUTER_BACKEND` defaults to `langgraph`. The temporary `legacy` value bypasses graph
+execution but retains the same strict route schema, validation policy, and non-veto fallback; it is
+intended only as a short-lived rollback switch while the LangGraph path is stabilized.
+
 When adding a setting, give it a safe default where possible, add it to `.env.example` when users
 must know it, and cover validation/caching in `tests/test_settings.py`.
 

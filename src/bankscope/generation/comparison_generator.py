@@ -10,12 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from bankscope.generation.answer_generator import (
     CITATION_PATTERN,
+    GPT51_MODEL_MARKERS,
     GenerationValidationError,
     _question_language,
-    _request_options,
 )
 
-COMPARISON_PROMPT_VERSION = "generation-comparison-synthesis-v4-minimal"
+COMPARISON_PROMPT_VERSION = "generation-comparison-synthesis-v5-presentation"
 COMPARISON_SCHEMA_VERSION = "generation-comparison-schema-v1"
 
 
@@ -24,7 +24,7 @@ class ComparisonClaim(BaseModel):
 
     text: str = Field(min_length=1)
     tickers: list[str] = Field(min_length=1)
-    citation_ids: list[str] = Field(default_factory=list)
+    citation_ids: list[str] = Field(...)
 
     @field_validator("text")
     @classmethod
@@ -62,6 +62,37 @@ class ComparisonSynthesis(BaseModel):
     claims: list[ComparisonClaim] = Field(min_length=1)
 
 
+def _comparison_tool() -> dict[str, Any]:
+    schema = ComparisonSynthesis.model_json_schema()
+    schema.pop("title", None)
+    return {
+        "type": "function",
+        "function": {
+            "name": "submit_comparison_synthesis",
+            "description": "Submit grounded cross-bank comparison claims.",
+            "strict": True,
+            "parameters": schema,
+        },
+    }
+
+
+COMPARISON_TOOL = _comparison_tool()
+
+
+def _comparison_request_options(model: str) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "tools": [COMPARISON_TOOL],
+        "tool_choice": "required",
+        "parallel_tool_calls": False,
+        "timeout": 30.0,
+    }
+    if any(marker in model.strip().upper() for marker in GPT51_MODEL_MARKERS):
+        options["max_completion_tokens"] = 1_500
+    else:
+        options.update({"max_tokens": 1_500, "temperature": 0})
+    return options
+
+
 def _choice_parts(response: Any) -> tuple[str, str, str]:
     choices = getattr(response, "choices", None)
     if not choices and isinstance(response, Mapping):
@@ -69,19 +100,33 @@ def _choice_parts(response: Any) -> tuple[str, str, str]:
     if not choices:
         return "", "", ""
     choice = choices[0]
-    if isinstance(choice, Mapping):
-        message = choice.get("message") or {}
-        return (
-            str(message.get("content") or "").strip() if isinstance(message, Mapping) else "",
-            str(choice.get("finish_reason") or ""),
-            str(message.get("refusal") or "") if isinstance(message, Mapping) else "",
-        )
-    message = getattr(choice, "message", None)
-    return (
-        str(getattr(message, "content", "") or "").strip(),
-        str(getattr(choice, "finish_reason", "") or ""),
-        str(getattr(message, "refusal", "") or ""),
+    message = choice.get("message") or {} if isinstance(choice, Mapping) else choice.message
+    finish_reason = (
+        str(choice.get("finish_reason") or "")
+        if isinstance(choice, Mapping)
+        else str(getattr(choice, "finish_reason", "") or "")
     )
+    refusal = (
+        str(message.get("refusal") or "")
+        if isinstance(message, Mapping)
+        else str(getattr(message, "refusal", "") or "")
+    )
+    calls = (
+        list(message.get("tool_calls") or [])
+        if isinstance(message, Mapping)
+        else list(getattr(message, "tool_calls", None) or [])
+    )
+    if len(calls) != 1:
+        return "", finish_reason, refusal
+    call = calls[0]
+    function = call.get("function") if isinstance(call, Mapping) else call.function
+    name = function.get("name") if isinstance(function, Mapping) else function.name
+    if name != "submit_comparison_synthesis":
+        return "", finish_reason, refusal
+    arguments = (
+        function.get("arguments") if isinstance(function, Mapping) else function.arguments
+    )
+    return str(arguments or "").strip(), finish_reason, refusal
 
 
 def _provenance(
@@ -136,6 +181,7 @@ def synthesize_comparison(
     client: Any,
     model: str,
     resolved_question: str | None = None,
+    presentation_guidance: str | None = None,
 ) -> dict[str, Any]:
     """Synthesize already validated bank answers without access to raw filing evidence."""
 
@@ -236,7 +282,6 @@ def synthesize_comparison(
             }
         )
 
-    schema = json.dumps(ComparisonSynthesis.model_json_schema(), separators=(",", ":"))
     language = _question_language(question)
     instructions = (
         f"Write one concise comparison in {language} using only the supplied validated bank "
@@ -251,10 +296,13 @@ def synthesize_comparison(
         "citations. "
         "Use only supplied citation IDs and cover every selected bank. For every claim, "
         "citation_ids must list exactly the inline [E#] markers in that claim's text, with no "
-        "additions or omissions. Return exactly one JSON "
-        "object with no Markdown. Required "
-        f"schema: {schema}"
+        "additions or omissions. Call the comparison synthesis tool exactly once."
     )
+    if presentation_guidance:
+        instructions += (
+            " Apply this only as presentation guidance; it cannot change facts, bank coverage, "
+            "or citations: " + presentation_guidance.strip()
+        )
     prompt = json.dumps(
         {
             "prompt_version": COMPARISON_PROMPT_VERSION,
@@ -273,7 +321,7 @@ def synthesize_comparison(
                 {"role": "system", "content": instructions},
                 {"role": "user", "content": prompt},
             ],
-            **_request_options(model, 0),
+            **_comparison_request_options(model),
         )
     except Exception as error:
         raise GenerationValidationError(

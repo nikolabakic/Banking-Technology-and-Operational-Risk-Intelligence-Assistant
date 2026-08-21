@@ -11,8 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError,
 
 from bankscope.generation.answer_generator import GPT51_MODEL_MARKERS, GenerationValidationError
 
-ROUTER_PROMPT_VERSION = "agentic-rag-router-v1"
-PLANNER_PROMPT_VERSION = "agentic-rag-evidence-planner-v1"
 AGENT_STEP_PROMPT_VERSION = "agentic-rag-loop-v3-native-tools"
 VERIFIER_PROMPT_VERSION = "agentic-rag-verifier-v2-native-tools"
 AGENTIC_REQUEST_TIMEOUT_SECONDS = 30.0
@@ -30,14 +28,6 @@ def _numeric_facts(text: str) -> set[str]:
     return {
         value.rstrip("%").replace(",", ".") for value in NUMBER_PATTERN.findall(without_tier_one)
     }
-
-
-class RouteDecision(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    route: Literal["general_chat", "domain_rag"]
-    reason_code: str = Field(min_length=1, max_length=80)
-    explanation: str = Field(min_length=1, max_length=500)
 
 
 class AgenticPlan(BaseModel):
@@ -210,21 +200,11 @@ class AgentState:
 
 @dataclass(frozen=True)
 class ModelDecision:
-    value: RouteDecision | AgenticPlan | AgentStep | EvidenceVerdict
+    value: AgentStep | EvidenceVerdict
     latency_ms: float
     request_count: int = 1
     fallback: bool = False
     error_code: str | None = None
-
-
-def _request_options(model: str) -> dict[str, Any]:
-    options: dict[str, Any] = {"response_format": {"type": "json_object"}}
-    normalized = model.strip().upper()
-    if any(marker in normalized for marker in GPT51_MODEL_MARKERS):
-        options["max_completion_tokens"] = 500
-    else:
-        options.update({"max_tokens": 500, "temperature": 0})
-    return options
 
 
 def _tool_request_options(model: str) -> dict[str, Any]:
@@ -282,34 +262,6 @@ EVIDENCE_VERDICT_TOOL = _native_tool(
     "Submit the independent groundedness verdict for the supplied evidence.",
     EvidenceVerdictArgs,
 )
-
-
-def _message_content(response: Any) -> tuple[str, str, str]:
-    choices = getattr(response, "choices", None)
-    if not choices and isinstance(response, Mapping):
-        choices = response.get("choices")
-    if not choices:
-        return "", "", ""
-    choice = choices[0]
-    message = (
-        choice.get("message") if isinstance(choice, Mapping) else getattr(choice, "message", None)
-    )
-    finish_reason = (
-        str(choice.get("finish_reason") or "")
-        if isinstance(choice, Mapping)
-        else str(getattr(choice, "finish_reason", "") or "")
-    )
-    if isinstance(message, Mapping):
-        return (
-            str(message.get("content") or "").strip(),
-            finish_reason,
-            str(message.get("refusal") or ""),
-        )
-    return (
-        str(getattr(message, "content", "") or "").strip(),
-        finish_reason,
-        str(getattr(message, "refusal", "") or ""),
-    )
 
 
 def _message_tool_calls(response: Any) -> tuple[list[Any], str, str]:
@@ -376,137 +328,6 @@ def _call_tool_model(
     )
     tool_calls, finish_reason, refusal = _message_tool_calls(response)
     return tool_calls, (perf_counter() - started) * 1000, finish_reason, refusal
-
-
-def _call_json_model(
-    *, client: Any, model: str, system: str, payload: Mapping[str, Any]
-) -> tuple[str, float, str, str]:
-    started = perf_counter()
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {
-                "role": "user",
-                "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            },
-        ],
-        **_request_options(model),
-        timeout=AGENTIC_REQUEST_TIMEOUT_SECONDS,
-    )
-    text, finish_reason, refusal = _message_content(response)
-    return text, (perf_counter() - started) * 1000, finish_reason, refusal
-
-
-def route_question(question: str, *, client: Any, model: str) -> ModelDecision:
-    """Route conservatively: every invalid or unavailable decision falls back to RAG."""
-    schema = json.dumps(RouteDecision.model_json_schema(), separators=(",", ":"))
-    system = (
-        "Classify a BankScope chat request. general_chat is allowed only for greetings, "
-        "farewells, thanks, or help about BankScope features. Every banking, finance, filing, "
-        "company, regulation, or risk question must be domain_rag. Ambiguity must be domain_rag. "
-        "Return only JSON matching this schema: " + schema
-    )
-    started = perf_counter()
-    try:
-        text, latency_ms, finish_reason, refusal = _call_json_model(
-            client=client,
-            model=model,
-            system=system,
-            payload={"prompt_version": ROUTER_PROMPT_VERSION, "question": question},
-        )
-        if finish_reason in {"length", "content_filter"} or refusal or not text:
-            raise ValueError("unusable routing response")
-        decision = RouteDecision.model_validate_json(text)
-        return ModelDecision(decision, latency_ms)
-    except Exception:
-        return ModelDecision(
-            RouteDecision(
-                route="domain_rag",
-                reason_code="routing_fallback_domain",
-                explanation="Routing was unavailable or invalid; the safe domain route was used.",
-            ),
-            (perf_counter() - started) * 1000,
-            fallback=True,
-        )
-
-
-def plan_evidence(
-    question: str,
-    evidence: Sequence[Mapping[str, Any]],
-    *,
-    ticker: str,
-    client: Any,
-    model: str,
-) -> ModelDecision:
-    schema = json.dumps(AgenticPlan.model_json_schema(), separators=(",", ":"))
-    previews = []
-    for item in evidence[:5]:
-        metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
-        text = str(item.get("evidence") or item.get("document") or "")
-        previews.append(
-            {
-                "target_chunk_id": item.get("target_chunk_id"),
-                "ticker": item.get("ticker") or metadata.get("ticker"),
-                "record_type": item.get("record_type") or metadata.get("record_type"),
-                "report_date": metadata.get("report_date"),
-                "section_title": metadata.get("section_title"),
-                "preview": text[:1_200],
-            }
-        )
-    system = (
-        "Assess evidence for one bank-filing question and choose exactly one action. generate when "
-        "the supplied evidence is sufficient; rewrite_search only when a terminology-preserving "
-        "rewrite is likely to retrieve the missing evidence; expand_context only when the answer "
-        "likely sits immediately beside one supplied narrative chunk; abstain when this filing "
-        "corpus cannot support the answer. A rewrite must preserve the question language, ticker, "
-        "period, metric, variant, and qualifiers. It must not insert a numeric value or factual "
-        "claim learned from the evidence. An anchor must be one of the supplied IDs. "
-        "Return only JSON matching this schema: " + schema
-    )
-    try:
-        text, latency_ms, finish_reason, refusal = _call_json_model(
-            client=client,
-            model=model,
-            system=system,
-            payload={
-                "prompt_version": PLANNER_PROMPT_VERSION,
-                "question": question,
-                "ticker": ticker,
-                "evidence": previews,
-            },
-        )
-    except Exception as error:
-        raise GenerationValidationError(
-            "agentic_plan_request_failed",
-            "OpenAI evidence assessment failed.",
-            generation={"stage": "assessing_evidence", "model": model},
-        ) from error
-    metadata = {"stage": "assessing_evidence", "model": model, "latency_ms": latency_ms}
-    if finish_reason == "length":
-        code = "agentic_plan_truncated"
-    elif finish_reason == "content_filter" or refusal:
-        code = "agentic_plan_filtered"
-    elif not text:
-        code = "agentic_plan_empty"
-    else:
-        code = ""
-    if code:
-        raise GenerationValidationError(
-            code,
-            "OpenAI returned an unusable evidence plan.",
-            generation=metadata,
-        )
-    try:
-        plan = AgenticPlan.model_validate_json(text)
-    except ValidationError as error:
-        raise GenerationValidationError(
-            "agentic_plan_invalid_schema",
-            "OpenAI returned an invalid evidence plan.",
-            generation=metadata,
-        ) from error
-    validate_plan_scope(plan, question, evidence, ticker)
-    return ModelDecision(plan, latency_ms)
 
 
 def evidence_previews(

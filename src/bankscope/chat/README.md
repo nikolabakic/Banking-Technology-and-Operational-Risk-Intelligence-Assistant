@@ -29,12 +29,12 @@ sequenceDiagram
 | `sources.py` | `CitationSourceResolver`, `StaleCitationError` | Index corpus targets and reopen canonical narrative or complete-table evidence |
 
 `ChatStore` exposes thread CRUD, `list_messages()`, `list_turns()`, bounded
-`conversation_history()`, `append_answer_turn()`, `append_error_turn()`, and `get_citation()`.
+`conversation_context()`, `conversation_history()`, summary checkpoints, turn persistence, and
+`get_citation()`.
 Answered filing turns update the server-owned single/comparison bank scope. Direct responses,
-clarifications, and recovery turns retain the existing scope. The conversation planner uses only
-the newest two compact completed pairs for referential follow-ups; standalone questions receive no
-history. Direct and recovery turns do not displace research context, while an out-of-scope turn
-creates a barrier so a later pronoun cannot jump back to stale research.
+clarifications, and recovery turns retain the existing scope. Every threaded request receives the
+available raw history. Once summary plus transcript exceed 12,000 estimated tokens, older complete
+pairs are compacted into a thread-scoped summary and at least six newest pairs stay verbatim.
 Expected model and pipeline failures are stored as normal answered `retryable_error` turns, so the
 user receives a conversational response and may retry or continue. The older error-turn contract
 remains available for infrastructure-level failures. Diagnostics live in the existing
@@ -47,10 +47,10 @@ missing targets fail closed.
 ## Invariants and changes
 
 - SQLite transactions keep each user/assistant turn and its citations consistent.
-- History is thread-isolated, bounded by turns/characters/estimated tokens, chronological, and
-  limited to completed research or clarification turns.
-- Stored assistant answers remain in SQLite for the UI, but model memory contains only compact
-  dialog state without answer prose, facts, values, or citations.
+- History is thread-isolated, chronological, token-bounded, and contains complete raw pairs after
+  the current summary checkpoint.
+- The previous grounded answer may be transformed using its existing citation labels, but neither
+  raw history nor the summary is evidence for a new filing claim.
 - The original current message is authoritative; a contextualized search query is disposable.
 - SQLite stores citation metadata, not a second canonical corpus.
 - Runtime execution checks are persisted for observability but do not claim factual correctness.

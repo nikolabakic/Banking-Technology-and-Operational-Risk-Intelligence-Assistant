@@ -14,7 +14,7 @@ from bankscope.generation.answer_generator import (
     GenerationValidationError,
 )
 
-CONTEXTUALIZATION_PROMPT_VERSION = "conversation-standalone-question-v1"
+CONTEXTUALIZATION_PROMPT_VERSION = "conversation-standalone-question-v2-native-tool"
 OLD_CITATION_PATTERN = re.compile(r"\s*\[E\d+\]", flags=re.IGNORECASE)
 
 
@@ -44,8 +44,29 @@ def _is_gpt51_model(model: str) -> bool:
     return any(marker in normalized for marker in GPT51_MODEL_MARKERS)
 
 
+def _standalone_question_tool() -> dict[str, Any]:
+    schema = StandaloneQuestion.model_json_schema()
+    schema.pop("title", None)
+    return {
+        "type": "function",
+        "function": {
+            "name": "submit_standalone_question",
+            "description": "Submit the resolved standalone filing-search question.",
+            "strict": True,
+            "parameters": schema,
+        },
+    }
+
+
+STANDALONE_QUESTION_TOOL = _standalone_question_tool()
+
+
 def _request_options(model: str) -> dict[str, Any]:
-    options: dict[str, Any] = {"response_format": {"type": "json_object"}}
+    options: dict[str, Any] = {
+        "tools": [STANDALONE_QUESTION_TOOL],
+        "tool_choice": "required",
+        "parallel_tool_calls": False,
+    }
     if _is_gpt51_model(model):
         options["max_completion_tokens"] = 300
     else:
@@ -65,18 +86,32 @@ def _message_content(response: Any) -> tuple[str, str, str]:
         message = choice.get("message") or {}
         finish_reason = str(choice.get("finish_reason") or "")
         if isinstance(message, Mapping):
-            return (
-                str(message.get("content") or "").strip(),
-                finish_reason,
-                str(message.get("refusal") or ""),
-            )
-        return str(getattr(message, "content", "") or "").strip(), finish_reason, ""
+            tool_calls = list(message.get("tool_calls") or [])
+            refusal = str(message.get("refusal") or "")
+        else:
+            tool_calls = list(getattr(message, "tool_calls", None) or [])
+            refusal = str(getattr(message, "refusal", "") or "")
+        return _standalone_arguments(tool_calls), finish_reason, refusal
     message = getattr(choice, "message", None)
     return (
-        str(getattr(message, "content", "") or "").strip(),
+        _standalone_arguments(list(getattr(message, "tool_calls", None) or [])),
         str(getattr(choice, "finish_reason", "") or ""),
         str(getattr(message, "refusal", "") or ""),
     )
+
+
+def _standalone_arguments(tool_calls: Sequence[Any]) -> str:
+    if len(tool_calls) != 1:
+        return ""
+    call = tool_calls[0]
+    function = call.get("function") if isinstance(call, Mapping) else call.function
+    name = function.get("name") if isinstance(function, Mapping) else function.name
+    if name != "submit_standalone_question":
+        return ""
+    arguments = (
+        function.get("arguments") if isinstance(function, Mapping) else function.arguments
+    )
+    return str(arguments or "").strip()
 
 
 def _clean_history(history: Sequence[Mapping[str, str]]) -> list[dict[str, str]]:
@@ -115,7 +150,6 @@ def contextualize_question(
     if not history:
         raise ValueError("Conversation history is required for contextualization.")
     cleaned_history = _clean_history(history)
-    schema = json.dumps(StandaloneQuestion.model_json_schema(), separators=(",", ":"))
     instructions = (
         "Rewrite the current user question as one concise, standalone search question for a "
         "bank-filing retrieval system. Use conversation history only to resolve references and "
@@ -125,8 +159,8 @@ def contextualize_question(
         "ticker that is supported by the conversation history. "
         "Explicit details in the current question override history. Do not answer the question, "
         "or add a bank or period that cannot be resolved from the supplied data. If the current "
-        "question is already standalone, return it unchanged. Return exactly one JSON object with "
-        f"no Markdown. Required JSON schema: {schema}"
+        "question is already standalone, return it unchanged. Call the standalone-question tool "
+        "exactly once."
     )
     prompt = json.dumps(
         {

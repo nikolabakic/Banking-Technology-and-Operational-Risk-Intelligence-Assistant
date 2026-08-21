@@ -14,7 +14,14 @@ class FakeCompletions:
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        message = SimpleNamespace(content=self.content, refusal=None)
+        tool_calls = []
+        if self.content:
+            function = SimpleNamespace(
+                name="submit_standalone_question",
+                arguments=self.content,
+            )
+            tool_calls = [SimpleNamespace(function=function)]
+        message = SimpleNamespace(content=None, refusal=None, tool_calls=tool_calls)
         return SimpleNamespace(
             choices=[SimpleNamespace(message=message, finish_reason=self.finish_reason)]
         )
@@ -41,6 +48,8 @@ def test_contextualizer_returns_valid_question_and_removes_old_citations() -> No
     request = completions.calls[0]
     assert request["max_completion_tokens"] == 300
     assert "temperature" not in request
+    assert request["tool_choice"] == "required"
+    assert request["parallel_tool_calls"] is False
     assert "[E1]" not in request["messages"][1]["content"]
 
 

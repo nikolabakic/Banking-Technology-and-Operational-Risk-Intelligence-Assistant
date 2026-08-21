@@ -23,6 +23,9 @@ class FakePipeline:
         ticker: str | None = None,
         tickers=(),
         conversation_history=(),
+        conversation_summary="",
+        previous_answer=None,
+        conversation_metadata=None,
         on_progress=None,
     ):
         self.calls.append((question, ticker, list(tickers), list(conversation_history)))
@@ -126,16 +129,10 @@ def test_thread_answer_persists_messages_and_server_side_session(api) -> None:
     assert pipeline.calls[1][:3] == ("What about the framework?", "JPM", ["JPM"])
     model_history = pipeline.calls[1][3]
     assert model_history[0] == {"role": "user", "content": "What did JPM report?"}
-    compact_state = json.loads(model_history[1]["content"])
-    assert compact_state == {
-        "dialog_act": "answer",
-        "status": "supported",
-        "tickers": ["JPM"],
-        "mode": "single",
-        "answer_type": "narrative",
-        "resolved_question": "What did JPM report?",
+    assert model_history[1] == {
+        "role": "assistant",
+        "content": "Grounded answer [E1]",
     }
-    assert "Grounded answer" not in model_history[1]["content"]
 
     history = client.get(f"/api/threads/{thread['id']}/messages").json()
     assert len(history["messages"]) == 4
@@ -231,6 +228,9 @@ def test_validation_error_becomes_stable_conversation_turn(tmp_path) -> None:
             ticker=None,
             tickers=(),
             conversation_history=(),
+            conversation_summary="",
+            previous_answer=None,
+            conversation_metadata=None,
             on_progress=None,
         ):
             raise GenerationValidationError(
