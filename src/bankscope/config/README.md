@@ -10,6 +10,7 @@ flowchart LR
     Settings --> SEC[download client]
     Settings --> Paths[data paths]
     Settings --> Model[LLM client]
+    Settings --> Web[Optional web-search provider]
 ```
 
 ## Public API
@@ -31,6 +32,13 @@ starting BankScope; process environment values take precedence over `.env`.
 `CONVERSATION_ROUTER_BACKEND` defaults to `langgraph`. The temporary `legacy` value bypasses graph
 execution but retains the same strict route schema, validation policy, and non-veto fallback; it is
 intended only as a short-lived rollback switch while the LangGraph path is stabilized.
+
+`LLM_CONVERSATION_MAX_OUTPUT_TOKENS` and `LLM_REQUEST_TIMEOUT_SECONDS` configure the natural-chat
+budget and adapter timeout. `WEB_SEARCH_ENABLED`, `WEB_SEARCH_PROVIDER`, `WEB_SEARCH_MODEL`,
+`WEB_SEARCH_TIMEOUT_SECONDS`, and `WEB_SEARCH_CONTEXT_SIZE` configure the optional OpenAI provider.
+`TAVILY_API_KEY` and `TAVILY_MAX_RESULTS` configure the BYO fallback. Provider `auto` tries OpenAI
+first and includes Tavily when its key is present; a blank web model inherits `OPENAI_MODEL`.
+Settings changes require restart.
 
 When adding a setting, give it a safe default where possible, add it to `.env.example` when users
 must know it, and cover validation/caching in `tests/test_settings.py`.

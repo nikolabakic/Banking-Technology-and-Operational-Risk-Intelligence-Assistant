@@ -26,6 +26,7 @@ VALID_ACTIONS = {
     "clarification",
     "out_of_scope",
     "web_research",
+    "calculator",
 }
 
 
@@ -117,13 +118,21 @@ def summarize(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         for row in rows
         if row["expected_action"] == "filing_research" and row["expected_tickers"]
     ]
-    unrelated = [row for row in rows if row["expected_action"] == "out_of_scope"]
+    general_no_retrieval = [
+        row for row in rows if row["expected_action"] in {"direct_response", "calculator"}
+    ]
     scope_ok = sum(bool(row["scope_preserved"]) for row in rows)
     accuracy = correct / len(rows)
     bank_recall = sum(bool(row["action_correct"]) for row in bank_cases) / len(bank_cases)
-    unrelated_no_retrieval = sum(
-        row["actual_action"] not in {"filing_research", "web_research"} for row in unrelated
-    ) / len(unrelated)
+    unrelated_no_retrieval = (
+        sum(
+            row["actual_action"] not in {"filing_research", "web_research"}
+            for row in general_no_retrieval
+        )
+        / len(general_no_retrieval)
+        if general_no_retrieval
+        else 1.0
+    )
     gate_passed = (
         accuracy >= 0.95
         and bank_recall == 1.0
@@ -136,6 +145,7 @@ def summarize(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "route_accuracy": accuracy,
         "supported_bank_filing_recall": bank_recall,
         "unrelated_no_retrieval_rate": unrelated_no_retrieval,
+        "general_chat_no_retrieval_rate": unrelated_no_retrieval,
         "scope_preservation_passes": scope_ok,
         "gate_passed": gate_passed,
     }

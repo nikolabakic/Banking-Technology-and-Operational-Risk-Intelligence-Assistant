@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,12 +33,14 @@ from bankscope.generation.answer_generator import (
 )
 from bankscope.generation.comparison_generator import synthesize_comparison
 from bankscope.generation.conversation import (
+    CalculatorArgs,
     ClarificationArgs,
     ConversationGraph,
     DeclineOutOfScopeArgs,
     DirectResponseArgs,
     ResearchFilingsArgs,
     WebResearchArgs,
+    is_retry_only_request,
     render_capability_answer,
     render_out_of_scope_answer,
     render_web_unavailable_answer,
@@ -63,6 +66,13 @@ from bankscope.retrieval.qdrant_retriever import (
 )
 from bankscope.sec.bank_resolver import BankResolution, resolve_bank
 from bankscope.sec.company_registry import load_bank_registry
+from bankscope.tools import (
+    CalculatorError,
+    WebSearchError,
+    WebSearchProvider,
+    WebSearchResult,
+    calculate,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CHUNKS = PROJECT_ROOT / "data/processed/chunks.jsonl"
@@ -71,6 +81,100 @@ DEFAULT_GLOSSARY_LOCATORS = PROJECT_ROOT / "data/processed/lexical_glossary_loca
 DEFAULT_QDRANT_PATH = PROJECT_ROOT / "data/processed/qdrant"
 DEFAULT_QDRANT_MANIFEST = PROJECT_ROOT / "data/processed/qdrant_manifest.json"
 DEFAULT_BANK_REGISTRY = PROJECT_ROOT / "config/banks.yaml"
+
+
+def _web_answer_with_citations(
+    result: WebSearchResult,
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Convert provider URL annotations into BankScope's stable inline E-label contract."""
+
+    sources_by_url = {source.url: source for source in result.sources}
+    ordered_sources: list[tuple[str, str | None, str | None]] = []
+    source_indexes: dict[str, int] = {}
+    candidates = result.citations or result.sources
+    for source in candidates:
+        url = source.url
+        provider_source = sources_by_url.get(url)
+        title = source.title or (provider_source.title if provider_source is not None else None)
+        snippet = provider_source.snippet if provider_source is not None else None
+        existing = source_indexes.get(url)
+        if existing is None:
+            source_indexes[url] = len(ordered_sources)
+            ordered_sources.append((url, title, snippet))
+        elif ordered_sources[existing][1] is None and title is not None:
+            ordered_sources[existing] = (url, title, ordered_sources[existing][2] or snippet)
+
+    label_by_url = {
+        url: f"E{index}" for index, (url, _, _) in enumerate(ordered_sources, start=1)
+    }
+    answer = result.text
+    insertions: dict[int, list[str]] = {}
+    for citation in result.citations:
+        label = label_by_url.get(citation.url)
+        end = citation.end_index
+        if (
+            label is None
+            or not isinstance(end, int)
+            or not 0 <= end <= len(answer)
+            or f"[{label}]" in answer
+        ):
+            continue
+        labels = insertions.setdefault(end, [])
+        if label not in labels:
+            labels.append(label)
+    inserted: set[str] = set()
+    for end, labels in sorted(insertions.items(), reverse=True):
+        markers = " ".join(f"[{label}]" for label in labels)
+        answer = f"{answer[:end].rstrip()} {markers}{answer[end:]}"
+        inserted.update(labels)
+    missing = [
+        label
+        for label in label_by_url.values()
+        if label not in inserted and f"[{label}]" not in answer
+    ]
+    if missing:
+        answer = f"{answer.rstrip()} {' '.join(f'[{label}]' for label in missing)}"
+
+    citations: list[dict[str, Any]] = []
+    evidence: list[dict[str, Any]] = []
+    for url, title, snippet in ordered_sources:
+        label = label_by_url[url]
+        target_id = f"web:{hashlib.sha256(url.encode('utf-8')).hexdigest()}"
+        citation = {
+            "kind": "web",
+            "label": label,
+            "target_chunk_id": target_id,
+            "record_type": "web",
+            "source_url": url,
+            "title": title,
+            "provider": result.provider,
+        }
+        if snippet is not None:
+            citation["snippet"] = snippet
+        citations.append(citation)
+        evidence.append(
+            {
+                "target_chunk_id": target_id,
+                "record_type": "web",
+                "evidence": snippet or title or url,
+                "metadata": {
+                    "kind": "web",
+                    "source_url": url,
+                    "title": title,
+                    "snippet": snippet,
+                    "provider": result.provider,
+                },
+            }
+        )
+    return answer.strip(), citations, evidence
+
+
+def _web_request_count(value: object) -> int:
+    """Return a trustworthy count for one provider or an ordered fallback chain."""
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return 1
+    return value
 
 
 class QueryEncoder(Protocol):
@@ -144,6 +248,7 @@ class BankAnswerPipeline:
         context_expander: CanonicalContextExpander | None = None,
         conversation_model: Any | None = None,
         conversation_router_backend: Literal["langgraph", "legacy"] = "langgraph",
+        web_search_provider: WebSearchProvider | None = None,
     ) -> None:
         if not generation_model.strip():
             raise ValueError("generation_model cannot be empty.")
@@ -167,6 +272,7 @@ class BankAnswerPipeline:
         }
         self.agentic_rag_enabled = agentic_rag_enabled
         self.context_expander = context_expander
+        self.web_search_provider = web_search_provider
         self.conversation_graph = ConversationGraph(
             client=client,
             model=generation_model,
@@ -174,10 +280,15 @@ class BankAnswerPipeline:
             bank_aliases=self.bank_aliases,
             chat_model=conversation_model,
             backend=conversation_router_backend,
+            web_search_enabled=web_search_provider is not None,
         )
         self._research_handlers: dict[str, Callable[..., AnswerRun | ResearchFilingsArgs]] = {
             "filing_research": self._filing_research_handler,
-            "web_research": self._web_unavailable_run,
+            "web_research": (
+                self._web_search_run
+                if web_search_provider is not None
+                else self._web_unavailable_run
+            ),
         }
 
     @classmethod
@@ -198,6 +309,7 @@ class BankAnswerPipeline:
         agentic_rag_enabled: bool = False,
         conversation_model: Any | None = None,
         conversation_router_backend: Literal["langgraph", "legacy"] = "langgraph",
+        web_search_provider: WebSearchProvider | None = None,
     ) -> BankAnswerPipeline:
         chunks_path = Path(chunks_path)
         tables_path = Path(tables_path)
@@ -255,15 +367,23 @@ class BankAnswerPipeline:
                 context_expander=CanonicalContextExpander(records),
                 conversation_model=conversation_model,
                 conversation_router_backend=conversation_router_backend,
+                web_search_provider=web_search_provider,
             )
         except Exception:
             qdrant.close()
             raise
 
     def close(self) -> None:
-        if not self._closed and self._close_callback is not None:
-            self._close_callback()
+        if self._closed:
+            return
         self._closed = True
+        try:
+            if self._close_callback is not None:
+                self._close_callback()
+        finally:
+            close_web_provider = getattr(self.web_search_provider, "close", None)
+            if callable(close_web_provider):
+                close_web_provider()
 
     def __enter__(self) -> BankAnswerPipeline:
         return self
@@ -919,6 +1039,7 @@ class BankAnswerPipeline:
         contextualization_latency_ms = 0.0
         contextualization_fallback = False
         contextualization_error_code: str | None = None
+        unresolved_requests: tuple[str, ...] = ()
 
         if chat_mode:
             if on_progress is not None:
@@ -930,12 +1051,26 @@ class BankAnswerPipeline:
                     if value and value.strip()
                 )
             )
+            raw_unresolved_requests = (conversation_metadata or {}).get(
+                "unresolved_requests", ()
+            )
+            unresolved_requests = tuple(
+                str(value).strip()
+                for value in (
+                    raw_unresolved_requests
+                    if isinstance(raw_unresolved_requests, Sequence)
+                    and not isinstance(raw_unresolved_requests, (str, bytes))
+                    else ()
+                )
+                if isinstance(value, str) and str(value).strip()
+            )
             decision = self.conversation_graph.route(
                 question,
                 selected_history,
                 session_tickers=session_scope,
                 conversation_summary=conversation_summary,
                 previous_answer=previous_answer,
+                unresolved_requests=unresolved_requests,
             )
             orchestration_request_count += decision.request_count
             action = decision.action
@@ -976,10 +1111,23 @@ class BankAnswerPipeline:
                     error_code=decision.error_code,
                     history=selected_history,
                     session_tickers=session_scope,
+                    unresolved_requests=unresolved_requests,
+                    on_progress=on_progress,
                 )
                 if isinstance(handled, AnswerRun):
                     return handled
                 action = handled
+            if isinstance(action, CalculatorArgs):
+                return self._calculation_run(
+                    question,
+                    action,
+                    stages=stages,
+                    model_request_count=orchestration_request_count,
+                    history_turns=len(selected_history) // 2,
+                    available_history_turns=available_history_turns,
+                    fallback=decision.fallback,
+                    error_code=decision.error_code,
+                )
             if isinstance(action, DirectResponseArgs):
                 if action.category == "capability":
                     action = DirectResponseArgs(
@@ -1042,10 +1190,11 @@ class BankAnswerPipeline:
                 for message in selected_history
                 if message.get("role") == "user"
             ]
+            allowed_user_context = [*user_history, *unresolved_requests]
             standalone_question, removed_assistant_number = remove_untrusted_numeric_facts(
                 standalone_question,
                 current_question=question,
-                allowed_user_context=user_history,
+                allowed_user_context=allowed_user_context,
             )
             if removed_assistant_number:
                 contextualization_fallback = True
@@ -1054,7 +1203,7 @@ class BankAnswerPipeline:
                 validate_contextualized_rewrite(
                     question,
                     standalone_question,
-                    allowed_user_context=user_history,
+                    allowed_user_context=allowed_user_context,
                 )
                 planned_resolution = resolve_bank(
                     standalone_question,
@@ -1067,10 +1216,9 @@ class BankAnswerPipeline:
                 planned_scope = set(planned_resolution.tickers)
                 history_scope = {
                     history_ticker
-                    for message in selected_history
-                    if message.get("role") == "user"
+                    for context_question in allowed_user_context
                     for history_ticker in resolve_bank(
-                        str(message.get("content") or ""),
+                        context_question,
                         bank_names=self.bank_names,
                         bank_aliases=self.bank_aliases,
                     ).tickers
@@ -1104,6 +1252,11 @@ class BankAnswerPipeline:
                 }
             )
         contextualization_applied = standalone_question != question
+        retrieval_original_question = (
+            standalone_question
+            if unresolved_requests and is_retry_only_request(question)
+            else question
+        )
         contextualization_payload = {
             "applied": contextualization_applied,
             "history_turns": len(selected_history) // 2,
@@ -1146,10 +1299,16 @@ class BankAnswerPipeline:
             }
             history_scope = {
                 history_ticker
-                for message in selected_history
-                if message.get("role") == "user"
+                for context_question in [
+                    *(
+                        str(message.get("content") or "")
+                        for message in selected_history
+                        if message.get("role") == "user"
+                    ),
+                    *unresolved_requests,
+                ]
                 for history_ticker in resolve_bank(
-                    str(message.get("content") or ""),
+                    context_question,
                     bank_names=self.bank_names,
                     bank_aliases=self.bank_aliases,
                 ).tickers
@@ -1190,13 +1349,14 @@ class BankAnswerPipeline:
                 stages=stages,
                 orchestration_request_count=orchestration_request_count,
                 presentation_guidance=presentation_guidance,
+                retrieval_original_question=retrieval_original_question,
             )
         resolved_ticker = str(resolution.ticker)
 
         retrieval_run = self.retrieve_evidence(
             standalone_question,
             ticker=resolved_ticker,
-            original_question=question,
+            original_question=retrieval_original_question,
             record_type=record_type,
             limit=limit,
             candidate_k=candidate_k,
@@ -1310,6 +1470,7 @@ class BankAnswerPipeline:
         stages: list[dict[str, Any]],
         orchestration_request_count: int,
         presentation_guidance: str | None,
+        retrieval_original_question: str,
     ) -> AnswerRun:
         selected_tickers = resolution.tickers
         embedding_latency_ms = 0.0
@@ -1331,7 +1492,7 @@ class BankAnswerPipeline:
                 bank_aliases=self.bank_aliases,
             )
             original_bank_question = build_bank_subquestion(
-                question,
+                retrieval_original_question,
                 ticker=ticker,
                 selected_tickers=selected_tickers,
                 bank_names=self.bank_names,
@@ -1612,6 +1773,101 @@ class BankAnswerPipeline:
             agentic_plans=tuple(bank_plans),
         )
 
+    def _calculation_run(
+        self,
+        question: str,
+        action: CalculatorArgs,
+        *,
+        stages: Sequence[Mapping[str, Any]],
+        model_request_count: int,
+        history_turns: int,
+        available_history_turns: int,
+        fallback: bool,
+        error_code: str | None,
+    ) -> AnswerRun:
+        calculation_stages = [dict(stage) for stage in stages]
+        started = perf_counter()
+        try:
+            result = calculate(action.expression)
+            status = "supported"
+            answer = f"{action.expression} = {result}"
+            reason_code = "calculation_success"
+            outcome = "supported"
+        except CalculatorError as error:
+            result = None
+            status = "unsupported"
+            answer = f"I could not safely calculate that expression: {error}"
+            reason_code = "calculator_invalid_expression"
+            outcome = "unsupported"
+        calculation_stages.append(
+            {
+                "stage": "calculating",
+                "status": "completed" if result is not None else "rejected",
+                "latency_ms": (perf_counter() - started) * 1000,
+                "expression": action.expression,
+            }
+        )
+        output: dict[str, Any] = {
+            "question": question,
+            "dialog_act": "calculation",
+            "ticker": None,
+            "tickers": [],
+            "contextualization": {
+                "applied": False,
+                "history_turns": history_turns,
+                "available_history_turns": available_history_turns,
+                "standalone_question": question,
+                "model": self.generation_model,
+                "latency_ms": 0.0,
+                "source": "conversation_graph",
+                "fallback": fallback,
+                "error_code": error_code,
+                "presentation_guidance": None,
+                "skip_reason": "calculator_tool",
+            },
+            "bank_resolution": {
+                "status": "not_required",
+                "source": "conversation_graph",
+                "ticker": None,
+                "detected_tickers": [],
+            },
+            "retrieval": {"backend": "none", "mode": "none", "evidence_count": 0},
+            "status": status,
+            # Keep the public answer contract compatible with the frontend. The
+            # tool identity is carried by ``dialog_act`` and ``calculation``.
+            "answer_type": "narrative",
+            "answer": answer,
+            "facts": None,
+            "reason": action.reason,
+            "reason_code": reason_code,
+            "citations": [],
+            "calculation": {"expression": action.expression, "result": result},
+            "generation": {
+                "model": self.generation_model,
+                "final_status": status,
+                "request_count": 0,
+            },
+        }
+        diagnostics = self._diagnostics(
+            route="calculator",
+            outcome=outcome,
+            stages=calculation_stages,
+            initial_evidence_count=0,
+            final_evidence_count=0,
+            model_request_count=model_request_count,
+            output=output,
+        )
+        output["diagnostics"] = diagnostics
+        return AnswerRun(
+            output=output,
+            evidence=[],
+            embedding_latency_ms=0.0,
+            retrieval_latency_ms=0.0,
+            generation_latency_ms=0.0,
+            diagnostics=diagnostics,
+            stage_trace=tuple(calculation_stages),
+        )
+
     def _direct_conversation_run(
         self,
         question: str,
@@ -1769,20 +2025,17 @@ class BankAnswerPipeline:
             stage_trace=tuple(dict(stage) for stage in stages),
         )
 
-    def _web_unavailable_run(
+    def _validated_web_question(
         self,
         question: str,
         action: WebResearchArgs,
         *,
-        stages: Sequence[Mapping[str, Any]],
-        model_request_count: int,
-        history_turns: int,
-        available_history_turns: int,
         fallback: bool,
         error_code: str | None,
         history: Sequence[Mapping[str, str]],
         session_tickers: Sequence[str],
-    ) -> AnswerRun:
+        unresolved_requests: Sequence[str],
+    ) -> tuple[str, bool, str | None]:
         standalone_question = action.search_question
         try:
             user_history = [
@@ -1790,10 +2043,11 @@ class BankAnswerPipeline:
                 for message in history
                 if message.get("role") == "user"
             ]
+            allowed_user_context = [*user_history, *unresolved_requests]
             validate_contextualized_rewrite(
                 question,
                 standalone_question,
-                allowed_user_context=user_history,
+                allowed_user_context=allowed_user_context,
             )
             explicit_scope = set(
                 resolve_bank(
@@ -1812,10 +2066,9 @@ class BankAnswerPipeline:
             )
             history_scope = {
                 ticker
-                for message in history
-                if message.get("role") == "user"
+                for context_question in allowed_user_context
                 for ticker in resolve_bank(
-                    str(message.get("content") or ""),
+                    context_question,
                     bank_names=self.bank_names,
                     bank_aliases=self.bank_aliases,
                 ).tickers
@@ -1835,9 +2088,246 @@ class BankAnswerPipeline:
             standalone_question = question
             fallback = True
             error_code = error.code
+        return standalone_question, fallback, error_code
+
+    def _web_search_run(
+        self,
+        question: str,
+        action: WebResearchArgs,
+        *,
+        stages: Sequence[Mapping[str, Any]],
+        model_request_count: int,
+        history_turns: int,
+        available_history_turns: int,
+        fallback: bool,
+        error_code: str | None,
+        history: Sequence[Mapping[str, str]],
+        session_tickers: Sequence[str],
+        unresolved_requests: Sequence[str],
+        on_progress: Callable[[str, Mapping[str, Any]], None] | None = None,
+    ) -> AnswerRun:
+        standalone_question, fallback, error_code = self._validated_web_question(
+            question,
+            action,
+            fallback=fallback,
+            error_code=error_code,
+            history=history,
+            session_tickers=session_tickers,
+            unresolved_requests=unresolved_requests,
+        )
+        if self.web_search_provider is None:
+            return self._web_unavailable_run(
+                question,
+                action,
+                stages=stages,
+                model_request_count=model_request_count,
+                history_turns=history_turns,
+                available_history_turns=available_history_turns,
+                fallback=fallback,
+                error_code=error_code,
+                history=history,
+                session_tickers=session_tickers,
+                unresolved_requests=unresolved_requests,
+                on_progress=on_progress,
+            )
+        if on_progress is not None:
+            on_progress("searching_web", {"message": "Searching current web sources..."})
+        web_stages = [dict(stage) for stage in stages]
+        started = perf_counter()
+        try:
+            result = self.web_search_provider.search(standalone_question)
+        except WebSearchError as error:
+            provider_request_count = _web_request_count(
+                getattr(error, "request_count", 1)
+            )
+            web_stages.append(
+                {
+                    "stage": "searching_web",
+                    "status": "failed",
+                    "latency_ms": (perf_counter() - started) * 1000,
+                    "error_code": error.code,
+                    "request_count": provider_request_count,
+                }
+            )
+            return self._web_unavailable_run(
+                question,
+                action,
+                stages=web_stages,
+                model_request_count=model_request_count + provider_request_count,
+                history_turns=history_turns,
+                available_history_turns=available_history_turns,
+                fallback=True,
+                error_code=error.code,
+                history=history,
+                session_tickers=session_tickers,
+                unresolved_requests=unresolved_requests,
+                failure_code=error.code,
+                failure_answer=(
+                    "I could not complete a reliable web search for this message. "
+                    "Please try again."
+                ),
+                provider_request_count=provider_request_count,
+                retryable=True,
+                on_progress=on_progress,
+            )
+        provider_request_count = _web_request_count(
+            getattr(result, "request_count", 1)
+        )
+        answer, citations, evidence = _web_answer_with_citations(result)
+        if not result.used_web_search or not citations:
+            failure_code = (
+                "web_search_not_used"
+                if not result.used_web_search
+                else "web_search_missing_citations"
+            )
+            web_stages.append(
+                {
+                    "stage": "searching_web",
+                    "status": "rejected",
+                    "latency_ms": (perf_counter() - started) * 1000,
+                    "error_code": failure_code,
+                    "request_count": provider_request_count,
+                }
+            )
+            return self._web_unavailable_run(
+                question,
+                action,
+                stages=web_stages,
+                model_request_count=model_request_count + provider_request_count,
+                history_turns=history_turns,
+                available_history_turns=available_history_turns,
+                fallback=True,
+                error_code=failure_code,
+                history=history,
+                session_tickers=session_tickers,
+                unresolved_requests=unresolved_requests,
+                failure_code=failure_code,
+                failure_answer=(
+                    "Web search did not return citable sources, so I did not present its answer. "
+                    "Please try again."
+                ),
+                provider_request_count=provider_request_count,
+                retryable=True,
+                on_progress=on_progress,
+            )
+        web_latency_ms = (perf_counter() - started) * 1000
+        web_stages.append(
+            {
+                "stage": "searching_web",
+                "status": "completed",
+                "latency_ms": web_latency_ms,
+                "provider": result.provider,
+                "source_count": len(result.sources),
+                "citation_count": len(citations),
+                "request_count": provider_request_count,
+            }
+        )
+        resolution = resolve_bank(
+            standalone_question,
+            bank_names=self.bank_names,
+            bank_aliases=self.bank_aliases,
+            session_tickers=session_tickers,
+        )
+        tickers = list(resolution.tickers)
+        ticker = tickers[0] if len(tickers) == 1 else None
         output: dict[str, Any] = {
             "question": question,
-            "dialog_act": "web_research_unavailable",
+            "dialog_act": "web_answer",
+            "ticker": ticker,
+            "tickers": tickers,
+            "contextualization": {
+                "applied": standalone_question != question,
+                "history_turns": history_turns,
+                "available_history_turns": available_history_turns,
+                "standalone_question": standalone_question,
+                "model": self.generation_model,
+                "latency_ms": 0.0,
+                "source": "conversation_graph",
+                "fallback": fallback,
+                "error_code": error_code,
+                "presentation_guidance": action.presentation_guidance,
+                "skip_reason": None,
+            },
+            "bank_resolution": resolution.as_dict(),
+            "retrieval": {
+                "backend": result.provider,
+                "mode": "web_search",
+                "evidence_count": len(evidence),
+            },
+            "status": "supported",
+            "answer_type": "narrative",
+            "answer": answer,
+            "facts": None,
+            "reason": action.reason,
+            "reason_code": "web_search_supported",
+            "citations": citations,
+            "web_search": {
+                "provider": result.provider,
+                "query": result.query,
+                "used_web_search": result.used_web_search,
+                "response_id": result.response_id,
+                "source_count": len(result.sources),
+            },
+            "generation": {
+                "model": getattr(self.web_search_provider, "model", result.provider),
+                "provider": result.provider,
+                "final_status": "supported",
+                "request_count": provider_request_count,
+            },
+        }
+        diagnostics = self._diagnostics(
+            route="web_research",
+            outcome="supported",
+            stages=web_stages,
+            initial_evidence_count=len(evidence),
+            final_evidence_count=len(evidence),
+            model_request_count=model_request_count + provider_request_count,
+            output=output,
+        )
+        output["diagnostics"] = diagnostics
+        return AnswerRun(
+            output=output,
+            evidence=evidence,
+            embedding_latency_ms=0.0,
+            retrieval_latency_ms=web_latency_ms,
+            generation_latency_ms=web_latency_ms,
+            diagnostics=diagnostics,
+            stage_trace=tuple(web_stages),
+        )
+
+    def _web_unavailable_run(
+        self,
+        question: str,
+        action: WebResearchArgs,
+        *,
+        stages: Sequence[Mapping[str, Any]],
+        model_request_count: int,
+        history_turns: int,
+        available_history_turns: int,
+        fallback: bool,
+        error_code: str | None,
+        history: Sequence[Mapping[str, str]],
+        session_tickers: Sequence[str],
+        unresolved_requests: Sequence[str],
+        failure_code: str = "web_search_unavailable",
+        failure_answer: str | None = None,
+        provider_request_count: int = 0,
+        retryable: bool = False,
+        on_progress: Callable[[str, Mapping[str, Any]], None] | None = None,
+    ) -> AnswerRun:
+        del on_progress
+        standalone_question, fallback, error_code = self._validated_web_question(
+            question,
+            action,
+            fallback=fallback,
+            error_code=error_code,
+            history=history,
+            session_tickers=session_tickers,
+            unresolved_requests=unresolved_requests,
+        )
+        output: dict[str, Any] = {
+            "question": question,
+            "dialog_act": "retryable_error" if retryable else "web_research_unavailable",
             "ticker": None,
             "tickers": [],
             "contextualization": {
@@ -1850,7 +2340,7 @@ class BankAnswerPipeline:
                 "source": "conversation_graph",
                 "fallback": fallback,
                 "error_code": error_code,
-                "skip_reason": "web_search_unavailable",
+                "skip_reason": failure_code,
             },
             "bank_resolution": {
                 "status": "not_required",
@@ -1861,15 +2351,15 @@ class BankAnswerPipeline:
             "retrieval": {"backend": "none", "mode": "none", "evidence_count": 0},
             "status": "unsupported",
             "answer_type": "narrative",
-            "answer": render_web_unavailable_answer(question),
+            "answer": failure_answer or render_web_unavailable_answer(question),
             "facts": None,
             "reason": action.reason,
-            "reason_code": "web_search_unavailable",
+            "reason_code": failure_code,
             "citations": [],
             "generation": {
                 "model": self.generation_model,
                 "final_status": "unsupported",
-                "request_count": 0,
+                "request_count": provider_request_count,
             },
         }
         diagnostics = self._diagnostics(
@@ -1880,6 +2370,8 @@ class BankAnswerPipeline:
             final_evidence_count=0,
             model_request_count=model_request_count,
             output=output,
+            failed_stage="searching_web" if retryable else None,
+            error_code=failure_code if retryable else None,
         )
         output["diagnostics"] = diagnostics
         return AnswerRun(

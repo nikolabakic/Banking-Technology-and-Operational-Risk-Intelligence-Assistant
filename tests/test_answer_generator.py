@@ -235,6 +235,63 @@ def test_redundant_citation_id_format_is_normalized_before_validation() -> None:
     assert [item["label"] for item in result["citations"]] == ["E1"]
 
 
+def test_ally_internal_target_id_is_hidden_and_normalized_to_short_citation_label() -> None:
+    ally_target_id = "3036bb6433b0efa7c29c84a13ff4236f19d89c426d2721857a74028a4586caac"
+    client, completions = mock_client(
+        model_payload(
+            answer_type="narrative",
+            answer=(
+                "Operational risk is loss or harm arising from inadequate or failed processes, "
+                "systems, people, or external events [E1]."
+            ),
+            facts=None,
+            citation_ids=[ally_target_id, "E1"],
+        )
+    )
+    ally_evidence = evidence(
+        ticker="ALLY",
+        document=(
+            "Operational risk is the risk of loss or harm arising from inadequate or failed "
+            "processes or systems, human factors, or external events."
+        ),
+    )
+    ally_evidence["target_chunk_id"] = ally_target_id
+
+    result = generate_answer(
+        "How does Ally Financial define operational risk in its 2025 Form 10-K?",
+        [ally_evidence],
+        client=client,
+        model="test-model",
+        expected_ticker="ALLY",
+    )
+
+    assert [item["label"] for item in result["citations"]] == ["E1"]
+    assert "target_chunk_id" not in completions.calls[0]["messages"][1]["content"]
+    assert ally_target_id not in completions.calls[0]["messages"][1]["content"]
+
+
+def test_unknown_internal_target_id_still_fails_closed() -> None:
+    client, _ = mock_client(
+        model_payload(
+            answer_type="narrative",
+            answer="Operational risk includes failed processes [E1].",
+            facts=None,
+            citation_ids=["unknown-e1-internal-id", "E1"],
+        )
+    )
+
+    with pytest.raises(GenerationValidationError) as captured:
+        generate_answer(
+            "How does JPM define operational risk in 2025?",
+            [evidence(document="Operational risk includes failed processes in 2025.")],
+            client=client,
+            model="test-model",
+            expected_ticker="JPM",
+        )
+
+    assert captured.value.code == "invalid_schema"
+
+
 def test_model_can_abstain_as_ambiguous() -> None:
     client, _ = mock_client(
         model_payload(

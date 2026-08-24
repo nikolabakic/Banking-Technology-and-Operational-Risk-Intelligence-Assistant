@@ -16,7 +16,8 @@ def _environment_value(primary: str, fallback: str) -> str | None:
 def model_access_parameters() -> dict[str, Any]:
     """Return validated credentials shared by native and LangChain clients."""
 
-    load_dotenv(PROJECT_ROOT / ".env", override=True)
+    # Explicit process-level configuration must win over a developer's local file.
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
     api_key = _environment_value("api_key", "OPENAI_API_KEY")
     base_url = _environment_value("base_url", "OPENAI_API_BASE_URL")
     headers = {

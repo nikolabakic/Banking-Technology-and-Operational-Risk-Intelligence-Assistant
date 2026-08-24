@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
+from urllib.parse import urlsplit
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -25,6 +26,102 @@ from bankscope.generation.memory import CONVERSATION_SUMMARY_PROMPT_VERSION
 LOGGER = logging.getLogger("bankscope.api")
 GENERATION_ERROR_MESSAGE = "The model could not produce a valid grounded answer. Please try again."
 PIPELINE_ERROR_MESSAGE = "The answer pipeline failed. Check the API terminal for details."
+CANCELLED_ANSWER_STATUS_CODE = 499
+MAX_WEB_CITATION_TITLE_LENGTH = 500
+MAX_WEB_CITATION_SNIPPET_LENGTH = 4_000
+MAX_WEB_CITATION_URL_LENGTH = 4_096
+
+
+class InvalidWebCitationSourceError(ValueError):
+    """Raised when persisted web-citation metadata cannot form a safe anchor."""
+
+
+def _safe_web_citation_text(value: object, *, max_length: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())[:max_length].strip()
+
+
+def _validated_web_citation_url(value: object) -> str:
+    if not isinstance(value, str):
+        raise InvalidWebCitationSourceError("Web citation source URL is invalid.")
+    source_url = value.strip()
+    if (
+        not source_url
+        or len(source_url) > MAX_WEB_CITATION_URL_LENGTH
+        or any(
+            character.isspace()
+            or ord(character) < 32
+            or ord(character) == 127
+            or character == "\\"
+            for character in source_url
+        )
+    ):
+        raise InvalidWebCitationSourceError("Web citation source URL is invalid.")
+    try:
+        parsed = urlsplit(source_url)
+        _ = parsed.port
+    except ValueError as error:
+        raise InvalidWebCitationSourceError("Web citation source URL is invalid.") from error
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise InvalidWebCitationSourceError("Web citation source URL is invalid.")
+    return source_url
+
+
+def _web_citation_context(citation: Mapping[str, Any]) -> dict[str, Any]:
+    raw_metadata = citation.get("metadata")
+    if not isinstance(raw_metadata, Mapping):
+        raise InvalidWebCitationSourceError("Web citation metadata is invalid.")
+
+    source_url = _validated_web_citation_url(raw_metadata.get("source_url"))
+    title = _safe_web_citation_text(
+        raw_metadata.get("title"), max_length=MAX_WEB_CITATION_TITLE_LENGTH
+    )
+    snippet = _safe_web_citation_text(
+        raw_metadata.get("snippet"), max_length=MAX_WEB_CITATION_SNIPPET_LENGTH
+    )
+    citation_id = str(citation.get("id") or "")
+    label = str(citation.get("label") or "")
+    target_chunk_id = f"web:{citation_id}"
+
+    safe_metadata = {
+        "kind": "web",
+        "citation_id": citation_id,
+        "label": label,
+        "source_url": source_url,
+    }
+    if title:
+        safe_metadata["title"] = title
+    if snippet:
+        safe_metadata["snippet"] = snippet
+    document_parts = [part for part in (title, snippet) if part]
+    document_parts.append(f"Source: {source_url}")
+
+    safe_citation = dict(citation)
+    safe_citation["target_chunk_id"] = target_chunk_id
+    safe_citation["metadata"] = safe_metadata
+    return {
+        "citation": safe_citation,
+        "target_chunk_id": target_chunk_id,
+        "record_type": "web",
+        "ticker": "",
+        "source_url": source_url,
+        "corpus_hash": str(citation.get("corpus_hash") or ""),
+        "chunks": [
+            {
+                "target_chunk_id": target_chunk_id,
+                "role": "anchor",
+                "record_type": "web",
+                "document": "\n\n".join(document_parts),
+                "metadata": safe_metadata,
+            }
+        ],
+    }
 
 
 def _recovery_answer(question: str) -> str:
@@ -45,8 +142,14 @@ def _recovery_output(
     model: str,
     code: str,
     diagnostics: Mapping[str, Any],
+    generation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Represent an expected pipeline failure as a normal assistant turn."""
+
+    generation_metadata = dict(generation or {})
+    request_count = _non_negative_count(generation_metadata.get("request_count")) or 0
+    history_turns = _non_negative_count(diagnostics.get("history_turns")) or 0
+    evidence_count = _non_negative_count(diagnostics.get("final_evidence_count")) or 0
 
     return {
         "question": question,
@@ -54,7 +157,7 @@ def _recovery_output(
         "ticker": None,
         "contextualization": {
             "applied": False,
-            "history_turns": 0,
+            "history_turns": history_turns,
             "standalone_question": question,
             "model": model,
             "latency_ms": 0.0,
@@ -69,7 +172,7 @@ def _recovery_output(
             "ticker": None,
             "detected_tickers": [],
         },
-        "retrieval": {"backend": "none", "mode": "none", "evidence_count": 0},
+        "retrieval": {"backend": "none", "mode": "none", "evidence_count": evidence_count},
         "status": "unsupported",
         "answer_type": "narrative",
         "answer": _recovery_answer(question),
@@ -80,12 +183,19 @@ def _recovery_output(
         "reason_code": code,
         "citations": [],
         "generation": {
-            "model": model,
+            "model": str(generation_metadata.get("model") or model),
             "final_status": "unsupported",
-            "request_count": 0,
+            "request_count": request_count,
         },
         "diagnostics": dict(diagnostics),
     }
+
+
+def _non_negative_count(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        return None
+    count = int(value)
+    return count if count >= 0 else None
 
 
 def jsonable(value: object) -> Any:
@@ -149,16 +259,41 @@ class AppServices:
         question: str,
         *,
         on_progress: Callable[[str, Mapping[str, Any]], None] | None = None,
+        cancellation_event: threading.Event | None = None,
     ) -> tuple[dict[str, Any], int]:
+        with self.pipeline_lock:
+            return self._answer_thread_locked(
+                thread_id,
+                question,
+                on_progress=on_progress,
+                cancellation_event=cancellation_event,
+            )
+
+    def _answer_thread_locked(
+        self,
+        thread_id: str,
+        question: str,
+        *,
+        on_progress: Callable[[str, Mapping[str, Any]], None] | None = None,
+        cancellation_event: threading.Event | None = None,
+    ) -> tuple[dict[str, Any], int]:
+        def cancelled_result() -> tuple[dict[str, Any], int]:
+            return {"state": "cancelled"}, CANCELLED_ANSWER_STATUS_CODE
+
+        def is_cancelled() -> bool:
+            return cancellation_event is not None and cancellation_event.is_set()
+
+        if is_cancelled():
+            return cancelled_result()
+
         thread = self.store.get_thread(thread_id)
         context = self.store.conversation_context(thread_id)
         summary_updated = False
         if context["needs_compaction"]:
             try:
-                with self.pipeline_lock:
-                    summary = self.pipeline.compact_conversation(
-                        str(context["summary"]), context["compaction_messages"]
-                    )
+                summary = self.pipeline.compact_conversation(
+                    str(context["summary"]), context["compaction_messages"]
+                )
                 self.store.save_conversation_summary(
                     thread_id,
                     summary,
@@ -174,10 +309,23 @@ class AppServices:
 
         def tracked_progress(stage: str, details: Mapping[str, Any]) -> None:
             nonlocal latest_stage
+            if is_cancelled():
+                return
             latest_stage = stage
             stage_trace.append({"stage": stage, "status": "started", **jsonable(dict(details))})
             if on_progress is not None:
                 on_progress(stage, details)
+
+        def persist_answer(output: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
+            if is_cancelled():
+                return cancelled_result()
+            turn = self.store.append_answer_turn(
+                thread_id,
+                question,
+                output,
+                corpus_hash=self.sources.corpus_hash,
+            )
+            return turn, 200
 
         def error_diagnostics(
             code: str,
@@ -185,6 +333,17 @@ class AppServices:
             generation: Mapping[str, Any] | None = None,
         ) -> dict[str, Any]:
             enabled = bool(getattr(self.pipeline, "agentic_rag_enabled", False))
+            generation_request_count = _non_negative_count((generation or {}).get("request_count"))
+            observed_evidence_count = next(
+                (
+                    count
+                    for event in reversed(stage_trace)
+                    if (count := _non_negative_count(event.get("evidence_count"))) is not None
+                ),
+                None,
+            )
+            history_message_count = len(context["messages"])
+            history_turns = history_message_count // 2
             checks = {
                 "pipeline_completed": False,
                 "plan_schema": not code.startswith(
@@ -205,9 +364,16 @@ class AppServices:
                 "failed_stage": failed_stage or latest_stage,
                 "error_code": code,
                 "stages": stage_trace,
-                "initial_evidence_count": None,
-                "final_evidence_count": None,
-                "model_request_count": None,
+                "initial_evidence_count": (observed_evidence_count if not enabled else None),
+                "final_evidence_count": observed_evidence_count,
+                "model_request_count": generation_request_count,
+                "model_request_count_scope": "generation_only",
+                "generation_request_count": generation_request_count,
+                "history_turns": history_turns,
+                "context_message_count": history_message_count,
+                "context_estimated_tokens": int(context["estimated_tokens"]),
+                "summary_used": bool(context["summary"]),
+                "summary_updated": summary_updated,
                 "bank_plans": [],
                 "quality_gate": {"passed": False, "checks": checks},
             }
@@ -219,28 +385,25 @@ class AppServices:
                 diagnostics["citation_ids_received"] = citation_ids_received[:20]
             return diagnostics
 
+        if is_cancelled():
+            return cancelled_result()
+
         try:
-            with self.pipeline_lock:
-                run = self.pipeline.answer(
-                    question,
-                    ticker=thread["session_ticker"],
-                    tickers=thread["session_tickers"],
-                    conversation_history=context["messages"],
-                    conversation_summary=str(context["summary"]),
-                    previous_answer=context["previous_answer"],
-                    conversation_metadata={
-                        "estimated_tokens": context["estimated_tokens"],
-                        "summary_updated": summary_updated,
-                    },
-                    on_progress=tracked_progress,
-                )
-            turn = self.store.append_answer_turn(
-                thread_id,
+            run = self.pipeline.answer(
                 question,
-                jsonable(run.output),
-                corpus_hash=self.sources.corpus_hash,
+                ticker=thread["session_ticker"],
+                tickers=thread["session_tickers"],
+                conversation_history=context["messages"],
+                conversation_summary=str(context["summary"]),
+                previous_answer=context["previous_answer"],
+                conversation_metadata={
+                    "estimated_tokens": context["estimated_tokens"],
+                    "summary_updated": summary_updated,
+                    "unresolved_requests": context.get("unresolved_requests", []),
+                },
+                on_progress=tracked_progress,
             )
-            return turn, 200
+            return persist_answer(jsonable(run.output))
         except GenerationValidationError as error:
             LOGGER.exception(
                 "generation_validation_failed",
@@ -251,51 +414,43 @@ class AppServices:
                 str(error.generation.get("stage") or "") or None,
                 error.generation,
             )
-            turn = self.store.append_answer_turn(
-                thread_id,
-                question,
+            return persist_answer(
                 _recovery_output(
                     question,
                     model=str(getattr(self.pipeline, "generation_model", "unknown")),
                     code=error.code,
                     diagnostics=diagnostics,
-                ),
-                corpus_hash=self.sources.corpus_hash,
+                    generation=error.generation,
+                )
             )
-            return turn, 200
         except ValueError:
             LOGGER.info(
                 "answer_request_recovered",
                 extra={"thread_id": thread_id, "error_code": "invalid_request"},
             )
             diagnostics = error_diagnostics("invalid_request")
-            turn = self.store.append_answer_turn(
-                thread_id,
-                question,
+            return persist_answer(
                 _recovery_output(
                     question,
                     model=str(getattr(self.pipeline, "generation_model", "unknown")),
                     code="invalid_request",
                     diagnostics=diagnostics,
-                ),
-                corpus_hash=self.sources.corpus_hash,
+                )
             )
-            return turn, 200
-        except Exception:
+        except Exception as error:
             LOGGER.exception("answer_pipeline_failed", extra={"thread_id": thread_id})
-            diagnostics = error_diagnostics("pipeline_failed")
-            turn = self.store.append_answer_turn(
-                thread_id,
-                question,
+            raw_generation = getattr(error, "generation", None)
+            generation = raw_generation if isinstance(raw_generation, Mapping) else None
+            diagnostics = error_diagnostics("pipeline_failed", generation=generation)
+            return persist_answer(
                 _recovery_output(
                     question,
                     model=str(getattr(self.pipeline, "generation_model", "unknown")),
                     code="pipeline_failed",
                     diagnostics=diagnostics,
-                ),
-                corpus_hash=self.sources.corpus_hash,
+                    generation=generation,
+                )
             )
-            return turn, 200
 
 
 def _thread_payload(services: AppServices, thread_id: str) -> dict[str, Any]:
@@ -380,7 +535,8 @@ def create_app(services: AppServices) -> FastAPI:
     @app.delete("/api/threads/{thread_id}", status_code=204)
     def delete_thread(thread_id: uuid.UUID) -> None:
         try:
-            services.store.delete_thread(str(thread_id))
+            with services.pipeline_lock:
+                services.store.delete_thread(str(thread_id))
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Conversation not found.") from error
 
@@ -406,6 +562,7 @@ def create_app(services: AppServices) -> FastAPI:
         async def events():
             loop = asyncio.get_running_loop()
             queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+            cancellation_event = threading.Event()
 
             def progress(stage: str, details: Mapping[str, Any]) -> None:
                 payload = {"type": "status", "stage": stage, **jsonable(dict(details))}
@@ -417,6 +574,7 @@ def create_app(services: AppServices) -> FastAPI:
                     str(thread_id),
                     body.question,
                     on_progress=progress,
+                    cancellation_event=cancellation_event,
                 )
             )
             try:
@@ -439,7 +597,7 @@ def create_app(services: AppServices) -> FastAPI:
                 turn, status_code = await task
                 if status_code == 200:
                     yield _sse({"type": "answer", "turn": turn})
-                else:
+                elif status_code != CANCELLED_ANSWER_STATUS_CODE:
                     yield _sse(
                         {
                             "type": "error",
@@ -450,7 +608,7 @@ def create_app(services: AppServices) -> FastAPI:
                     )
                 yield _sse({"type": "done", "status": status_code})
             except asyncio.CancelledError:
-                # Persistence belongs to the worker and continues after a browser disconnect.
+                cancellation_event.set()
                 task.add_done_callback(
                     lambda finished: finished.exception() if not finished.cancelled() else None
                 )
@@ -471,6 +629,9 @@ def create_app(services: AppServices) -> FastAPI:
     ) -> JSONResponse:
         try:
             citation = services.store.get_citation(str(citation_id))
+            metadata = citation.get("metadata")
+            if isinstance(metadata, Mapping) and metadata.get("kind") == "web":
+                return JSONResponse(content=_web_citation_context(citation))
             context = services.sources.context(
                 citation["target_chunk_id"],
                 expected_corpus_hash=citation["corpus_hash"],
@@ -478,6 +639,11 @@ def create_app(services: AppServices) -> FastAPI:
             )
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Citation source not found.") from error
+        except InvalidWebCitationSourceError as error:
+            return JSONResponse(
+                status_code=422,
+                content={"error": str(error), "code": "invalid_citation_source_url"},
+            )
         except StaleCitationError as error:
             return JSONResponse(
                 status_code=409,

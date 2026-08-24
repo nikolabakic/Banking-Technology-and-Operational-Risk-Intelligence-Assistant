@@ -22,7 +22,6 @@ from bankscope.api import AppServices, QuestionRequest, create_app  # noqa: E402
 from bankscope.chat import ChatStore, CitationSourceResolver  # noqa: E402
 from bankscope.config.settings import get_settings  # noqa: E402
 from bankscope.generation import BankAnswerPipeline  # noqa: E402
-from bankscope.generation.answer_generator import GPT51_CANDIDATE_MODEL  # noqa: E402
 from bankscope.generation.pipeline import (  # noqa: E402
     DEFAULT_CHUNKS,
     DEFAULT_GLOSSARY_LOCATORS,
@@ -32,8 +31,15 @@ from bankscope.generation.pipeline import (  # noqa: E402
 )
 from bankscope.llm import create_langchain_chat_model, create_openai_client  # noqa: E402
 from bankscope.retrieval.qdrant_retriever import DEFAULT_COLLECTION_NAME  # noqa: E402
+from bankscope.tools import (  # noqa: E402
+    FallbackWebSearchProvider,
+    OpenAIWebSearchProvider,
+    TavilyWebSearchProvider,
+    WebSearchProvider,
+)
 
 DEFAULT_CHAT_DB = Path("data/local/bankscope_chat.db")
+LOGGER = logging.getLogger("bankscope.serve_api")
 
 
 class JsonLogFormatter(logging.Formatter):
@@ -107,29 +113,114 @@ def _validated_request(payload: Any) -> tuple[str, str | None]:
     return request.question, request.session_ticker
 
 
+def _secret_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    getter = getattr(value, "get_secret_value", None)
+    raw = getter() if callable(getter) else value
+    if not isinstance(raw, str):
+        return None
+    normalized = raw.strip()
+    return normalized or None
+
+
+def _build_web_search_provider(
+    settings: Any,
+    *,
+    client: Any,
+    generation_model: str,
+) -> WebSearchProvider | None:
+    """Build the selected provider chain without exposing configured credentials."""
+
+    if not bool(getattr(settings, "web_search_enabled", False)):
+        return None
+    selected = getattr(settings, "web_search_provider", "disabled")
+    if selected == "disabled":
+        return None
+
+    timeout_seconds = getattr(settings, "web_search_timeout_seconds", 45.0)
+    providers: list[WebSearchProvider] = []
+    if selected in {"auto", "openai"}:
+        providers.append(
+            OpenAIWebSearchProvider(
+                client=client,
+                model=(getattr(settings, "web_search_model", None) or generation_model),
+                timeout_seconds=timeout_seconds,
+                search_context_size=getattr(settings, "web_search_context_size", "medium"),
+            )
+        )
+
+    tavily_key = _secret_text(getattr(settings, "tavily_api_key", None))
+    if selected == "tavily" and tavily_key is None:
+        raise ValueError("TAVILY_API_KEY is required when WEB_SEARCH_PROVIDER=tavily.")
+    if selected in {"auto", "tavily"} and tavily_key is not None:
+        providers.append(
+            TavilyWebSearchProvider(
+                tavily_key,
+                timeout_seconds=timeout_seconds,
+                max_results=getattr(settings, "tavily_max_results", 5),
+            )
+        )
+
+    if not providers:
+        return None
+    if len(providers) == 1:
+        return providers[0]
+    return FallbackWebSearchProvider(providers)
+
+
+def _close_startup_resource(resource: object, *, resource_name: str) -> None:
+    """Best-effort cleanup that preserves the startup exception being handled."""
+
+    close = getattr(resource, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:
+        LOGGER.exception("startup_cleanup_failed", extra={"resource": resource_name})
+
+
 def build_services(args: argparse.Namespace) -> AppServices:
     chunks = _project_path(args.chunks)
     tables = _project_path(args.tables)
     settings = get_settings()
-    generation_model = args.model or GPT51_CANDIDATE_MODEL
-    pipeline = BankAnswerPipeline.from_paths(
-        client=create_openai_client(settings),
+    generation_model = args.model or settings.openai_model
+    client = create_openai_client(settings)
+    web_search_provider = _build_web_search_provider(
+        settings,
+        client=client,
         generation_model=generation_model,
-        temperature=settings.llm_temperature,
-        chunks_path=chunks,
-        tables_path=tables,
-        glossary_locators_path=_project_path(args.glossary_locators),
-        qdrant_path=_project_path(args.qdrant_path),
-        qdrant_manifest_path=_project_path(args.qdrant_manifest),
-        collection_name=args.collection,
-        bank_registry_path=_project_path(settings.bank_registry_path),
-        agentic_rag_enabled=settings.agentic_rag_enabled,
-        conversation_model=create_langchain_chat_model(settings, model=generation_model),
-        conversation_router_backend=settings.conversation_router_backend,
     )
-    store = ChatStore(_project_path(args.chat_db))
-    store.initialize()
-    sources = CitationSourceResolver.from_paths(chunks, tables)
+    try:
+        pipeline = BankAnswerPipeline.from_paths(
+            client=client,
+            generation_model=generation_model,
+            temperature=settings.llm_temperature,
+            chunks_path=chunks,
+            tables_path=tables,
+            glossary_locators_path=_project_path(args.glossary_locators),
+            qdrant_path=_project_path(args.qdrant_path),
+            qdrant_manifest_path=_project_path(args.qdrant_manifest),
+            collection_name=args.collection,
+            bank_registry_path=_project_path(settings.bank_registry_path),
+            agentic_rag_enabled=settings.agentic_rag_enabled,
+            conversation_model=create_langchain_chat_model(settings, model=generation_model),
+            conversation_router_backend=settings.conversation_router_backend,
+            web_search_provider=web_search_provider,
+        )
+    except BaseException:
+        if web_search_provider is not None:
+            _close_startup_resource(web_search_provider, resource_name="web_search_provider")
+        raise
+
+    try:
+        store = ChatStore(_project_path(args.chat_db))
+        store.initialize()
+        sources = CitationSourceResolver.from_paths(chunks, tables)
+    except BaseException:
+        _close_startup_resource(pipeline, resource_name="pipeline")
+        raise
     return AppServices(pipeline, store, sources, threading.Lock())
 
 

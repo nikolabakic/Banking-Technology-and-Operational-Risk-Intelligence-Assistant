@@ -17,6 +17,7 @@ flowchart LR
     Agentic --> Loop[012 bounded hybrid agent loop]
     Loop --> Reliability[013 reliability boundaries]
     Reliability --> Conversation[014 conversational orchestration]
+    Conversation --> Tools[015 general chat + optional tools]
 ```
 
 | ADR | Decision |
@@ -35,6 +36,7 @@ flowchart LR
 | [012](012-bounded-hybrid-agent-loop.md) | Historical bounded hybrid loop; current budget superseded by ADR 013 |
 | [013](013-rag-reliability-hardening.md) | Add deterministic resolution, query, memory, agentic, and UI reliability boundaries |
 | [014](014-conversational-function-orchestration.md) | Make every threaded request a conversational action backed by strict native functions and normal recovery turns |
+| [015](015-general-chat-web-and-calculator.md) | Remove domain-only chat refusals, repair Ally citation aliases, and add optional cited web search and deterministic calculation |
 
 ADRs are append-only records of a decision at a point in time. If a decision is reversed, add a new
 ADR and mark the old one superseded rather than rewriting its measured history.

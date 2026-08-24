@@ -1,9 +1,10 @@
 # BankScope RAG Assistant
 
-BankScope is a local, single-user research assistant for exploring the latest downloaded
-10-K filings of ten U.S. banks. It combines deterministic SEC acquisition, structure-aware
-corpus construction, dense and lexical retrieval, evidence-grounded answer generation,
-conversation memory, and a React interface.
+BankScope is a local, single-user conversational assistant with specialized research access to the
+latest downloaded 10-K filings of ten U.S. banks. It combines normal general chat, optional cited
+web search and deterministic calculation with SEC acquisition, structure-aware corpus construction,
+dense and lexical retrieval, evidence-grounded answer generation, conversation memory, and a React
+interface.
 
 This repository is organized as a set of documented functional areas. Start here for the
 system view, then follow the linked README files for module-level APIs, invariants, and safe
@@ -30,8 +31,10 @@ supporting excerpts for each bank in a comparison.
 - fuses dense and lexical rankings with reciprocal-rank fusion (RRF);
 - answers single-bank and two-to-four-bank comparison questions with independently retrieved,
   bank-owned evidence and citations;
-- handles greetings, capabilities, general explanations, clarifications, and natural follow-ups
-  through a strict conversational function router;
+- handles benign general conversation, writing, explanations, clarifications, and natural
+  follow-ups without requiring filing retrieval;
+- selects indexed filing research, cited OpenAI/Tavily web search, or a safe Decimal calculator
+  only when the request needs that tool;
 - sends each threaded request a 12,000-token-bounded summary plus raw transcript, retaining at
   least the six newest complete pairs during compaction;
 - lets the model shorten, translate, simplify, or reformat the previous grounded answer while
@@ -39,7 +42,7 @@ supporting excerpts for each bank in a comparison.
 - preserves original wording beside validated rewrites and adds bank-scoped concept searches for
   operational risk, cybersecurity, third-party risk, and CET1;
 - returns grounded results through one of four strict answer functions with one bounded repair retry;
-- validates the model's out-of-scope, source-selection, and clarification decisions before retrieval;
+- validates the model's source-selection and clarification decisions before retrieval;
 - diversifies retrieval across five filing aspects for whole-10-K summary requests;
 - persists local threads and citation metadata in SQLite;
 - evaluates retrieval, generation, conversation memory, and comparisons separately.
@@ -122,6 +125,25 @@ contract. [ADR 012](docs/decisions/012-bounded-hybrid-agent-loop.md) and
 [ADR 011](docs/decisions/011-eval-first-agentic-rag.md) preserve the superseded experiments and
 their measured results.
 
+Web search defaults to an `auto` provider chain. It tries the OpenAI Responses `web_search` tool
+first and, when `TAVILY_API_KEY` is configured, falls back to Tavily and remembers the successful
+provider. The current corporate gateway returned `404` for `/responses` in the live smoke, so set a
+Tavily key to enable web answers in that environment. If no provider succeeds, BankScope returns a
+specific web-unavailable state and never presents an uncited answer as current:
+
+```dotenv
+WEB_SEARCH_ENABLED=true
+WEB_SEARCH_PROVIDER=auto
+WEB_SEARCH_MODEL=
+WEB_SEARCH_TIMEOUT_SECONDS=45
+WEB_SEARCH_CONTEXT_SIZE=medium
+TAVILY_API_KEY=
+TAVILY_MAX_RESULTS=5
+```
+
+See [ADR 015](docs/decisions/015-general-chat-web-and-calculator.md) for the reviewed chatbot
+repositories, provider comparison, calculator safety contract, and the Ally failure analysis.
+
 For separate terminals:
 
 ```powershell
@@ -165,10 +187,12 @@ Glossary locators are lexical-only records that point to the same canonical tabl
 flowchart TD
     UI[React client] -->|SSE request| API[FastAPI]
     API --> History[SQLite thread history]
-    History --> FrontDoor{Strict conversation function}
-    FrontDoor -->|respond_directly| Direct[Conversation response]
+    History --> FrontDoor{Model-selected action}
+    FrontDoor -->|respond directly| Direct[General conversation response]
     FrontDoor -->|ask_clarification| Clarify[One concise question]
     FrontDoor -->|research_filings| Context[Validated internal search question]
+    FrontDoor -->|search_web| Web[OpenAI Responses or Tavily]
+    FrontDoor -->|calculate| Calc[Bounded Decimal calculator]
     Context --> Resolve[Deterministic bank resolver + session scope]
     Resolve -->|one bank| Single[Single-bank pipeline]
     Resolve -->|2-4 banks| Plan[Peer-free subquestion per bank]
@@ -180,6 +204,8 @@ flowchart TD
     Multi --> Synthesis[Validated comparison synthesis]
     Generate --> Persist[Persist normal assistant turn]
     Synthesis --> Persist
+    Web --> Persist
+    Calc --> Persist
     Direct --> Persist
     Clarify --> Persist
     API -->|safe model/pipeline failure| Recovery[Retryable assistant response]
@@ -190,7 +216,8 @@ flowchart TD
 
 The current question selects a bank or an ordered set of two to four banks. When it does not, the
 server-owned thread scope and bounded history can supply follow-up context. The router may answer
-directly, decline an unrelated request, ask one clarification, or request filing research. Research rewrites are disposable,
+directly, ask one clarification, or select filing research, web search, or calculation. Benign
+requests are not declined merely for being outside banking. Research rewrites are disposable,
 validated search inputs; the original message remains authoritative. Previous answers re-enter only
 as conversational context and may support their own transformation, never a new filing claim.
 Expected model failures return a normal
@@ -268,4 +295,7 @@ acceptance gates in [docs/roadmap.md](docs/roadmap.md) and record measured decis
   [docs/generation_hardening.md](docs/generation_hardening.md).
 - Agentic RAG remains an opt-in experiment until its live additive-retrieval gate passes; the
   deterministic baseline is the safe default.
+- Web answers require either an OpenAI-compatible gateway implementing Responses `web_search` or a
+  Tavily key. Provider failures return an explicit retryable web state; Brave remains a future A/B
+  candidate.
 - Authentication, multi-user infrastructure, cloud persistence, and deployment are out of scope.

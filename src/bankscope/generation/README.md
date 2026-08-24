@@ -104,13 +104,17 @@ presenting the already validated supported bank answers.
   the original question instead of terminating the turn. Focused retrieval searches the validated
   rewrite, the original wording, and a deterministic bank-scoped concept query for operational
   risk, cybersecurity, third-party risk, or CET1 when applicable.
-- Direct responses cannot make claims about a named/session bank. Capability answers are rendered
-  from the server-owned bank registry rather than model-authored bank names.
+- Direct responses may handle any benign general request, even when a stale bank remains in thread
+  scope, but cannot bypass filing research for a new supported-bank filing claim. Capability
+  answers are rendered from the server-owned bank registry rather than model-authored bank names.
+- Current/external questions may invoke cited web search; arithmetic may invoke the bounded
+  Decimal calculator. Neither path runs filing retrieval.
 - Single-bank generation selects one of four strict tools for supported numeric, supported
   narrative, ambiguous, or unsupported results. Truncation and contract-shape failures receive at
   most one repair retry; unsupported display text is server-rendered.
-- The model handles out-of-scope and vague-CET1 semantics; deterministic policy validates its
-  source choice. One bank's validation failure cannot abort the remaining comparison banks.
+- The model handles normal conversation and vague-CET1 semantics; deterministic policy validates
+  its source choice. Product-domain mismatch is not a refusal reason. One bank's validation failure
+  cannot abort the remaining comparison banks.
 - A fully supported comparison adds one synthesis request after its per-bank calls; partial and
   fully unsupported comparisons do not.
 - Model-specific request options are explicit; responses pass strict Pydantic validation.
@@ -118,8 +122,9 @@ presenting the already validated supported bank answers.
 - Enabled agentic mode adds up to three bounded orchestration requests per bank; diagnostics expose
   every action, effective query, verifier verdict, fallback, latency, and budget check.
 - Expected threaded pipeline/model failures are persisted as normal `retryable_error` assistant
-  turns with diagnostics and HTTP 200. They remain conversational context but never filing
-  evidence. Infrastructure/API contract failures may still be errors.
+  turns with diagnostics and HTTP 200. They remain visible and retryable in the UI but their
+  server boilerplate is excluded from semantic model context. Infrastructure/API contract failures
+  may still be errors.
 
 Changes require generator, pipeline, contextualizer, comparison, evaluator, and frontend contract
 tests plus the relevant frozen live gate before a default changes.

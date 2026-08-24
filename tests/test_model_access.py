@@ -31,7 +31,7 @@ def test_access_model_supports_existing_openai_environment_names(monkeypatch) ->
 
     access_model()
 
-    assert dotenv_calls[0][1] is True
+    assert dotenv_calls[0][1] is False
     assert dotenv_calls[0][0].name == ".env"
     assert captured == {
         "api_key": "secret",

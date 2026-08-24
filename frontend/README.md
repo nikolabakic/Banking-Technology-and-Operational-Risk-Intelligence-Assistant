@@ -2,8 +2,8 @@
 
 **Status:** active local product interface.
 
-Focused question-and-answer interface for exploring the latest indexed 10-K
-filings from 10 leading U.S. banks, with answers grounded in verifiable filing evidence.
+Conversational interface for general chat plus specialized research over indexed 10-K filings,
+cited web answers, and deterministic calculations.
 
 ## Stack
 
@@ -50,7 +50,7 @@ Vite proxies `/api` requests to `http://127.0.0.1:8000`. FastAPI keeps the answe
 pipeline loaded, while SQLite persists threads, messages, bank context and citations.
 The browser receives live pipeline stages over SSE. Historical sources are resolved
 from the active canonical corpus when opened instead of being duplicated in the chat
-database. The service defaults to `AZURE_GPT_51_2025_1113`; override it with
+database. The service uses the configured `OPENAI_MODEL`; override it with
 `npm.cmd run api -- --model MODEL_NAME`.
 
 The stream sends an immediate status and heartbeat comments during long model work. `api.ts`
@@ -74,12 +74,15 @@ flag back to `false` and restarting restores baseline routing/retrieval behavior
 - compatibility question -> `POST /api/answer`
 - answer status -> `supported | partial | ambiguous | unsupported`
 - dialog act -> `answer | clarification | greeting | acknowledgement | capability |
-  general_explanation | out_of_scope | retryable_error`
-- source chips carry persisted citation IDs; the drawer hydrates canonical evidence on demand
+  general_explanation | contextual_transform | web_answer | web_research_unavailable |
+  calculation | out_of_scope | retryable_error`
+- filing source chips hydrate canonical evidence; web chips open validated HTTP(S) sources in a
+  new `noopener` tab
 - bank selection is deliberately absent; the server resolves one bank or an ordered comparison set
 - optional and legacy diagnostics are normalized defensively before rendering
 - expected threaded model/pipeline failures arrive as answered `retryable_error` turns; red error
-  turns are reserved for infrastructure or protocol failures
+  turns are reserved for infrastructure or protocol failures; retryable turns include a guarded
+  Retry action that resubmits the original question
 - agentic progress can add repeatable `assessing_evidence` events to the baseline
   `embedding`, `retrieving`, `generating`, `validating`, `synthesizing`, and `contextualizing`
   stages; detailed tool actions are carried in terminal diagnostics

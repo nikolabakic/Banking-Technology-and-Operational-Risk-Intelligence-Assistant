@@ -17,6 +17,19 @@ def answer(ticker: str = "JPM") -> dict:
     }
 
 
+def retryable_answer() -> dict:
+    output = answer()
+    output.update(
+        {
+            "dialog_act": "retryable_error",
+            "answer": "Research paused safely.",
+            "citations": [],
+            "status": "unsupported",
+        }
+    )
+    return output
+
+
 def test_chat_store_persists_threads_turns_and_citations(tmp_path) -> None:
     path = tmp_path / "chat.db"
     store = ChatStore(path)
@@ -38,6 +51,39 @@ def test_chat_store_persists_threads_turns_and_citations(tmp_path) -> None:
     citation = reopened.get_citation(citation_id)
     assert citation["target_chunk_id"] == "chunk-1"
     assert citation["corpus_hash"] == "hash-1"
+
+
+def test_chat_store_persists_web_citation_metadata_without_a_corpus_target(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+    output = answer("")
+    output["citations"] = [
+        {
+            "kind": "web",
+            "label": "E1",
+            "title": "Official risk update",
+            "snippet": "The regulator published an updated risk notice.",
+            "source_url": "https://example.com/risk-update",
+        }
+    ]
+
+    turn = store.append_answer_turn(
+        thread["id"], "What changed?", output, corpus_hash="corpus-at-answer-time"
+    )
+    citation_id = turn["response"]["citations"][0]["citation_id"]
+    citation = store.get_citation(citation_id)
+
+    assert citation["target_chunk_id"] == ""
+    assert citation["corpus_hash"] == "corpus-at-answer-time"
+    assert citation["metadata"] == {
+        "kind": "web",
+        "label": "E1",
+        "title": "Official risk update",
+        "snippet": "The regulator published an updated risk notice.",
+        "source_url": "https://example.com/risk-update",
+        "citation_id": citation_id,
+    }
 
 
 def test_chat_store_errors_do_not_replace_session_bank(tmp_path) -> None:
@@ -91,28 +137,92 @@ def test_conversation_history_is_thread_scoped_and_preserves_raw_pairs(tmp_path)
     assert len(context["messages"]) == 12
 
 
-def test_retryable_answer_turns_remain_visible_as_conversation_context(tmp_path) -> None:
+def test_retryable_answer_turns_remain_visible_but_do_not_poison_model_context(tmp_path) -> None:
     store = ChatStore(tmp_path / "chat.db")
     store.initialize()
     thread = store.create_thread()
     store.append_answer_turn(thread["id"], "JPM topic", answer(), corpus_hash="hash-1")
-    recovery = answer()
-    recovery.update(
-        {
-            "dialog_act": "retryable_error",
-            "answer": "Research paused safely.",
-            "citations": [],
-            "status": "unsupported",
-        }
-    )
+    recovery = retryable_answer()
     store.append_answer_turn(thread["id"], "Tell me more", recovery, corpus_hash="hash-1")
 
     history = store.conversation_history(thread["id"])
-    assert [item["content"] for item in history if item["role"] == "user"] == [
-        "JPM topic",
-        "Tell me more",
+    assert [item["content"] for item in history if item["role"] == "user"] == ["JPM topic"]
+    assert all(item["content"] != "Research paused safely." for item in history)
+    context = store.conversation_context(thread["id"])
+    assert context["unresolved_requests"] == ["Tell me more"]
+    turns = store.list_turns(thread["id"])
+    assert turns[-1]["response"]["answer"] == "Research paused safely."
+
+    store.append_answer_turn(thread["id"], "Retry it", answer(), corpus_hash="hash-1")
+    assert store.conversation_context(thread["id"])["unresolved_requests"] == []
+
+
+def test_two_failed_natural_retries_keep_the_original_unresolved_request(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+    original = "How does Ally Financial define operational risk in its 2025 Form 10-K?"
+
+    for question in (original, "Try again.", "Retry it."):
+        store.append_answer_turn(
+            thread["id"], question, retryable_answer(), corpus_hash="hash-1"
+        )
+
+    assert store.conversation_context(thread["id"])["unresolved_requests"] == [original]
+
+
+def test_identical_retry_button_requests_are_deduplicated_and_bounded(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+
+    for question in ("request 0", "request 1", "request 2", "request 3", "request 3"):
+        store.append_answer_turn(
+            thread["id"], question, retryable_answer(), corpus_hash="hash-1"
+        )
+    assert store.conversation_context(thread["id"])["unresolved_requests"] == [
+        "request 1",
+        "request 2",
+        "request 3",
     ]
-    assert history[-1]["content"] == "Research paused safely."
+
+    for question in ("long-a-" + "x" * 10_000, "long-b-" + "x" * 10_000):
+        store.append_answer_turn(
+            thread["id"], question, retryable_answer(), corpus_hash="hash-1"
+        )
+    requests = store.conversation_context(thread["id"])["unresolved_requests"]
+    assert len(requests) <= 3
+    assert all(len(request) <= 4_000 for request in requests)
+    assert sum(len(request) for request in requests) <= 8_000
+    assert requests[0].startswith("long-a-")
+    assert requests[1].startswith("long-b-")
+
+
+@pytest.mark.parametrize("dialog_act", ["acknowledgement", "clarification"])
+def test_non_resolving_turn_between_failure_and_retry_preserves_target(
+    tmp_path, dialog_act
+) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+    original = "How does Ally Financial define operational risk in its 2025 Form 10-K?"
+    store.append_answer_turn(
+        thread["id"], original, retryable_answer(), corpus_hash="hash-1"
+    )
+    interlude = answer("")
+    interlude.update(
+        {
+            "dialog_act": dialog_act,
+            "answer": "Which detail do you mean?" if dialog_act == "clarification" else "Okay.",
+            "citations": [],
+        }
+    )
+    store.append_answer_turn(thread["id"], "Okay", interlude, corpus_hash="hash-1")
+    store.append_answer_turn(
+        thread["id"], "Try again.", retryable_answer(), corpus_hash="hash-1"
+    )
+
+    assert store.conversation_context(thread["id"])["unresolved_requests"] == [original]
 
 
 def test_out_of_scope_turn_remains_in_thread_scoped_memory(tmp_path) -> None:
@@ -162,6 +272,32 @@ def test_acknowledgement_remains_available_to_the_model(tmp_path) -> None:
         "JPM topic",
         "Thanks",
     ]
+
+    context = store.conversation_context(thread["id"])
+    assert context["previous_answer"]["question"] == "JPM topic"
+    assert context["previous_answer"]["answer"] == "Answer [E1]"
+
+
+@pytest.mark.parametrize("dialog_act", ["general_explanation", "calculation", "web_answer"])
+def test_latest_substantive_non_filing_answer_can_be_transformed(tmp_path, dialog_act) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    store.initialize()
+    thread = store.create_thread()
+    store.append_answer_turn(thread["id"], "JPM topic", answer(), corpus_hash="hash-1")
+    latest = answer("")
+    latest.update(
+        {
+            "dialog_act": dialog_act,
+            "answer": "Latest substantive answer.",
+            "citations": [],
+        }
+    )
+    store.append_answer_turn(thread["id"], "A newer request", latest, corpus_hash="hash-1")
+
+    previous = store.conversation_context(thread["id"])["previous_answer"]
+
+    assert previous["question"] == "A newer request"
+    assert previous["answer"] == "Latest substantive answer."
 
 
 def test_conversation_context_compacts_old_pairs_and_keeps_six_raw_turns(tmp_path) -> None:

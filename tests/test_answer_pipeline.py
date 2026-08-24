@@ -408,6 +408,7 @@ def test_pipeline_reuses_encoder_and_retriever_and_preserves_cli_output() -> Non
     retriever = MockRetriever()
     completions = MockCompletions()
     close_calls = []
+    web_close_calls = []
     pipeline = SingleBankAnswerPipeline(
         retriever=retriever,
         query_encoder=encoder,
@@ -415,6 +416,7 @@ def test_pipeline_reuses_encoder_and_retriever_and_preserves_cli_output() -> Non
         generation_model="generation-model",
         close_callback=lambda: close_calls.append(True),
         bank_names={"JPM": "JPMorgan Chase & Co."},
+        web_search_provider=SimpleNamespace(close=lambda: web_close_calls.append(True)),
     )
 
     first = pipeline.answer("What was the ratio?", ticker="jpm")
@@ -425,6 +427,7 @@ def test_pipeline_reuses_encoder_and_retriever_and_preserves_cli_output() -> Non
     assert encoder.calls == ["What was the ratio?", "What was the ratio?"]
     assert len(retriever.calls) == 2
     assert close_calls == [True]
+    assert web_close_calls == [True]
     assert first.output["ticker"] == "JPM"
     assert first.output["bank_resolution"] == {
         "status": "resolved",

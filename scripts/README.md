@@ -41,7 +41,7 @@ builds must use their own `--output-dir`. `embed.py --limit N` is a no-write smo
 |---|---|---|
 | `search.py` | Inspect dense, BM25, or hybrid retrieval | Supports `baseline`, `qdrant`, and accepted `mixed` backends |
 | `answer.py` | Run one single-bank or bounded comparison question | Uses the reusable long-lived pipeline for one CLI request |
-| `serve_api.py` | Load services once and run FastAPI/Uvicorn | Defaults to local SQLite and the validated UI model candidate |
+| `serve_api.py` | Load services once and run FastAPI/Uvicorn | Uses configured `OPENAI_MODEL`, local SQLite, optional OpenAI/Tavily web search, and CLI model override |
 | `smoke_qdrant.py` | Exercise a small local Qdrant query | BM25 works without constructing a query embedding |
 | `smoke_answers.py` | Run the fixed ten-bank application-answer smoke | Requires the configured generation API and local mixed retriever |
 
@@ -113,8 +113,9 @@ python scripts/evaluate_conversation_routing.py
 ```
 
 This writes `data/evaluation/results/conversation-routing-v1.json` and exits non-zero if supported
-bank recall, unrelated-request isolation, overall route accuracy, or rewrite scope preservation
-misses its acceptance threshold.
+bank recall, general-chat no-retrieval behavior, overall route accuracy, or rewrite scope
+preservation misses its acceptance threshold. The fixture includes direct benign chat, web-worthy
+current questions, and deterministic calculation.
 
 The evaluator toggles baseline/agentic mode internally, obtains authoritative retrieval evidence
 through `retrieve_evidence()`, writes `data/evaluation/results/agentic-rag-v1.json`, and exits

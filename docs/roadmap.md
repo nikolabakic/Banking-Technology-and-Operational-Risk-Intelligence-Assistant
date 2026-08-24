@@ -25,7 +25,7 @@ dense/BM25/hybrid baseline and Qdrant comparison was recorded on 2026-08-10.
 | Multi-bank questions | Hardened | Questions select 2-4 banks, build a peer-free subquestion for each bank, retrieve and validate independently, then synthesize with bank-owned citations |
 | Reliability hardening | Implemented | Possessive aliases, diversified whole-filing summaries, guarded SSE payloads, heartbeats, and UI recovery have regression coverage |
 | Optional agentic RAG | Experimental, live gate failed | The 2026-08-20 run preserved baseline Top 5 but recovered only 2/3 required genuine Top-10 misses, had widespread schema fallback, and failed controlled unsupported handling; default remains off |
-| External tools and function calling | Future consideration | Assess web search, calculator and document lookup integrations to extend the assistant's capabilities |
+| General chat and optional tools | Implemented | Benign requests answer directly; filing research, cited web search, and a safe Decimal calculator run only when selected |
 
 ## Acceptance gates
 
@@ -65,6 +65,9 @@ The accepted bank-balanced retrieval path and final ten-bank evaluation hashes a
 The current resolver, comparison-query, selective-memory, additive-agentic, and UI transport
 boundaries are recorded in `docs/decisions/013-rag-reliability-hardening.md`; supporting GitHub
 research and reproduced failures are summarized in `docs/reliability-hardening.md`.
+The Ally citation-schema repair, general-chat boundary, calculator, web-provider comparison, and
+OpenAI/Tavily web-search decision are recorded in
+`docs/decisions/015-general-chat-web-and-calculator.md`.
 
 ## Scope boundary
 

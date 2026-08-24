@@ -1,6 +1,6 @@
 # ADR 014: Conversational function orchestration
 
-- Status: Accepted
+- Status: Superseded in part by ADR 015 (general-chat scope, recovery memory, and web/tool behavior)
 - Date: 2026-08-20
 
 ## Context

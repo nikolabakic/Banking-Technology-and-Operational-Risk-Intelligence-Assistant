@@ -29,6 +29,7 @@ import {
   type AnswerResponse,
   type CitationContext,
   type Diagnostics,
+  type FilingCitation,
   type ThreadSummary,
   type Turn,
 } from "./api";
@@ -43,7 +44,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-type OpenSource = { response: AnswerResponse; index: number };
+type OpenSource = { response: AnswerResponse; index: number; citation: FilingCitation };
 type AnswerStatus = AnswerResponse["status"];
 
 const statusVariants: Record<AnswerStatus, "success" | "warning" | "danger"> = {
@@ -191,7 +192,7 @@ function Composer({ value, onChange, onSubmit, onStop, loading, compact = false 
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Ask anything about an indexed bank’s 10-K filing…"
+        placeholder="Ask naturally, research a filing, search the web, or calculate…"
         rows={compact ? 1 : 3}
         aria-label="Research question"
         disabled={loading}
@@ -282,6 +283,21 @@ function MarkdownContent({ text, response, onSource }: { text: string; response?
   const renderInline = (value: string, keyPrefix: string) => value.split(/(\*\*[^*]+\*\*|\[E\d+\])/g).map((part, index) => {
     const label = /^\[(E\d+)\]$/.exec(part)?.[1];
     const citationIndex = label && response ? response.citations.findIndex((item) => item.label === label) : -1;
+    const citation = citationIndex >= 0 ? response?.citations[citationIndex] : undefined;
+    if (citation?.kind === "web") {
+      return (
+        <a
+          key={`${keyPrefix}-${index}`}
+          className="citation"
+          href={citation.source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={citation.title ? `Open source ${label}: ${citation.title}` : `Open source ${label}`}
+        >
+          {label}
+        </a>
+      );
+    }
     if (citationIndex >= 0 && onSource) {
       return <button key={`${keyPrefix}-${index}`} className="citation" onClick={() => onSource(citationIndex)} title={`Open source ${label}`}>{label}</button>;
     }
@@ -382,9 +398,15 @@ function assistantSubtitle(turn: Turn): string {
   switch (turn.response.dialog_act) {
     case "clarification": return "One detail is needed";
     case "retryable_error": return "Research paused safely";
+    case "contextual_transform": return "Continued from the previous answer";
+    case "web_answer": return "Researched on the web";
+    case "web_research_unavailable": return "Web research unavailable";
+    case "calculation": return "Calculated result";
     case "answer": return "Grounded in indexed filings";
     default:
-      return turn.response.citations.length > 0
+      return turn.response.citations.some((citation) => citation.kind === "web")
+        ? "Researched on the web"
+        : turn.response.citations.length > 0
         ? "Grounded in indexed filings"
         : "BankScope assistant";
   }
@@ -398,15 +420,21 @@ function hasAnswerMetadata(response: AnswerResponse): boolean {
     || response.dialog_act === "answer"
     || response.dialog_act === "clarification"
     || response.dialog_act === "retryable_error"
+    || response.dialog_act === "contextual_transform"
+    || response.dialog_act === "web_answer"
+    || response.dialog_act === "web_research_unavailable"
+    || response.dialog_act === "calculation"
     || response.mode === "comparison",
   );
 }
 
-function AssistantTurn({ turn, copied, onCopy, onSource }: {
+function AssistantTurn({ turn, copied, onCopy, onSource, onRetry, retryDisabled }: {
   turn: Turn;
   copied: boolean;
   onCopy: () => void;
   onSource: (response: AnswerResponse, index: number) => void;
+  onRetry: (question: string) => void;
+  retryDisabled: boolean;
 }) {
   return (
     <article className="assistant-turn">
@@ -441,6 +469,10 @@ function AssistantTurn({ turn, copied, onCopy, onSource }: {
               )}
               {turn.response.dialog_act === "clarification" && <Badge variant="secondary">Clarification</Badge>}
               {turn.response.dialog_act === "retryable_error" && <Badge variant="secondary">Try again</Badge>}
+              {turn.response.dialog_act === "contextual_transform" && <Badge variant="secondary">Follow-up</Badge>}
+              {turn.response.dialog_act === "web_answer" && <Badge variant="secondary">Web research</Badge>}
+              {turn.response.dialog_act === "web_research_unavailable" && <Badge variant="secondary">Web unavailable</Badge>}
+              {turn.response.dialog_act === "calculation" && <Badge variant="secondary">Calculation</Badge>}
               {(turn.response.dialog_act === "answer" || turn.response.citations.length > 0 || turn.response.mode === "comparison") && (
                 <><span className="meta-separator" /><StatusBadge status={turn.response.status} /></>
               )}
@@ -448,6 +480,9 @@ function AssistantTurn({ turn, copied, onCopy, onSource }: {
           )}
           <div className="answer-actions">
             <Button variant="ghost" size="sm" onClick={onCopy}><Copy size={14} /> {copied ? "Copied" : "Copy"}</Button>
+            {turn.response.dialog_act === "retryable_error" && (
+              <Button variant="outline" size="sm" disabled={retryDisabled} onClick={() => onRetry(turn.question)}>Retry</Button>
+            )}
             {turn.response.citations.length > 0 && (
               <Button variant="ghost" size="sm" onClick={() => onSource(turn.response!, 0)}><FileSearch size={14} /> Sources</Button>
             )}
@@ -465,7 +500,11 @@ function metadataValue(chunk: CitationContext["chunks"][number] | undefined, key
 }
 
 function SourcePanel({ source, onChange, onClose }: { source: OpenSource; onChange: (index: number) => void; onClose: () => void }) {
-  const citation = source.response.citations[source.index];
+  const citation = source.citation;
+  const filingSources = source.response.citations.flatMap((item, index) => (
+    item.kind === "filing" ? [{ citation: item, index }] : []
+  ));
+  const sourcePosition = filingSources.findIndex((item) => item.index === source.index);
   const [context, setContext] = useState<CitationContext | null>(null);
   const [error, setError] = useState<{ message: string; stale: boolean } | null>(null);
 
@@ -495,13 +534,13 @@ function SourcePanel({ source, onChange, onClose }: { source: OpenSource; onChan
         <div className="source-header">
           <div>
             <span>Evidence viewer</span>
-            <SheetTitle>{source.response.citations.length} {source.response.citations.length === 1 ? "source" : "sources"}</SheetTitle>
+            <SheetTitle>{filingSources.length} {filingSources.length === 1 ? "source" : "sources"}</SheetTitle>
             <SheetDescription id="source-description">Canonical filing context for this answer.</SheetDescription>
           </div>
         </div>
         <div className="source-tabs" role="tablist" aria-label="Answer sources">
-          {source.response.citations.map((item, index) => (
-            <button key={item.citation_id} role="tab" aria-selected={index === source.index} className={index === source.index ? "active" : ""} onClick={() => onChange(index)}>{item.label}</button>
+          {filingSources.map((item) => (
+            <button key={item.citation.citation_id} role="tab" aria-selected={item.index === source.index} className={item.index === source.index ? "active" : ""} onClick={() => onChange(item.index)}>{item.citation.label}</button>
           ))}
         </div>
         <ScrollArea className="source-scroll">
@@ -524,9 +563,9 @@ function SourcePanel({ source, onChange, onClose }: { source: OpenSource; onChan
           </div>
         </ScrollArea>
         <div className="source-navigation">
-          <Button variant="ghost" size="sm" disabled={source.index === 0} onClick={() => onChange(source.index - 1)}><ChevronLeft size={15} /> Previous</Button>
-          <span>{source.index + 1} of {source.response.citations.length}</span>
-          <Button variant="ghost" size="sm" disabled={source.index === source.response.citations.length - 1} onClick={() => onChange(source.index + 1)}>Next <ChevronRight size={15} /></Button>
+          <Button variant="ghost" size="sm" disabled={sourcePosition <= 0} onClick={() => onChange(filingSources[sourcePosition - 1].index)}><ChevronLeft size={15} /> Previous</Button>
+          <span>{sourcePosition + 1} of {filingSources.length}</span>
+          <Button variant="ghost" size="sm" disabled={sourcePosition < 0 || sourcePosition === filingSources.length - 1} onClick={() => onChange(filingSources[sourcePosition + 1].index)}>Next <ChevronRight size={15} /></Button>
         </div>
       </SheetContent>
     </Sheet>
@@ -596,7 +635,10 @@ export default function App() {
 
   const ask = async (suggestedQuestion?: string) => {
     const nextQuestion = (suggestedQuestion ?? question).trim();
-    if (!nextQuestion || loading) return;
+    if (!nextQuestion || loading || activeRequestRef.current) return;
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
+    setLoading(true);
     let threadId = activeThreadId;
     try {
       if (!threadId) {
@@ -607,12 +649,9 @@ export default function App() {
         navigate(`/chats/${thread.id}`);
       }
       const optimisticId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`;
-      const controller = new AbortController();
-      activeRequestRef.current = controller;
       shouldAutoScrollRef.current = true;
       setShowScrollDown(false);
       setQuestion("");
-      setLoading(true);
       setTurns((current) => [...current, { id: optimisticId, question: nextQuestion, state: "loading", status: stageLabels.resolving_bank }]);
       const turn = await streamAnswer(
         threadId,
@@ -623,14 +662,14 @@ export default function App() {
       setTurns((current) => current.map((item) => item.id === optimisticId ? turn : item));
       await refreshThreads();
     } catch (error) {
-      if (activeRequestRef.current?.signal.aborted) {
+      if (controller.signal.aborted) {
         setTurns((current) => current.filter((turn) => turn.state !== "loading"));
         return;
       }
       const message = error instanceof Error ? error.message : "Unexpected error while contacting the answer service.";
       setTurns((current) => current.map((turn) => turn.state === "loading" ? { ...turn, state: "error", error: message } : turn));
     } finally {
-      activeRequestRef.current = null;
+      if (activeRequestRef.current === controller) activeRequestRef.current = null;
       setLoading(false);
     }
   };
@@ -707,6 +746,16 @@ export default function App() {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   };
 
+  const openCitation = (response: AnswerResponse, index: number) => {
+    const citation = response.citations[index];
+    if (!citation) return;
+    if (citation.kind === "web") {
+      window.open(citation.source_url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    setOpenSource({ response, index, citation });
+  };
+
   const historyLoading = Boolean(activeThreadId && loadedThreadId !== activeThreadId);
   const showWelcome = !activeThreadId || (!historyLoading && turns.length === 0);
   const sidebarProps = { threads, activeId: activeThreadId, loading: threadsLoading, onOpen: openThread, onRename: beginRename, onDelete: beginDelete };
@@ -735,7 +784,7 @@ export default function App() {
                 <section className="welcome-content">
                   <div className="eyebrow"><Sparkles size={14} /> BankScope</div>
                   <h1>Ask any question.<br /><span>Follow the evidence.</span></h1>
-                  <p>Ask questions across the latest indexed 10-K filings from 10 leading U.S. banks. Every answer is grounded in verifiable filing evidence.</p>
+                  <p>Chat naturally, calculate, research indexed bank filings, or search current web sources. Tool-based answers keep their evidence attached.</p>
                   <Composer value={question} onChange={setQuestion} onSubmit={ask} onStop={stopGenerating} loading={loading} />
                   <div className="suggestions"><span>Try a research prompt</span><div>
                     {prompts.map((prompt) => (
@@ -744,7 +793,7 @@ export default function App() {
                       </button>
                     ))}
                   </div></div>
-                  <div className="trust-line"><BadgeCheck size={15} /> Answers use only indexed filing evidence.</div>
+                  <div className="trust-line"><BadgeCheck size={15} /> Filing and web claims stay linked to verifiable sources.</div>
                 </section>
               </main>
             ) : (
@@ -754,7 +803,14 @@ export default function App() {
                     {turns.map((turn) => (
                       <section className="turn" key={turn.id}>
                         <div className="user-turn"><span>You</span><p>{turn.question}</p></div>
-                        <AssistantTurn turn={turn} copied={copiedId === turn.id} onCopy={() => void copyAnswer(turn)} onSource={(response, index) => setOpenSource({ response, index })} />
+                        <AssistantTurn
+                          turn={turn}
+                          copied={copiedId === turn.id}
+                          onCopy={() => void copyAnswer(turn)}
+                          onSource={openCitation}
+                          onRetry={ask}
+                          retryDisabled={loading}
+                        />
                       </section>
                     ))}
                     <div ref={endRef} />
@@ -763,7 +819,7 @@ export default function App() {
                 {showScrollDown && <Button variant="outline" size="icon" className="scroll-bottom" onClick={scrollToBottom} aria-label="Scroll to latest message"><ArrowDown size={17} /></Button>}
                 <div className="conversation-composer">
                   <Composer compact value={question} onChange={setQuestion} onSubmit={ask} onStop={stopGenerating} loading={loading} />
-                  <small className="composer-disclaimer">BankScope can make mistakes. Verify important details in the cited filing.</small>
+                  <small className="composer-disclaimer">BankScope can make mistakes. Verify important details in the cited sources.</small>
                 </div>
               </main>
             )}
@@ -807,8 +863,8 @@ export default function App() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {openSource && openSource.response.citations[openSource.index] && (
-          <SourcePanel key={openSource.response.citations[openSource.index].citation_id} source={openSource} onChange={(index) => setOpenSource({ ...openSource, index })} onClose={() => setOpenSource(null)} />
+        {openSource && (
+          <SourcePanel key={openSource.citation.citation_id} source={openSource} onChange={(index) => openCitation(openSource.response, index)} onClose={() => setOpenSource(null)} />
         )}
       </div>
     </TooltipProvider>

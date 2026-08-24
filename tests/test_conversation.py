@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from bankscope.generation.conversation import (
     CONVERSATION_TOOLS,
+    CalculatorArgs,
     ClarificationArgs,
     ConversationGraph,
     DeclineOutOfScopeArgs,
@@ -19,14 +20,26 @@ from bankscope.generation.conversation import (
 )
 from bankscope.generation.pipeline import BankAnswerPipeline
 from bankscope.sec.bank_resolver import resolve_bank
+from bankscope.tools import (
+    WebSearchAuthenticationError,
+    WebSearchCitation,
+    WebSearchFallbackError,
+    WebSearchNoResultError,
+    WebSearchRateLimitError,
+    WebSearchResult,
+    WebSearchSource,
+    WebSearchTimeoutError,
+)
 
 BANK_NAMES = {
+    "ALLY": "Ally Financial Inc.",
     "C": "Citigroup Inc.",
     "JPM": "JPMorgan Chase & Co.",
     "BAC": "Bank of America Corporation",
     "COF": "Capital One Financial Corporation",
 }
 BANK_ALIASES = {
+    "ALLY": ("Ally Financial", "Ally Bank"),
     "C": ("Citigroup", "Citi", "Citibank"),
     "JPM": ("JPMorgan", "JPMorgan Chase", "JP Morgan"),
     "BAC": ("Bank of America", "BofA"),
@@ -97,6 +110,21 @@ class FakeChatModel:
         return self.output
 
 
+class FakeWebSearchProvider:
+    model = "web-test-model"
+
+    def __init__(self, result=None, error: Exception | None = None) -> None:
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    def search(self, query, *, allowed_domains=(), blocked_domains=()):
+        self.calls.append((query, tuple(allowed_domains), tuple(blocked_domains)))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
 @pytest.mark.parametrize(
     ("question", "arguments", "expected_type"),
     [
@@ -128,6 +156,11 @@ class FakeChatModel:
             "What is Citi's share price today?",
             route_arguments("web_research", search_question="What is Citi's share price today?"),
             WebResearchArgs,
+        ),
+        (
+            "What is 17.5% of 2,400?",
+            route_arguments("calculator", search_question="17.5 / 100 * 2400"),
+            CalculatorArgs,
         ),
     ],
 )
@@ -166,6 +199,7 @@ def test_route_tool_schema_is_strict_and_requires_every_property() -> None:
     [
         route_arguments("filing_research"),
         route_arguments("web_research"),
+        route_arguments("calculator"),
         route_arguments("direct_response", response_text="Hello"),
         route_arguments("clarification", response_text="Which bank?"),
     ],
@@ -204,6 +238,102 @@ def test_langgraph_compiles_once_and_uses_strict_structured_output() -> None:
         RouteDecision,
         {"method": "function_calling", "strict": True},
     )
+
+
+def test_router_receives_failed_user_request_without_recovery_boilerplate() -> None:
+    model = FakeChatModel(
+        route_arguments(
+            "direct_response",
+            response_text="I will retry the Ally filing question.",
+            category="general_explanation",
+        )
+    )
+    graph = ConversationGraph(
+        client=SimpleNamespace(),
+        model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        chat_model=model,
+    )
+
+    graph.route(
+        "Try again.",
+        [],
+        unresolved_requests=(
+            "How does Ally Financial define operational risk in its 2025 Form 10-K?"
+        ),
+    )
+
+    payload = json.loads(model.calls[0][1][1])
+    assert payload["unresolved_requests"] == [
+        "How does Ally Financial define operational risk in its 2025 Form 10-K?"
+    ]
+    assert "Research paused safely" not in json.dumps(payload)
+
+
+def test_compatibility_router_passes_a_canonical_unresolved_request() -> None:
+    original = "How does Ally Financial define operational risk in its 2025 Form 10-K?"
+    model = FakeChatModel(
+        route_arguments(
+            "direct_response",
+            response_text="I will retry it.",
+            category="general_explanation",
+        )
+    )
+
+    request_conversation_action(
+        "Try again.",
+        [],
+        client=SimpleNamespace(),
+        model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        unresolved_requests=[original, "Try again.", original],
+        chat_model=model,
+        backend="legacy",
+    )
+
+    payload = json.loads(model.calls[0][1][1])
+    assert payload["unresolved_requests"] == [original]
+
+
+def test_router_rejects_non_string_unresolved_request_items() -> None:
+    graph = ConversationGraph(
+        client=SimpleNamespace(),
+        model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        chat_model=FakeChatModel(
+            route_arguments(
+                "direct_response", response_text="Hello!", category="greeting"
+            )
+        ),
+    )
+
+    with pytest.raises(TypeError, match="only strings"):
+        graph.route("Hello", [], unresolved_requests=[1])  # type: ignore[list-item]
+
+
+def test_router_timeout_retry_uses_the_canonical_unresolved_question() -> None:
+    original = "How does Ally Financial define operational risk in its 2025 Form 10-K?"
+    decision = ConversationGraph(
+        client=SimpleNamespace(),
+        model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        chat_model=FakeChatModel(error=TimeoutError("router unavailable")),
+    ).route(
+        "Try again.",
+        [],
+        unresolved_requests=[original, "Retry it."],
+    )
+
+    assert isinstance(decision.action, ResearchFilingsArgs)
+    assert decision.action.search_question == original
+    assert decision.route_action == "filing_research"
+    assert decision.reason == "unresolved_retry_filing_fallback"
+    assert decision.fallback is True
+    assert decision.error_code == "conversation_route_timeouterror"
 
 
 def test_citigroup_cybersecurity_regression_routes_to_filing_and_ticker_c() -> None:
@@ -265,7 +395,7 @@ def test_low_confidence_out_of_scope_becomes_clarification() -> None:
     assert decision.reason == "low_confidence_out_of_scope_requires_clarification"
 
 
-def test_explicit_recipe_cannot_be_answered_as_general_explanation() -> None:
+def test_benign_non_banking_request_is_answered_as_general_chat() -> None:
     decision = ConversationGraph(
         client=SimpleNamespace(),
         model="test-model",
@@ -280,8 +410,9 @@ def test_explicit_recipe_cannot_be_answered_as_general_explanation() -> None:
         ),
     ).route("Give me a recipe for apple pie.", [])
 
-    assert isinstance(decision.action, DeclineOutOfScopeArgs)
-    assert decision.reason == "explicit_non_banking_request_requires_scope_decline"
+    assert isinstance(decision.action, DirectResponseArgs)
+    assert decision.action.answer == "Here is an apple pie recipe."
+    assert decision.route_action == "direct_response"
 
 
 def test_shorter_answer_is_a_contextual_transform_with_previous_citations() -> None:
@@ -393,13 +524,17 @@ def test_new_bank_fact_cannot_be_smuggled_in_as_a_contextual_transform() -> None
     assert decision.reason == "new_bank_fact_requires_filing_research"
 
 
-@pytest.mark.parametrize("proposed_action", ["out_of_scope", "direct_response", "web_research"])
+@pytest.mark.parametrize(
+    "proposed_action", ["out_of_scope", "direct_response", "web_research", "calculator"]
+)
 def test_bank_and_filing_signals_override_unsafe_model_route(proposed_action) -> None:
     arguments = route_arguments(proposed_action, confidence=0.99)
     if proposed_action == "direct_response":
         arguments.update(response_text="A generic answer.", category="general_explanation")
     elif proposed_action == "web_research":
         arguments.update(search_question="Search the web for Citi cybersecurity risks.")
+    elif proposed_action == "calculator":
+        arguments.update(search_question="1 + 1")
     decision = ConversationGraph(
         client=SimpleNamespace(),
         model="test-model",
@@ -663,6 +798,264 @@ def test_pipeline_routes_current_share_price_to_stable_web_unavailable_contract(
     assert set(pipeline._research_handlers) == {"filing_research", "web_research"}
 
 
+def test_pipeline_returns_cited_web_answer_when_provider_is_enabled() -> None:
+    question = "What is Citi's share price today?"
+    text = "Citigroup shares closed at $100."
+    provider = FakeWebSearchProvider(
+        WebSearchResult(
+            query=question,
+            text=text,
+            citations=(
+                WebSearchCitation(
+                    url="https://example.com/citi-market",
+                    title="Citi market data",
+                    start_index=0,
+                    end_index=len(text) - 1,
+                ),
+            ),
+            sources=(
+                WebSearchSource(
+                    url="https://example.com/citi-market",
+                    title="Citi market data",
+                ),
+            ),
+            used_web_search=True,
+            provider="openai",
+            response_id="resp_web_1",
+            request_count=2,
+        )
+    )
+    model = FakeChatModel(route_arguments("web_research", search_question=question))
+    pipeline = BankAnswerPipeline(
+        retriever=NeverCalled(),
+        query_encoder=NeverCalled(),
+        client=NeverCalled(),
+        generation_model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        conversation_model=model,
+        web_search_provider=provider,
+    )
+
+    run = pipeline.answer(question, conversation_history=[])
+
+    assert run.output["dialog_act"] == "web_answer"
+    assert run.output["status"] == "supported"
+    assert "[E1]" in run.output["answer"]
+    assert run.output["citations"] == [
+        {
+            "kind": "web",
+            "label": "E1",
+            "target_chunk_id": run.output["citations"][0]["target_chunk_id"],
+            "record_type": "web",
+            "source_url": "https://example.com/citi-market",
+            "title": "Citi market data",
+            "provider": "openai",
+        }
+    ]
+    assert run.output["citations"][0]["target_chunk_id"].startswith("web:")
+    assert run.output["generation"]["request_count"] == 2
+    assert run.diagnostics["model_request_count"] == 3
+    assert run.stage_trace[-1]["request_count"] == 2
+    assert provider.calls == [(question, (), ())]
+    route_payload = json.loads(model.calls[0][1][1])
+    assert route_payload["available_sources"]["web"] is True
+
+
+def test_pipeline_natural_retry_searches_web_with_canonical_unresolved_question() -> None:
+    original = "What is Ally Financial's share price today?"
+    text = "Ally Financial shares closed at $42."
+    provider = FakeWebSearchProvider(
+        WebSearchResult(
+            query=original,
+            text=text,
+            citations=(
+                WebSearchCitation(
+                    url="https://example.com/ally-market",
+                    title="Ally market data",
+                    start_index=0,
+                    end_index=len(text) - 1,
+                ),
+            ),
+            sources=(
+                WebSearchSource(
+                    url="https://example.com/ally-market",
+                    title="Ally market data",
+                ),
+            ),
+            used_web_search=True,
+            provider="openai",
+            response_id="resp_web_retry",
+        )
+    )
+    pipeline = BankAnswerPipeline(
+        retriever=NeverCalled(),
+        query_encoder=NeverCalled(),
+        client=NeverCalled(),
+        generation_model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        conversation_model=FakeChatModel(
+            route_arguments("web_research", search_question=original)
+        ),
+        web_search_provider=provider,
+    )
+
+    run = pipeline.answer(
+        "Try again.",
+        conversation_history=[],
+        conversation_metadata={"unresolved_requests": [original]},
+    )
+
+    assert run.output["dialog_act"] == "web_answer"
+    assert run.output["contextualization"]["standalone_question"] == original
+    assert provider.calls == [(original, (), ())]
+
+
+def test_pipeline_turns_tavily_ranked_sources_into_citations_and_evidence() -> None:
+    question = "What changed in banking regulation today?"
+    provider = FakeWebSearchProvider(
+        WebSearchResult(
+            query=question,
+            text="The regulator published an update.",
+            citations=(),
+            sources=(
+                WebSearchSource(
+                    url="https://regulator.example/update",
+                    title="Regulatory update",
+                    snippet="The update took effect today.",
+                    score=0.91,
+                ),
+            ),
+            used_web_search=True,
+            provider="tavily",
+            response_id="tvly_1",
+        )
+    )
+    pipeline = BankAnswerPipeline(
+        retriever=NeverCalled(),
+        query_encoder=NeverCalled(),
+        client=NeverCalled(),
+        generation_model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        conversation_model=FakeChatModel(
+            route_arguments("web_research", search_question=question)
+        ),
+        web_search_provider=provider,
+    )
+
+    run = pipeline.answer(question, conversation_history=[])
+
+    assert run.output["answer"].endswith("[E1]")
+    assert run.output["citations"][0]["snippet"] == "The update took effect today."
+    assert run.output["web_search"]["provider"] == "tavily"
+    assert run.evidence[0]["evidence"] == "The update took effect today."
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "expected_code", "expected_request_count"),
+    [
+        (WebSearchTimeoutError("timed out"), "web_search_timeout", 1),
+        (
+            WebSearchAuthenticationError("invalid credentials"),
+            "web_search_authentication",
+            1,
+        ),
+        (WebSearchRateLimitError("rate limited"), "web_search_rate_limit", 1),
+        (
+            WebSearchFallbackError("all providers failed", request_count=2),
+            "web_search_all_providers_failed",
+            2,
+        ),
+        (WebSearchNoResultError("no usable result"), "web_search_no_result", 1),
+    ],
+)
+def test_pipeline_web_provider_failure_returns_specific_retryable_state(
+    provider_error: Exception,
+    expected_code: str,
+    expected_request_count: int,
+) -> None:
+    question = "What is Citi's share price today?"
+    provider = FakeWebSearchProvider(error=provider_error)
+    pipeline = BankAnswerPipeline(
+        retriever=NeverCalled(),
+        query_encoder=NeverCalled(),
+        client=NeverCalled(),
+        generation_model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        conversation_model=FakeChatModel(
+            route_arguments("web_research", search_question=question)
+        ),
+        web_search_provider=provider,
+    )
+
+    run = pipeline.answer(question, conversation_history=[])
+
+    assert run.output["dialog_act"] == "retryable_error"
+    assert run.output["reason_code"] == expected_code
+    assert run.output["contextualization"]["error_code"] == expected_code
+    assert run.output["generation"]["request_count"] == expected_request_count
+    assert run.diagnostics["model_request_count"] == 1 + expected_request_count
+    assert run.diagnostics["failed_stage"] == "searching_web"
+    assert run.diagnostics["error_code"] == expected_code
+    assert run.diagnostics["quality_gate"]["passed"] is False
+    assert run.diagnostics["quality_gate"]["checks"]["pipeline_completed"] is False
+    assert run.stage_trace[-1]["stage"] == "searching_web"
+    assert run.stage_trace[-1]["status"] == "failed"
+    assert run.stage_trace[-1]["error_code"] == expected_code
+    assert run.stage_trace[-1]["request_count"] == expected_request_count
+
+
+@pytest.mark.parametrize(
+    ("used_web_search", "expected_code"),
+    [
+        (True, "web_search_missing_citations"),
+        (False, "web_search_not_used"),
+    ],
+)
+def test_pipeline_web_result_without_usable_citations_is_retryable(
+    used_web_search: bool,
+    expected_code: str,
+) -> None:
+    question = "What is Citi's share price today?"
+    provider = FakeWebSearchProvider(
+        WebSearchResult(
+            query=question,
+            text="Citigroup shares moved today.",
+            citations=(),
+            sources=(),
+            used_web_search=used_web_search,
+            provider="openai",
+        )
+    )
+    pipeline = BankAnswerPipeline(
+        retriever=NeverCalled(),
+        query_encoder=NeverCalled(),
+        client=NeverCalled(),
+        generation_model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        conversation_model=FakeChatModel(
+            route_arguments("web_research", search_question=question)
+        ),
+        web_search_provider=provider,
+    )
+
+    run = pipeline.answer(question, conversation_history=[])
+
+    assert run.output["dialog_act"] == "retryable_error"
+    assert run.output["reason_code"] == expected_code
+    assert run.output["contextualization"]["error_code"] == expected_code
+    assert run.output["citations"] == []
+    assert run.stage_trace[-1]["status"] == "rejected"
+    assert run.stage_trace[-1]["error_code"] == expected_code
+    assert run.diagnostics["failed_stage"] == "searching_web"
+    assert run.diagnostics["error_code"] == expected_code
+    assert run.diagnostics["quality_gate"]["passed"] is False
+
+
 def test_web_rewrite_scope_violation_falls_back_to_original_question() -> None:
     question = "What is Citi's share price today?"
     pipeline = BankAnswerPipeline(
@@ -694,7 +1087,13 @@ def test_web_rewrite_scope_violation_falls_back_to_original_question() -> None:
 
 
 def test_pipeline_recipe_does_not_retrieve_despite_stale_session_ticker() -> None:
-    model = FakeChatModel(route_arguments("out_of_scope", confidence=0.99))
+    model = FakeChatModel(
+        route_arguments(
+            "direct_response",
+            response_text="Pomešaj jabuke, cimet i šećer, pa ispeci u kori za pitu.",
+            category="general_explanation",
+        )
+    )
     pipeline = BankAnswerPipeline(
         retriever=NeverCalled(),
         query_encoder=NeverCalled(),
@@ -714,10 +1113,37 @@ def test_pipeline_recipe_does_not_retrieve_despite_stale_session_ticker() -> Non
         ],
     )
 
-    assert run.output["dialog_act"] == "out_of_scope"
+    assert run.output["dialog_act"] == "general_explanation"
+    assert run.output["status"] == "supported"
     assert run.output["retrieval"]["mode"] == "none"
     assert run.diagnostics["model_request_count"] == 1
     assert len(model.calls) == 1
+
+
+def test_pipeline_uses_deterministic_calculator_without_retrieval() -> None:
+    pipeline = BankAnswerPipeline(
+        retriever=NeverCalled(),
+        query_encoder=NeverCalled(),
+        client=NeverCalled(),
+        generation_model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        conversation_model=FakeChatModel(
+            route_arguments("calculator", search_question="17.5 / 100 * 2400")
+        ),
+    )
+
+    run = pipeline.answer("What is 17.5% of 2,400?", conversation_history=[])
+
+    assert run.output["dialog_act"] == "calculation"
+    assert run.output["status"] == "supported"
+    assert run.output["calculation"] == {
+        "expression": "17.5 / 100 * 2400",
+        "result": "420",
+    }
+    assert run.output["retrieval"]["mode"] == "none"
+    assert run.diagnostics["route"] == "calculator"
+    assert run.diagnostics["model_request_count"] == 1
 
 
 def test_vague_cet1_indicator_lets_model_request_metric_clarification() -> None:
@@ -785,7 +1211,11 @@ class RecordingEncoder:
 
 
 class RecordingRetriever:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        evidence: str = "Citigroup identifies material cybersecurity and operational risks.",
+    ) -> None:
+        self.evidence = evidence
         self.calls = []
 
     def search_hybrid(self, question, query_vector, **kwargs):
@@ -795,14 +1225,18 @@ class RecordingRetriever:
                 "target_chunk_id": "c-cyber-1",
                 "record_type": "text",
                 "ticker": kwargs["ticker"],
-                "evidence": "Citigroup identifies material cybersecurity and operational risks.",
+                "evidence": self.evidence,
                 "metadata": {"report_date": "2025-12-31"},
             }
         ]
 
 
 class NarrativeAnswerCompletions:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        answer: str = "Citigroup describes material cybersecurity risks [E1].",
+    ) -> None:
+        self.answer = answer
         self.calls = []
 
     def create(self, **kwargs):
@@ -811,7 +1245,7 @@ class NarrativeAnswerCompletions:
             {
                 "status": "supported",
                 "answer_type": "narrative",
-                "answer": "Citigroup describes material cybersecurity risks [E1].",
+                "answer": self.answer,
                 "facts": None,
                 "citation_ids": ["E1"],
                 "reason": "The filing evidence directly supports the answer.",
@@ -853,3 +1287,41 @@ def test_citigroup_regression_runs_retrieval_with_ticker_c() -> None:
     assert retriever.calls
     assert all(call[2]["ticker"] == "C" for call in retriever.calls)
     assert run.diagnostics["route_action"] == "filing_research"
+
+
+def test_pipeline_natural_retry_retrieves_canonical_unresolved_filing_question() -> None:
+    original = "How does Ally Financial define operational risk in its 2025 Form 10-K?"
+    retriever = RecordingRetriever(
+        "Ally Financial defines operational risk as the risk of loss from failed processes."
+    )
+    encoder = RecordingEncoder()
+    completions = NarrativeAnswerCompletions(
+        "Ally Financial defines operational risk as risk from failed processes [E1]."
+    )
+    pipeline = BankAnswerPipeline(
+        retriever=retriever,
+        query_encoder=encoder,
+        client=client_for(completions),
+        generation_model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        conversation_model=FakeChatModel(
+            route_arguments("filing_research", search_question=original)
+        ),
+    )
+
+    run = pipeline.answer(
+        "Try again.",
+        conversation_history=[],
+        conversation_metadata={"unresolved_requests": [original]},
+    )
+
+    retrieval_queries = run.output["retrieval"]["queries"]
+    assert run.output["dialog_act"] == "answer"
+    assert run.output["ticker"] == "ALLY"
+    assert run.output["contextualization"]["standalone_question"] == original
+    assert retrieval_queries[0] == original
+    assert "Try again." not in retrieval_queries
+    assert encoder.calls == retrieval_queries
+    assert [call[0] for call in retriever.calls] == retrieval_queries
+    assert all(call[2]["ticker"] == "ALLY" for call in retriever.calls)

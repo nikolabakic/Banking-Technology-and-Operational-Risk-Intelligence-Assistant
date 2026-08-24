@@ -27,11 +27,16 @@ def create_langchain_chat_model(settings: ApplicationSettings, *, model: str | N
     options: dict[str, Any] = {
         **model_access_parameters(),
         "model": model_name,
-        "timeout": 30.0,
+        "timeout": settings.llm_request_timeout_seconds,
         "max_retries": 1,
     }
     if any(marker in model_name.upper() for marker in GPT51_MODEL_MARKERS):
-        options["max_completion_tokens"] = 700
+        options["max_completion_tokens"] = settings.llm_conversation_max_output_tokens
     else:
-        options.update({"max_tokens": 700, "temperature": 0})
+        options.update(
+            {
+                "max_tokens": settings.llm_conversation_max_output_tokens,
+                "temperature": settings.llm_temperature,
+            }
+        )
     return ChatOpenAI(**options)

@@ -15,6 +15,7 @@ flowchart TD
     Retrieval --> Generation[generation]
     Config --> LLM[llm]
     LLM --> Generation
+    Tools[tools] --> Generation
     Generation --> API[api.py]
     Chat[chat] --> API
     Generation --> Evaluation[evaluation]
@@ -35,6 +36,7 @@ flowchart TD
 | `parsing/` | sec2md element, narrative, and complete-table processing | [Parsing guide](parsing/README.md) |
 | `retrieval/` | Dense, BM25S, Qdrant, RRF, and hydration | [Retrieval guide](retrieval/README.md) |
 | `sec/` | Bank registry and deterministic bank resolution | [SEC guide](sec/README.md) |
+| `tools/` | Safe Decimal calculation and provider-neutral cited web search | [ADR 015](../../docs/decisions/015-general-chat-web-and-calculator.md) |
 
 ## API surface
 
@@ -62,8 +64,9 @@ schema-recovery event.
 
 When `AGENTIC_RAG_ENABLED=true`, `BankAnswerPipeline.retrieve_evidence()` performs initial hybrid
 retrieval and then an isolated additive bounded loop for each bank. Runtime, not the model, supplies ticker,
-accession, backend, windows, and limits. The API does not expose a generic tool endpoint; request
-and citation-context schemas are unchanged.
+accession, backend, windows, and limits. Calculator and web providers are internal conversational
+tools rather than public generic execution endpoints. Citation context discriminates local filing
+evidence from validated external web URLs.
 
 ## Shared I/O functions
 

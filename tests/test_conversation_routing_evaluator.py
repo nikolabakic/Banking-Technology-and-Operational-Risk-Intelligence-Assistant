@@ -37,7 +37,13 @@ class FixtureChatModel:
             "action": action,
             "confidence": 0.98,
             "reason": "Offline routing fixture.",
-            "search_question": question if action in {"filing_research", "web_research"} else None,
+            "search_question": (
+                "17.5 / 100 * 2400"
+                if action == "calculator"
+                else question
+                if action in {"filing_research", "web_research"}
+                else None
+            ),
             "response_text": (
                 "A safe direct response."
                 if action == "direct_response"
@@ -64,8 +70,8 @@ def test_conversation_routing_fixture_has_required_coverage() -> None:
         "filing_research",
         "direct_response",
         "clarification",
-        "out_of_scope",
         "web_research",
+        "calculator",
     }
     assert any("Citigroup's material cybersecurity risks" in case["question"] for case in cases)
     assert any(case["question"] == "Daj mi recept za pitu sa jabukama." for case in cases)
@@ -84,8 +90,8 @@ def test_routing_summary_enforces_all_acceptance_thresholds() -> None:
             "scope_preserved": True,
         },
         {
-            "expected_action": "out_of_scope",
-            "actual_action": "out_of_scope",
+            "expected_action": "direct_response",
+            "actual_action": "direct_response",
             "expected_tickers": [],
             "action_correct": True,
             "scope_preserved": True,

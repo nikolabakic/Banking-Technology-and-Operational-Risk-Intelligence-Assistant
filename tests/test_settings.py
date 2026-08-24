@@ -32,6 +32,12 @@ def test_settings_load_valid_values(
     assert settings.sec_timeout_seconds == 30
     assert settings.openai_model == "AZURE_GPT_51_2025_1113"
     assert settings.conversation_router_backend == "langgraph"
+    assert settings.llm_conversation_max_output_tokens == 1_600
+    assert settings.web_search_enabled is True
+    assert settings.web_search_provider == "auto"
+    assert settings.web_search_context_size == "medium"
+    assert settings.tavily_api_key is None
+    assert settings.tavily_max_results == 5
 
 
 def test_settings_reject_unknown_conversation_router_backend(

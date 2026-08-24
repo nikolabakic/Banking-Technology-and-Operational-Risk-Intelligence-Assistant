@@ -57,7 +57,7 @@ def test_langchain_chat_model_reuses_proxy_credentials_and_headers(monkeypatch) 
         "base_url": "https://proxy.example/v1",
         "default_headers": {"x-app-id": "app", "x-api-version": "v1"},
         "model": "AZURE_GPT_51_2025_1113",
-        "timeout": 30.0,
+        "timeout": 45.0,
         "max_retries": 1,
-        "max_completion_tokens": 700,
+        "max_completion_tokens": 1600,
     }

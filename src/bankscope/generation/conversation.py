@@ -22,15 +22,63 @@ from bankscope.generation.query_planner import (
 from bankscope.sec.bank_resolver import BankResolution, resolve_bank
 from bankscope.sec.company_registry import bank_identifier_variants, normalize_bank_text
 
-CONVERSATION_PROMPT_VERSION = "conversation-langgraph-router-v4-model-context"
+CONVERSATION_PROMPT_VERSION = "conversation-langgraph-router-v5-optional-tools"
 CONVERSATION_REQUEST_TIMEOUT_SECONDS = 30.0
+CONVERSATION_MAX_OUTPUT_TOKENS = 1_600
 OUT_OF_SCOPE_CONFIDENCE_THRESHOLD = 0.8
 LOW_CONFIDENCE_THRESHOLD = 0.5
+_MAX_UNRESOLVED_REQUESTS = 3
+_MAX_UNRESOLVED_REQUEST_CHARS = 4_000
+_MAX_UNRESOLVED_REQUEST_TOTAL_CHARS = 8_000
+_RETRY_ONLY_REQUEST_PATTERN = re.compile(
+    r"^(?:(?:(?:please|can you|could you|would you)\s+)?"
+    r"(?:try(?:\s+(?:it|that|this))?\s+(?:again|once\s+more)|"
+    r"retry(?:\s+(?:it|that|this|the\s+request|the\s+question))?(?:\s+again)?)"
+    r"(?:\s+please)?|"
+    r"(?:molim\s+)?(?:poku(?:š|s)aj|probaj)(?:\s+(?:to|ovo))?\s+(?:ponovo|opet)|"
+    r"ponovi(?:\s+(?:to|ovo))?)$",
+    re.IGNORECASE,
+)
 QUALIFIER_PATTERN = re.compile(
     r"\b(?:always|never|only|approximately|about|at\s+least|at\s+most|"
     r"materially|primarily|isključivo|uvek|nikad|približno|najmanje|najviše)\b",
     re.IGNORECASE,
 )
+
+
+def is_retry_only_request(value: str) -> bool:
+    """Return whether a message only asks to repeat the unresolved request."""
+
+    normalized = " ".join(value.casefold().split()).strip(" .!?…")
+    return bool(_RETRY_ONLY_REQUEST_PATTERN.fullmatch(normalized))
+
+
+def _bounded_unresolved_requests(values: Sequence[str] | str) -> list[str]:
+    candidates: Sequence[str]
+    if isinstance(values, str):
+        candidates = (values,)
+    elif isinstance(values, (bytes, bytearray)):
+        raise TypeError("unresolved_requests must contain strings, not bytes.")
+    else:
+        candidates = values
+
+    requests: list[str] = []
+    for value in candidates:
+        if not isinstance(value, str):
+            raise TypeError("unresolved_requests must contain only strings.")
+        normalized = " ".join(value.split())[:_MAX_UNRESOLVED_REQUEST_CHARS].rstrip()
+        if not normalized or is_retry_only_request(normalized):
+            continue
+        key = normalized.casefold()
+        requests = [request for request in requests if request.casefold() != key]
+        requests.append(normalized)
+        while (
+            len(requests) > _MAX_UNRESOLVED_REQUESTS
+            or sum(len(request) for request in requests)
+            > _MAX_UNRESOLVED_REQUEST_TOTAL_CHARS
+        ):
+            requests.pop(0)
+    return requests
 
 RouteAction = Literal[
     "filing_research",
@@ -38,6 +86,7 @@ RouteAction = Literal[
     "clarification",
     "out_of_scope",
     "web_research",
+    "calculator",
 ]
 DirectCategory = Literal[
     "greeting",
@@ -83,6 +132,17 @@ class RouteDecision(BaseModel):
                 or self.citation_ids
             ):
                 raise ValueError(f"{self.action} permits only search_question")
+        elif self.action == "calculator":
+            if not self.search_question:
+                raise ValueError("calculator requires an arithmetic expression")
+            if (
+                self.response_text is not None
+                or self.category is not None
+                or self.missing is not None
+                or self.citation_ids
+                or self.presentation_guidance is not None
+            ):
+                raise ValueError("calculator permits only search_question")
         elif self.action == "direct_response":
             if not self.response_text or not self.category:
                 raise ValueError("direct_response requires response_text and category")
@@ -134,6 +194,15 @@ class WebResearchArgs(BaseModel):
     presentation_guidance: str | None = Field(default=None, max_length=300)
 
 
+class CalculatorArgs(BaseModel):
+    """A model-selected expression for the deterministic calculator tool."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expression: str = Field(min_length=1, max_length=256)
+    reason: str = Field(min_length=1, max_length=500)
+
+
 class DirectResponseArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -158,6 +227,7 @@ class DeclineOutOfScopeArgs(BaseModel):
 ConversationAction = (
     ResearchFilingsArgs
     | WebResearchArgs
+    | CalculatorArgs
     | DirectResponseArgs
     | ClarificationArgs
     | DeclineOutOfScopeArgs
@@ -176,7 +246,7 @@ class ConversationDecision:
     reason: str = ""
     router_backend: str = "langgraph"
     graph_nodes: tuple[str, ...] = ()
-    source_policy: str = "filings_first_web_for_current_external"
+    source_policy: str = "model_selected_optional_tools"
 
 
 class _ConversationGraphState(TypedDict, total=False):
@@ -184,6 +254,7 @@ class _ConversationGraphState(TypedDict, total=False):
     history: list[dict[str, str]]
     conversation_summary: str
     previous_answer: dict[str, Any] | None
+    unresolved_requests: list[str]
     session_tickers: list[str]
     bank_names: dict[str, str]
     bank_aliases: dict[str, tuple[str, ...]]
@@ -192,6 +263,7 @@ class _ConversationGraphState(TypedDict, total=False):
     filing_signal: bool
     explicit_filing_source: bool
     web_signal: bool
+    web_search_enabled: bool
     route: RouteDecision
     latency_ms: float
     fallback: bool
@@ -207,9 +279,9 @@ def _request_options(model: str) -> dict[str, Any]:
         "timeout": CONVERSATION_REQUEST_TIMEOUT_SECONDS,
     }
     if any(marker in normalized for marker in GPT51_MODEL_MARKERS):
-        options["max_completion_tokens"] = 700
+        options["max_completion_tokens"] = CONVERSATION_MAX_OUTPUT_TOKENS
     else:
-        options.update({"max_tokens": 700, "temperature": 0})
+        options.update({"max_tokens": CONVERSATION_MAX_OUTPUT_TOKENS, "temperature": 0})
     return options
 
 
@@ -613,37 +685,64 @@ def _fallback_route(
     bank_names: Mapping[str, str],
     history: Sequence[Mapping[str, str]],
     *,
+    bank_aliases: Mapping[str, Sequence[str]],
+    session_tickers: Sequence[str],
+    unresolved_requests: Sequence[str],
     resolution: BankResolution,
     banking_domain: bool,
 ) -> RouteDecision:
-    direct = _acknowledgement_or_capability_route(question, bank_names)
+    fallback_question = question
+    fallback_resolution = resolution
+    fallback_banking_domain = banking_domain
+    unresolved_retry = is_retry_only_request(question) and bool(unresolved_requests)
+    if unresolved_retry:
+        fallback_question = unresolved_requests[-1]
+        fallback_resolution = resolve_bank(
+            fallback_question,
+            bank_names=bank_names,
+            bank_aliases=bank_aliases,
+            session_tickers=session_tickers,
+        )
+        fallback_banking_domain = is_banking_domain_question(
+            fallback_question, bank_names, bank_aliases
+        )
+
+    direct = _acknowledgement_or_capability_route(fallback_question, bank_names)
     if direct is not None:
         return direct
-    if is_clearly_out_of_scope(question):
+    if (
+        unresolved_retry
+        and has_web_research_signal(fallback_question)
+        and not EXPLICIT_FILING_SOURCE_PATTERN.search(fallback_question)
+    ):
         return RouteDecision(
-            action="out_of_scope",
-            confidence=1,
-            reason="explicit_unrelated_fallback",
-            search_question=None,
+            action="web_research",
+            confidence=0.75,
+            reason="unresolved_retry_web_fallback",
+            search_question=fallback_question,
             response_text=None,
             category=None,
             missing=None,
             citation_ids=[],
             presentation_guidance=None,
         )
-    if resolution.source == "question" or banking_domain:
+    if fallback_resolution.source == "question" or fallback_banking_domain:
         return RouteDecision(
             action="filing_research",
             confidence=0.75,
-            reason="supported_bank_or_banking_signal_fallback",
-            search_question=question,
+            reason=(
+                "unresolved_retry_filing_fallback"
+                if unresolved_retry
+                else "supported_bank_or_banking_signal_fallback"
+            ),
+            search_question=fallback_question,
             response_text=None,
             category=None,
             missing=None,
             citation_ids=[],
             presentation_guidance=None,
         )
-    if history and needs_contextualization(question):
+    if history and needs_contextualization(fallback_question):
         previous_user_question = next(
             (
                 str(message.get("content") or "").strip()
@@ -653,14 +752,16 @@ def _fallback_route(
             "",
         )
         if previous_user_question:
-            if YEAR_PATTERN.search(question):
+            if YEAR_PATTERN.search(fallback_question):
                 previous_user_question = YEAR_PATTERN.sub("", previous_user_question)
                 previous_user_question = " ".join(previous_user_question.split())
             return RouteDecision(
                 action="filing_research",
                 confidence=0.7,
                 reason="referential_history_fallback",
-                search_question=f"{previous_user_question.rstrip(' ?.')} — {question}",
+                search_question=(
+                    f"{previous_user_question.rstrip(' ?.')} — {fallback_question}"
+                ),
                 response_text=None,
                 category=None,
                 missing=None,
@@ -674,7 +775,7 @@ def _fallback_route(
         search_question=None,
         response_text=(
             "Na koje bankarsko pitanje želite da se nadovežem?"
-            if _looks_serbian(question)
+            if _looks_serbian(fallback_question)
             else "Which banking question would you like me to help with?"
         ),
         category=None,
@@ -686,33 +787,41 @@ def _fallback_route(
 
 def _route_system_prompt() -> str:
     return (
-        "Understand the BankScope conversation and return one strict route. Use filing_research "
-        "for new factual claims about a supported bank or filing, and web_research for current or "
-        "external facts. Use direct_response for greetings, acknowledgements, BankScope product "
-        "help, banking or risk concepts that need no bank-specific facts, and transformations of "
-        "the immediately previous grounded answer. Recipes, entertainment, creative writing, and "
-        "other clearly non-banking requests are out_of_scope, not general_explanation. For a "
-        "contextual transform, "
+        "You are the conversation brain for BankScope: a capable general assistant with "
+        "specialized access to bank filings, web search, and a deterministic calculator. Return "
+        "one strict route. Use direct_response whenever no tool is needed, including normal "
+        "conversation, explanations, writing, planning, and other benign non-banking requests. "
+        "Never refuse a request merely because it is outside banking. Use filing_research for "
+        "claims that must come from a supported bank's indexed filing. Use web_research for "
+        "current, changing, or external facts. Use calculator whenever arithmetic is requested "
+        "or would materially improve numerical accuracy; put only a valid arithmetic expression "
+        "in search_question. Do not answer tool-worthy factual or arithmetic questions from "
+        "memory. Reserve out_of_scope for a request that genuinely cannot receive a safe, useful "
+        "response. For a contextual transform, "
         "set category=contextual_transform, preserve only facts already present, and reuse only "
         "the supplied previous-answer citation labels. A request for a shorter answer must "
         "materially condense the previous answer by retaining its essential points. Use "
-        "clarification only when a missing "
-        "detail materially changes the task, and out_of_scope only when clearly unrelated. "
+        "clarification only when a missing detail materially changes the task. "
         "The supplied bank_resolution is authoritative. Preserve every explicit bank, period, "
         "number, metric, and qualifier in a search_question. For filing_research or web_research, "
         "infer style preferences and put only style/format instructions in presentation_guidance. "
         "First scan all prior user messages for standing instructions such as 'from now on', "
         "'always', or an explicit preference; these remain active until the user resets them. For "
-        "every research action with an active standing style preference, presentation_guidance "
+        "every filing or web action with an active standing style preference, "
+        "presentation_guidance "
         "must be non-null. Preserve a numeric length limit only when the user explicitly supplied "
         "one; otherwise express concise preferences qualitatively and let the answer model choose "
         "the appropriate length for the question. "
         "For a direct contextual_transform, apply the requested style directly to response_text, "
         "set presentation_guidance to null, and list exactly its inline citation labels in "
         "citation_ids. Every nullable action field is required: set unused fields to null and "
-        "citation_ids to an empty list when citations are not allowed. Assistant history supports "
+        "citation_ids to an empty list when citations are not allowed. For calculator, all fields "
+        "except action, confidence, reason, and search_question must be null or empty. Assistant "
+        "history supports "
         "conversational continuity and direct transformation, but it is never filing evidence for "
-        "a new factual answer."
+        "a new factual answer. unresolved_requests contains only user requests whose prior tool "
+        "attempt failed; use the latest one when the current user asks to retry, but never treat "
+        "it as an assistant answer or evidence."
     )
 
 
@@ -747,7 +856,11 @@ def _route_payload(
     payload = {
         "prompt_version": CONVERSATION_PROMPT_VERSION,
         "supported_banks": supported_banks,
-        "available_sources": {"filings": True, "web": False},
+        "available_sources": {
+            "filings": True,
+            "web": bool(state.get("web_search_enabled")),
+            "calculator": True,
+        },
         "session_tickers": state["session_tickers"],
         "bank_resolution": resolution.as_dict(),
         "positive_signals": {
@@ -759,6 +872,7 @@ def _route_payload(
         "conversation_summary": state.get("conversation_summary") or "",
         "conversation_history": state["history"],
         "previous_grounded_answer": safe_previous,
+        "unresolved_requests": state.get("unresolved_requests") or [],
         "current_question": state["question"],
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -804,22 +918,6 @@ def _apply_route_policy(route: RouteDecision, state: _ConversationGraphState) ->
     resolution = state["resolution"]
     explicit_supported_bank = resolution.source == "question" and bool(resolution.tickers)
     multi_bank = resolution.status == "multiple" and 2 <= len(resolution.tickers) <= 4
-    if (
-        route.action == "direct_response"
-        and route.category == "general_explanation"
-        and is_clearly_out_of_scope(state["question"], state["bank_names"])
-    ):
-        return RouteDecision(
-            action="out_of_scope",
-            confidence=max(route.confidence, OUT_OF_SCOPE_CONFIDENCE_THRESHOLD),
-            reason="explicit_non_banking_request_requires_scope_decline",
-            search_question=None,
-            response_text=None,
-            category=None,
-            missing=None,
-            citation_ids=[],
-            presentation_guidance=None,
-        )
     if route.action == "direct_response" and route.category == "contextual_transform":
         previous = state.get("previous_answer")
         if not previous:
@@ -1031,6 +1129,11 @@ def _route_to_action(route: RouteDecision) -> ConversationAction:
             reason=route.reason,
             presentation_guidance=route.presentation_guidance,
         )
+    if route.action == "calculator":
+        return CalculatorArgs(
+            expression=str(route.search_question),
+            reason=route.reason,
+        )
     if route.action == "direct_response":
         return DirectResponseArgs(
             answer=str(route.response_text),
@@ -1056,6 +1159,7 @@ class ConversationGraph:
         bank_aliases: Mapping[str, Sequence[str]] | None = None,
         chat_model: Any | None = None,
         backend: Literal["langgraph", "legacy"] = "langgraph",
+        web_search_enabled: bool = False,
     ) -> None:
         self.client = client
         self.model = model
@@ -1065,6 +1169,7 @@ class ConversationGraph:
         }
         self.chat_model = chat_model
         self.backend = backend
+        self.web_search_enabled = web_search_enabled
         self._structured_model = None
         if chat_model is not None:
             self._structured_model = chat_model.with_structured_output(
@@ -1137,6 +1242,9 @@ class ConversationGraph:
                 state["question"],
                 self.bank_names,
                 state["history"],
+                bank_aliases=self.bank_aliases,
+                session_tickers=state["session_tickers"],
+                unresolved_requests=state.get("unresolved_requests") or (),
                 resolution=state["resolution"],
                 banking_domain=state["banking_domain"],
             )
@@ -1164,6 +1272,7 @@ class ConversationGraph:
         session_tickers: Sequence[str] = (),
         conversation_summary: str = "",
         previous_answer: Mapping[str, Any] | None = None,
+        unresolved_requests: Sequence[str] | str = (),
     ) -> ConversationDecision:
         initial: _ConversationGraphState = {
             "question": question,
@@ -1171,6 +1280,8 @@ class ConversationGraph:
             "session_tickers": list(session_tickers),
             "conversation_summary": conversation_summary,
             "previous_answer": dict(previous_answer) if previous_answer else None,
+            "unresolved_requests": _bounded_unresolved_requests(unresolved_requests),
+            "web_search_enabled": self.web_search_enabled,
         }
         if self._graph is not None:
             state = self._graph.invoke(initial)
@@ -1205,6 +1316,7 @@ def request_conversation_action(
     session_tickers: Sequence[str] = (),
     conversation_summary: str = "",
     previous_answer: Mapping[str, Any] | None = None,
+    unresolved_requests: Sequence[str] | str = (),
     chat_model: Any | None = None,
     backend: Literal["langgraph", "legacy"] = "legacy",
 ) -> ConversationDecision:
@@ -1224,4 +1336,5 @@ def request_conversation_action(
         session_tickers=session_tickers,
         conversation_summary=conversation_summary,
         previous_answer=previous_answer,
+        unresolved_requests=unresolved_requests,
     )

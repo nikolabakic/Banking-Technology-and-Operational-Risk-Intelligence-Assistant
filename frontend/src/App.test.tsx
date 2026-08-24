@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
-import type { AnswerResponse, CitationContext, ThreadSummary, Turn } from "./api";
+import type { AnswerResponse, CitationContext, FilingCitation, ThreadSummary, Turn } from "./api";
 
 const mocks = vi.hoisted(() => ({
   listThreads: vi.fn(),
@@ -29,6 +29,16 @@ const thread: ThreadSummary = {
   updated_at: "2026-08-12T10:01:00Z",
 };
 
+const filingCitation: FilingCitation = {
+  kind: "filing",
+  citation_id: "22222222-2222-4222-8222-222222222222",
+  label: "E1",
+  target_chunk_id: "chunk-1",
+  ticker: "JPM",
+  record_type: "text",
+  section_title: "Risk management",
+};
+
 const response: AnswerResponse = {
   question: "How does JPM describe operational risk?",
   ticker: "JPM",
@@ -36,14 +46,7 @@ const response: AnswerResponse = {
   answer_type: "narrative",
   answer: "JPM uses a risk framework [E1]",
   reason: "Supported",
-  citations: [{
-    citation_id: "22222222-2222-4222-8222-222222222222",
-    label: "E1",
-    target_chunk_id: "chunk-1",
-    ticker: "JPM",
-    record_type: "text",
-    section_title: "Risk management",
-  }],
+  citations: [filingCitation],
   diagnostics: {
     route: "domain_rag",
     agentic_rag_enabled: true,
@@ -70,7 +73,7 @@ const turn: Turn = {
 };
 
 const context: CitationContext = {
-  citation: { id: response.citations[0].citation_id, label: "E1", metadata: response.citations[0] },
+  citation: { id: filingCitation.citation_id, label: "E1", metadata: filingCitation },
   target_chunk_id: "chunk-1",
   record_type: "text",
   ticker: "JPM",
@@ -101,6 +104,7 @@ describe("persistent chat workspace", () => {
     mocks.renameThread.mockResolvedValue({ ...thread, title: "Renamed" });
     mocks.deleteThread.mockResolvedValue(undefined);
     mocks.loadCitationContext.mockResolvedValue(context);
+    mocks.streamAnswer.mockResolvedValue(turn);
   });
 
   it("restores a saved thread and opens its canonical citation source", async () => {
@@ -169,6 +173,96 @@ describe("persistent chat workspace", () => {
     expect(screen.getByText("Clarification")).toBeInTheDocument();
     expect(screen.queryByText("0 sources")).not.toBeInTheDocument();
     expect(screen.queryByText("Grounded in indexed filings")).not.toBeInTheDocument();
+  });
+
+  it("retries a retryable answer through the existing stream path only after the user clicks", async () => {
+    const retryQuestion = "How does Ally define operational risk?";
+    const retryableResponse: AnswerResponse = {
+      ...response,
+      question: retryQuestion,
+      dialog_act: "retryable_error",
+      ticker: null,
+      status: "unsupported",
+      answer: "I couldn't complete reliable research for this message.",
+      reason: "Research failed safely.",
+      citations: [],
+    };
+    mocks.loadThread.mockResolvedValue({
+      thread,
+      turns: [{ ...turn, question: retryQuestion, response: retryableResponse }],
+    });
+    mocks.streamAnswer.mockReturnValue(new Promise<Turn>(() => undefined));
+
+    renderThread();
+
+    const retryButton = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getAllByText(retryQuestion)).toHaveLength(1);
+    expect(mocks.streamAnswer).not.toHaveBeenCalled();
+    expect(retryButton).toBeEnabled();
+
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(mocks.streamAnswer).toHaveBeenCalledWith(
+      thread.id,
+      retryQuestion,
+      expect.any(Function),
+      expect.any(AbortSignal),
+    ));
+    expect(screen.getAllByText(retryQuestion)).toHaveLength(2);
+    expect(retryButton).toBeDisabled();
+  });
+
+  it("guards a new conversation before asynchronous thread creation completes", async () => {
+    mocks.createThread.mockReturnValue(new Promise<ThreadSummary>(() => undefined));
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const composer = await screen.findByPlaceholderText(
+      "Ask naturally, research a filing, search the web, or calculate…",
+    );
+    fireEvent.change(composer, { target: { value: "Hello BankScope" } });
+    const form = composer.closest("form");
+    expect(form).not.toBeNull();
+
+    fireEvent.submit(form!);
+    fireEvent.submit(form!);
+
+    expect(mocks.createThread).toHaveBeenCalledTimes(1);
+    expect(mocks.streamAnswer).not.toHaveBeenCalled();
+  });
+
+  it("renders web citations as safe external links without opening the filing evidence viewer", async () => {
+    const webResponse: AnswerResponse = {
+      ...response,
+      dialog_act: "web_answer",
+      ticker: null,
+      answer: "The latest official update is available here [E1]",
+      citations: [{
+        kind: "web",
+        citation_id: "web-result-1",
+        label: "E1",
+        title: "Official risk update",
+        source_url: "https://example.com/risk-update",
+      }],
+    };
+    mocks.loadThread.mockResolvedValue({
+      thread,
+      turns: [{ ...turn, response: webResponse }],
+    });
+
+    renderThread();
+
+    const citationLink = await screen.findByRole("link", { name: "E1" });
+    expect(citationLink).toHaveAttribute("href", "https://example.com/risk-update");
+    expect(citationLink).toHaveAttribute("target", "_blank");
+    expect(citationLink).toHaveAttribute("rel", "noopener noreferrer");
+    expect(citationLink).toHaveAttribute("title", "Open source E1: Official risk update");
+    expect(screen.getByText("Researched on the web")).toBeInTheDocument();
+    expect(screen.getByText("Web research")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "E1" })).not.toBeInTheDocument();
+    expect(mocks.loadCitationContext).not.toHaveBeenCalled();
   });
 
   it("renames and deletes conversations through confirmed sidebar actions", async () => {

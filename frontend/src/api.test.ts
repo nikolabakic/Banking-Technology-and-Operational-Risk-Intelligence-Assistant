@@ -18,6 +18,14 @@ const turn = {
   response: answer,
 };
 
+const legacyFilingCitation = {
+  citation_id: "22222222-2222-4222-8222-222222222222",
+  label: "E1",
+  target_chunk_id: "chunk-1",
+  ticker: "JPM",
+  record_type: "text",
+};
+
 function streamResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
@@ -93,4 +101,86 @@ describe("answer API contracts", () => {
       answer: "Which bank do you mean?",
     }).dialog_act).toBe("clarification");
   });
+
+  it("defaults legacy citations without a kind to filing citations", () => {
+    const parsed = parseAnswerPayload({ ...answer, citations: [legacyFilingCitation] });
+
+    expect(parsed.citations[0]).toMatchObject({
+      kind: "filing",
+      target_chunk_id: "chunk-1",
+      ticker: "JPM",
+      record_type: "text",
+    });
+  });
+
+  it("accepts web citations without filing-only metadata and normalizes their title and URL", () => {
+    const parsed = parseAnswerPayload({
+      ...answer,
+      dialog_act: "web_answer",
+      citations: [{
+        kind: "web",
+        citation_id: "web-result-1",
+        label: "E1",
+        title: "  Official risk update  ",
+        source_url: "  https://example.com/risk-update  ",
+      }],
+    });
+
+    expect(parsed.citations[0]).toEqual({
+      kind: "web",
+      citation_id: "web-result-1",
+      label: "E1",
+      title: "Official risk update",
+      source_url: "https://example.com/risk-update",
+      target_chunk_id: undefined,
+      ticker: undefined,
+      record_type: undefined,
+      report_date: undefined,
+      filing_date: undefined,
+      section_title: undefined,
+      page_start: undefined,
+      page_end: undefined,
+      display_page_start: undefined,
+      display_page_end: undefined,
+    });
+  });
+
+  it.each([
+    "javascript:alert(1)",
+    "not-a-url",
+    "file:///tmp/source.txt",
+    "https://user:password@example.com/source",
+    "https://example.com\\@unsafe.test/source",
+    "https://example.com/source\u0000suffix",
+  ])(
+    "rejects an unsafe web citation URL: %s",
+    (sourceUrl) => {
+      expect(() => parseAnswerPayload({
+        ...answer,
+        citations: [{
+          kind: "web",
+          citation_id: "web-result-1",
+          label: "E1",
+          source_url: sourceUrl,
+        }],
+      })).toThrow(ApiError);
+    },
+  );
+
+  it.each([
+    "contextual_transform",
+    "web_answer",
+    "web_research_unavailable",
+    "calculation",
+  ] as const)("preserves the %s dialog act", (dialogAct) => {
+    expect(parseAnswerPayload({ ...answer, dialog_act: dialogAct }).dialog_act).toBe(dialogAct);
+  });
+
+  it.each(["web_search", "calculator", "scope_guard"])(
+    "preserves the %s diagnostics route",
+    (route) => {
+      const parsed = parseAnswerPayload({ ...answer, diagnostics: { route } });
+      expect(parsed.diagnostics?.route).toBe(route);
+    },
+  );
 });

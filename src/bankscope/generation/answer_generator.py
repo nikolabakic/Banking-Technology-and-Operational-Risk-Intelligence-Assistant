@@ -420,7 +420,6 @@ def _evidence_payload(
             "\n".join(
                 [
                     f"[{label}]",
-                    f"target_chunk_id: {_field(item, 'target_chunk_id')}",
                     f"ticker: {_field(item, 'ticker')}",
                     f"record_type: {_field(item, 'record_type')}",
                     f"report_date: {metadata.get('report_date') or ''}",
@@ -459,7 +458,11 @@ def _choice_parts(response: Any) -> tuple[Any | None, str, str]:
     )
 
 
-def _parse_model_answer(response: Any) -> tuple[ModelAnswer, str]:
+def _parse_model_answer(
+    response: Any,
+    *,
+    citation_aliases: Mapping[str, str] | None = None,
+) -> tuple[ModelAnswer, str]:
     message, finish_reason, refusal = _choice_parts(response)
     if finish_reason == "length":
         raise GenerationValidationError(
@@ -510,10 +513,34 @@ def _parse_model_answer(response: Any) -> tuple[ModelAnswer, str]:
         ) from error
     citation_ids = payload.get("citation_ids") if isinstance(payload, dict) else None
     if isinstance(citation_ids, list) and all(isinstance(value, str) for value in citation_ids):
+        aliases = {
+            str(alias).strip().casefold(): str(label).strip().upper()
+            for alias, label in (citation_aliases or {}).items()
+            if str(alias).strip() and str(label).strip()
+        }
         normalized_ids: list[str] = []
         for value in citation_ids:
-            extracted = re.findall(r"E\d+", value, flags=re.IGNORECASE)
-            candidates = [item.upper() for item in extracted] if extracted else [value]
+            stripped = value.strip()
+            alias = aliases.get(stripped.casefold())
+            extracted = re.findall(
+                r"(?<![A-Za-z0-9])E\d+(?![A-Za-z0-9])",
+                stripped,
+                flags=re.IGNORECASE,
+            )
+            remainder = re.sub(
+                r"(?<![A-Za-z0-9])E\d+(?![A-Za-z0-9])",
+                "",
+                stripped,
+                flags=re.IGNORECASE,
+            )
+            is_label_list = bool(extracted) and bool(
+                re.fullmatch(r"[\s,;|/\[\](){}]*", remainder)
+            )
+            candidates = (
+                [alias]
+                if alias
+                else ([item.upper() for item in extracted] if is_label_list else [stripped])
+            )
             for normalized in candidates:
                 if normalized not in normalized_ids:
                     normalized_ids.append(normalized)
@@ -698,6 +725,11 @@ def generate_answer(
         )
 
     evidence_text, evidence_by_label = _evidence_payload(prepared)
+    citation_aliases = {
+        str(_field(item, "target_chunk_id")): label
+        for label, item in evidence_by_label.items()
+        if str(_field(item, "target_chunk_id")).strip()
+    }
     instructions = (
         f"REQUIRED OUTPUT LANGUAGE: {answer_language}. Write both answer and reason only in "
         f"{answer_language}; do not translate them into another language. "
@@ -715,7 +747,9 @@ def generate_answer(
         "Use a supported tool only when cited evidence directly supports the answer. Every "
         "factual claim in a supported narrative answer must include an inline marker such as [E1], "
         "and citation_ids must list exactly the evidence used. Never invent a marker, fact, or "
-        "source. The application will render supported numeric answers from facts."
+        "source. Use only the short E-labels shown in square brackets for citation_ids; internal "
+        "source identifiers are not citation labels. The application will render supported "
+        "numeric answers from facts."
     )
     if comparison_scope:
         instructions += (
@@ -817,7 +851,10 @@ def generate_answer(
             )
             raise request_error from error
         try:
-            answer, finish_reason = _parse_model_answer(response)
+            answer, finish_reason = _parse_model_answer(
+                response,
+                citation_aliases=citation_aliases,
+            )
             if (
                 guidance_word_limit
                 and answer.status == "supported"

@@ -1,6 +1,12 @@
-export type Citation = {
+type CitationBase = {
   citation_id: string;
   label: string;
+  title?: string;
+  source_url?: string;
+};
+
+export type FilingCitation = CitationBase & {
+  kind: "filing";
   target_chunk_id: string;
   ticker: string;
   record_type: string;
@@ -11,8 +17,38 @@ export type Citation = {
   page_end?: string | number | null;
   display_page_start?: string | number | null;
   display_page_end?: string | number | null;
-  source_url?: string;
 };
+
+export type WebCitation = CitationBase & {
+  kind: "web";
+  source_url: string;
+  target_chunk_id?: string;
+  ticker?: string;
+  record_type?: string;
+  report_date?: string;
+  filing_date?: string;
+  section_title?: string;
+  page_start?: string | number | null;
+  page_end?: string | number | null;
+  display_page_start?: string | number | null;
+  display_page_end?: string | number | null;
+};
+
+export type Citation = FilingCitation | WebCitation;
+
+export type DialogAct =
+  | "answer"
+  | "clarification"
+  | "greeting"
+  | "acknowledgement"
+  | "capability"
+  | "general_explanation"
+  | "out_of_scope"
+  | "retryable_error"
+  | "contextual_transform"
+  | "web_answer"
+  | "web_research_unavailable"
+  | "calculation";
 
 export type NumericFacts = {
   entity: string;
@@ -35,7 +71,7 @@ export type BankResult = {
 };
 
 export type Diagnostics = {
-  route: "general_chat" | "domain_rag";
+  route: string;
   agentic_rag_enabled: boolean;
   outcome: string;
   failed_stage?: string | null;
@@ -70,7 +106,7 @@ export type Diagnostics = {
 
 export type AnswerResponse = {
   question: string;
-  dialog_act?: "answer" | "clarification" | "greeting" | "acknowledgement" | "capability" | "general_explanation" | "out_of_scope" | "retryable_error";
+  dialog_act?: DialogAct;
   mode?: "comparison";
   ticker: string | null;
   tickers?: string[];
@@ -113,7 +149,7 @@ export type SourceChunk = {
 };
 
 export type CitationContext = {
-  citation: { id: string; label: string; metadata: Citation };
+  citation: { id: string; label: string; metadata: FilingCitation };
   target_chunk_id: string;
   record_type: string;
   ticker: string;
@@ -160,13 +196,74 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function optionalTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function parseSourceUrl(value: unknown, required: boolean): string | undefined {
+  const sourceUrl = optionalTrimmedString(value);
+  if (!sourceUrl) {
+    if (required) throw new ApiError("The answer service omitted the web citation URL.", 502, "invalid_response");
+    return undefined;
+  }
+  try {
+    if (
+      sourceUrl.length > 4_096
+      || [...sourceUrl].some((character) => (
+        /\s/.test(character)
+        || character.charCodeAt(0) < 32
+        || character.charCodeAt(0) === 127
+        || character === "\\"
+      ))
+    ) throw new Error("unsafe URL characters");
+    const parsed = new URL(sourceUrl);
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      || !parsed.hostname
+      || parsed.username
+      || parsed.password
+    ) throw new Error("unsupported URL");
+  } catch {
+    throw new ApiError("The answer service returned an invalid citation URL.", 502, "invalid_response");
+  }
+  return sourceUrl;
+}
+
 function parseCitation(value: unknown): Citation {
   const item = asRecord(value);
   if (!item) throw new ApiError("The answer service returned an invalid citation.", 502, "invalid_response");
   const optionalScalar = (input: unknown) => typeof input === "string" || typeof input === "number" || input === null ? input : undefined;
-  return {
+  const kind = item.kind === undefined ? "filing" : item.kind;
+  if (kind !== "filing" && kind !== "web") {
+    throw new ApiError("The answer service returned an invalid citation kind.", 502, "invalid_response");
+  }
+  const common = {
     citation_id: requiredString(item.citation_id, "citation ID"),
     label: requiredString(item.label, "citation label"),
+    title: optionalTrimmedString(item.title),
+  };
+  if (kind === "web") {
+    return {
+      ...common,
+      kind,
+      source_url: parseSourceUrl(item.source_url, true)!,
+      target_chunk_id: optionalTrimmedString(item.target_chunk_id),
+      ticker: optionalTrimmedString(item.ticker),
+      record_type: optionalTrimmedString(item.record_type),
+      report_date: optionalString(item.report_date),
+      filing_date: optionalString(item.filing_date),
+      section_title: optionalString(item.section_title),
+      page_start: optionalScalar(item.page_start),
+      page_end: optionalScalar(item.page_end),
+      display_page_start: optionalScalar(item.display_page_start),
+      display_page_end: optionalScalar(item.display_page_end),
+    };
+  }
+  return {
+    ...common,
+    kind,
     target_chunk_id: requiredString(item.target_chunk_id, "citation target"),
     ticker: requiredString(item.ticker, "citation ticker"),
     record_type: requiredString(item.record_type, "citation record type"),
@@ -177,7 +274,7 @@ function parseCitation(value: unknown): Citation {
     page_end: optionalScalar(item.page_end),
     display_page_start: optionalScalar(item.display_page_start),
     display_page_end: optionalScalar(item.display_page_end),
-    source_url: optionalString(item.source_url),
+    source_url: parseSourceUrl(item.source_url, false),
   };
 }
 
@@ -207,7 +304,7 @@ function parseDiagnostics(value: unknown): Diagnostics | undefined {
     Object.entries(rawChecks ?? {}).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"),
   );
   return {
-    route: item.route === "general_chat" ? "general_chat" : "domain_rag",
+    route: optionalTrimmedString(item.route) ?? "unknown",
     agentic_rag_enabled: item.agentic_rag_enabled === true,
     outcome: typeof item.outcome === "string" ? item.outcome : "unknown",
     failed_stage: typeof item.failed_stage === "string" || item.failed_stage === null ? item.failed_stage : undefined,
@@ -261,7 +358,7 @@ export function parseAnswerPayload(value: unknown): AnswerResponse {
   if (!Array.isArray(item.citations)) {
     throw new ApiError("The answer service omitted citations.", 502, "invalid_response");
   }
-  const allowedDialogActs = new Set([
+  const allowedDialogActs: ReadonlySet<DialogAct> = new Set([
     "answer",
     "clarification",
     "greeting",
@@ -270,9 +367,13 @@ export function parseAnswerPayload(value: unknown): AnswerResponse {
     "general_explanation",
     "out_of_scope",
     "retryable_error",
+    "contextual_transform",
+    "web_answer",
+    "web_research_unavailable",
+    "calculation",
   ]);
-  const dialogAct = typeof item.dialog_act === "string" && allowedDialogActs.has(item.dialog_act)
-    ? item.dialog_act as AnswerResponse["dialog_act"]
+  const dialogAct = typeof item.dialog_act === "string" && allowedDialogActs.has(item.dialog_act as DialogAct)
+    ? item.dialog_act as DialogAct
     : undefined;
   return {
     question: requiredString(item.question, "question"),
@@ -465,6 +566,9 @@ export async function loadCitationContext(
   if (!payload || !Array.isArray(payload.chunks)) throw new ApiError("The answer service returned invalid citation context.", 502, "invalid_response");
   const citationWrapper = asRecord(payload.citation);
   const metadata = parseCitation(asRecord(citationWrapper?.metadata));
+  if (metadata.kind !== "filing") {
+    throw new ApiError("The answer service returned invalid filing citation context.", 502, "invalid_response");
+  }
   const chunks = payload.chunks.map((value) => {
     const chunk = asRecord(value);
     if (!chunk || (chunk.role !== "previous" && chunk.role !== "anchor" && chunk.role !== "next")) {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from collections.abc import Iterator, Mapping
@@ -15,6 +16,18 @@ SCHEMA_VERSION = 3
 DEFAULT_THREAD_TITLE = "New conversation"
 DEFAULT_MEMORY_MAX_TOKENS = 12_000
 DEFAULT_MEMORY_MIN_RECENT_TURNS = 6
+_MAX_UNRESOLVED_REQUESTS = 3
+_MAX_UNRESOLVED_REQUEST_CHARS = 4_000
+_MAX_UNRESOLVED_REQUEST_TOTAL_CHARS = 8_000
+_RETRY_ONLY_REQUEST_PATTERN = re.compile(
+    r"^(?:(?:(?:please|can you|could you|would you)\s+)?"
+    r"(?:try(?:\s+(?:it|that|this))?\s+(?:again|once\s+more)|"
+    r"retry(?:\s+(?:it|that|this|the\s+request|the\s+question))?(?:\s+again)?)"
+    r"(?:\s+please)?|"
+    r"(?:molim\s+)?(?:poku(?:š|s)aj|probaj)(?:\s+(?:to|ovo))?\s+(?:ponovo|opet)|"
+    r"ponovi(?:\s+(?:to|ovo))?)$",
+    re.IGNORECASE,
+)
 
 
 def _now() -> str:
@@ -28,6 +41,32 @@ def _json(value: object) -> str:
 def _title_from_question(question: str) -> str:
     title = " ".join(question.split())
     return title if len(title) <= 60 else f"{title[:57].rstrip()}..."
+
+
+def _normalize_unresolved_request(value: str) -> str:
+    normalized = " ".join(value.split())[:_MAX_UNRESOLVED_REQUEST_CHARS]
+    return normalized.rstrip()
+
+
+def _is_retry_only_request(value: str) -> bool:
+    normalized = " ".join(value.casefold().split()).strip(" .!?…")
+    return bool(_RETRY_ONLY_REQUEST_PATTERN.fullmatch(normalized))
+
+
+def _append_unresolved_request(requests: list[str], value: str) -> list[str]:
+    normalized = _normalize_unresolved_request(value)
+    if not normalized or _is_retry_only_request(normalized):
+        return requests
+
+    key = normalized.casefold()
+    bounded = [request for request in requests if request.casefold() != key]
+    bounded.append(normalized)
+    while (
+        len(bounded) > _MAX_UNRESOLVED_REQUESTS
+        or sum(len(request) for request in bounded) > _MAX_UNRESOLVED_REQUEST_TOTAL_CHARS
+    ):
+        bounded.pop(0)
+    return bounded
 
 
 class ChatStore:
@@ -273,14 +312,40 @@ class ChatStore:
         memory_state = self._conversation_state(thread_id)
         messages = self.list_messages(thread_id)
         completed_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        unresolved_requests: list[str] = []
         for index in range(0, len(messages), 2):
             user = messages[index]
             assistant = messages[index + 1] if index + 1 < len(messages) else None
+            assistant_payload = assistant.get("payload") if assistant is not None else None
+            dialog_act = (
+                str((assistant_payload or {}).get("dialog_act") or "answer")
+                if isinstance(assistant_payload, Mapping)
+                else "answer"
+            )
             if (
                 user["role"] == "user"
                 and assistant is not None
                 and assistant["role"] == "assistant"
                 and assistant["status"] == "complete"
+            ):
+                if dialog_act == "retryable_error":
+                    unresolved_requests = _append_unresolved_request(
+                        unresolved_requests, str(user["content"])
+                    )
+                elif dialog_act in {
+                    "answer",
+                    "calculation",
+                    "contextual_transform",
+                    "general_explanation",
+                    "web_answer",
+                }:
+                    unresolved_requests.clear()
+            if (
+                user["role"] == "user"
+                and assistant is not None
+                and assistant["role"] == "assistant"
+                and assistant["status"] == "complete"
+                and dialog_act != "retryable_error"
             ):
                 completed_pairs.append((user, assistant))
 
@@ -296,7 +361,13 @@ class ChatStore:
         summary = str(memory_state["conversation_summary"] or "")
         total_estimated_tokens = max(
             1,
-            (len(summary) + sum(len(message["content"]) for message in raw_messages) + 3) // 4,
+            (
+                len(summary)
+                + sum(len(message["content"]) for message in raw_messages)
+                + sum(len(request) for request in unresolved_requests)
+                + 3
+            )
+            // 4,
         )
         compact_pair_count = max(0, len(unsummarized) - min_recent_turns)
         compact_pairs = (
@@ -325,17 +396,20 @@ class ChatStore:
             (
                 len(summary)
                 + sum(len(message["content"]) for message in context_messages)
+                + sum(len(request) for request in unresolved_requests)
                 + 3
             )
             // 4,
         )
         previous_answer = None
-        if completed_pairs:
-            previous_user, previous_assistant = completed_pairs[-1]
+        for previous_user, previous_assistant in reversed(completed_pairs):
             payload = previous_assistant.get("payload") or {}
             if str(payload.get("dialog_act") or "answer") in {
                 "answer",
+                "calculation",
                 "contextual_transform",
+                "general_explanation",
+                "web_answer",
             }:
                 previous_answer = {
                     "message_id": previous_assistant["id"],
@@ -345,6 +419,7 @@ class ChatStore:
                     "ticker": payload.get("ticker"),
                     "tickers": list(payload.get("tickers") or []),
                 }
+                break
         return {
             "summary": summary,
             "summary_through_sequence": checkpoint,
@@ -358,6 +433,7 @@ class ChatStore:
                 int(compaction_messages[-1]["sequence"]) if compaction_messages else checkpoint
             ),
             "previous_answer": previous_answer,
+            "unresolved_requests": unresolved_requests,
         }
 
     def save_conversation_summary(
