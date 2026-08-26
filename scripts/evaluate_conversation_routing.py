@@ -118,8 +118,13 @@ def summarize(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         for row in rows
         if row["expected_action"] == "filing_research" and row["expected_tickers"]
     ]
-    general_no_retrieval = [
-        row for row in rows if row["expected_action"] in {"direct_response", "calculator"}
+    no_retrieval_expected = [
+        row
+        for row in rows
+        if row["expected_action"] in {"direct_response", "calculator", "out_of_scope"}
+    ]
+    out_of_scope_cases = [
+        row for row in rows if row["expected_action"] == "out_of_scope"
     ]
     scope_ok = sum(bool(row["scope_preserved"]) for row in rows)
     accuracy = correct / len(rows)
@@ -127,16 +132,23 @@ def summarize(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     unrelated_no_retrieval = (
         sum(
             row["actual_action"] not in {"filing_research", "web_research"}
-            for row in general_no_retrieval
+            for row in no_retrieval_expected
         )
-        / len(general_no_retrieval)
-        if general_no_retrieval
+        / len(no_retrieval_expected)
+        if no_retrieval_expected
+        else 1.0
+    )
+    out_of_scope_recall = (
+        sum(row["actual_action"] == "out_of_scope" for row in out_of_scope_cases)
+        / len(out_of_scope_cases)
+        if out_of_scope_cases
         else 1.0
     )
     gate_passed = (
         accuracy >= 0.95
         and bank_recall == 1.0
         and unrelated_no_retrieval == 1.0
+        and out_of_scope_recall == 1.0
         and scope_ok == len(rows)
     )
     return {
@@ -146,6 +158,7 @@ def summarize(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "supported_bank_filing_recall": bank_recall,
         "unrelated_no_retrieval_rate": unrelated_no_retrieval,
         "general_chat_no_retrieval_rate": unrelated_no_retrieval,
+        "out_of_scope_recall": out_of_scope_recall,
         "scope_preservation_passes": scope_ok,
         "gate_passed": gate_passed,
     }
@@ -158,6 +171,7 @@ def compare_with_baseline(
         "route_accuracy",
         "supported_bank_filing_recall",
         "unrelated_no_retrieval_rate",
+        "out_of_scope_recall",
         "scope_preservation_passes",
     )
     regressions = {

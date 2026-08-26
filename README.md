@@ -1,8 +1,8 @@
 # BankScope RAG Assistant
 
 BankScope is a local, single-user conversational assistant with specialized research access to the
-latest downloaded 10-K filings of ten U.S. banks. It combines normal general chat, optional cited
-web search and deterministic calculation with SEC acquisition, structure-aware corpus construction,
+latest downloaded 10-K filings of ten U.S. banks. It combines finance-and-technology conversation,
+optional cited web search and deterministic calculation with SEC acquisition, structure-aware corpus construction,
 dense and lexical retrieval, evidence-grounded answer generation, conversation memory, and a React
 interface.
 
@@ -31,8 +31,8 @@ supporting excerpts for each bank in a comparison.
 - fuses dense and lexical rankings with reciprocal-rank fusion (RRF);
 - answers single-bank and two-to-four-bank comparison questions with independently retrieved,
   bank-owned evidence and citations;
-- handles benign general conversation, writing, explanations, clarifications, and natural
-  follow-ups without requiring filing retrieval;
+- handles finance-and-technology conversation, clarifications, and natural follow-ups without
+  requiring filing retrieval, while declining unrelated content;
 - selects indexed filing research, cited OpenAI/Tavily web search, or a safe Decimal calculator
   only when the request needs that tool;
 - sends each threaded request a 12,000-token-bounded summary plus raw transcript, retaining at
@@ -143,6 +143,8 @@ TAVILY_MAX_RESULTS=5
 
 See [ADR 015](docs/decisions/015-general-chat-web-and-calculator.md) for the reviewed chatbot
 repositories, provider comparison, calculator safety contract, and the Ally failure analysis.
+[ADR 016](docs/decisions/016-finance-technology-conversation-scope.md) defines the current
+finance-and-technology conversation boundary.
 
 For separate terminals:
 
@@ -188,7 +190,8 @@ flowchart TD
     UI[React client] -->|SSE request| API[FastAPI]
     API --> History[SQLite thread history]
     History --> FrontDoor{Model-selected action}
-    FrontDoor -->|respond directly| Direct[General conversation response]
+    FrontDoor -->|respond directly| Direct[In-scope conversation response]
+    FrontDoor -->|outside domain| Scope[Finance/technology scope response]
     FrontDoor -->|ask_clarification| Clarify[One concise question]
     FrontDoor -->|research_filings| Context[Validated internal search question]
     FrontDoor -->|search_web| Web[OpenAI Responses or Tavily]
@@ -207,6 +210,7 @@ flowchart TD
     Web --> Persist
     Calc --> Persist
     Direct --> Persist
+    Scope --> Persist
     Clarify --> Persist
     API -->|safe model/pipeline failure| Recovery[Retryable assistant response]
     Recovery --> Persist
@@ -216,8 +220,9 @@ flowchart TD
 
 The current question selects a bank or an ordered set of two to four banks. When it does not, the
 server-owned thread scope and bounded history can supply follow-up context. The router may answer
-directly, ask one clarification, or select filing research, web search, or calculation. Benign
-requests are not declined merely for being outside banking. Research rewrites are disposable,
+directly, ask one clarification, decline a request outside finance and technology, or select filing
+research, web search, or calculation. Greetings, acknowledgements, capability questions, relevant
+answer transformations, and general arithmetic remain available. Research rewrites are disposable,
 validated search inputs; the original message remains authoritative. Previous answers re-enter only
 as conversational context and may support their own transformation, never a new filing claim.
 Expected model failures return a normal

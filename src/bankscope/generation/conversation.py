@@ -22,7 +22,7 @@ from bankscope.generation.query_planner import (
 from bankscope.sec.bank_resolver import BankResolution, resolve_bank
 from bankscope.sec.company_registry import bank_identifier_variants, normalize_bank_text
 
-CONVERSATION_PROMPT_VERSION = "conversation-langgraph-router-v5-optional-tools"
+CONVERSATION_PROMPT_VERSION = "conversation-langgraph-router-v6-finance-technology-scope"
 CONVERSATION_REQUEST_TIMEOUT_SECONDS = 30.0
 CONVERSATION_MAX_OUTPUT_TOKENS = 1_600
 OUT_OF_SCOPE_CONFIDENCE_THRESHOLD = 0.8
@@ -157,24 +157,8 @@ class RouteDecision(BaseModel):
         elif self.action == "clarification":
             if not self.response_text or not self.missing:
                 raise ValueError("clarification requires response_text and missing")
-            if (
-                self.search_question is not None
-                or self.category is not None
-                or self.citation_ids
-                or self.presentation_guidance is not None
-            ):
-                raise ValueError("clarification permits only response_text and missing")
-        elif any(
-            value is not None
-            for value in (
-                self.search_question,
-                self.response_text,
-                self.category,
-                self.missing,
-                self.presentation_guidance,
-            )
-        ) or self.citation_ids:
-            raise ValueError("out_of_scope requires all action-specific fields to be null")
+        # Clarification and out_of_scope are terminal, server-rendered actions. Some strict-output
+        # gateways still populate optional fields; the pipeline never executes or renders them.
         return self
 
 
@@ -382,26 +366,29 @@ def render_capability_answer(question: str, bank_names: Mapping[str, str]) -> st
     names = ", ".join(bank_names.values())
     if _looks_serbian(question):
         return (
-            f"Mogu da pretražujem i poredim indeksirane 10-K izveštaje za: {names}. "
-            "Možeš da pitaš prirodno; ako nedostaje detalj koji menja pretragu, "
-            "postaviću jedno kratko podpitanje."
+            "Mogu da pomognem sa finansijama i tehnologijom, uključujući programiranje, "
+            "AI, cyber i poslovnu tehnologiju. Takođe mogu da pretražujem i poredim "
+            f"indeksirane 10-K izveštaje za: {names}. Ako nedostaje detalj koji menja "
+            "pretragu, postaviću jedno kratko podpitanje."
         )
     return (
-        f"I can search and compare indexed 10-K filings for: {names}. "
-        "Ask naturally; if a missing detail would change the research, I will ask one "
-        "short follow-up question."
+        "I can help with finance and technology, including programming, AI, cyber, and "
+        "enterprise technology. I can also search and compare indexed 10-K filings for: "
+        f"{names}. If a missing detail would change the research, I will ask one short "
+        "follow-up question."
     )
 
 
 def render_out_of_scope_answer(question: str) -> str:
     if _looks_serbian(question):
         return (
-            "Mogu da pomognem sa podržanim bankama, njihovim 10-K izveštajima, "
-            "finansijskim pokazateljima i opštim bankarskim temama."
+            "Ne odgovaram na pitanja van finansija i tehnologije. Mogu da pomognem sa "
+            "finansijama, bankama, tržištima, regulativom, programiranjem, AI, cyber i "
+            "poslovnom tehnologijom."
         )
     return (
-        "I can help with supported banks, their 10-K filings, financial metrics, "
-        "and general banking topics."
+        "I do not answer questions outside finance and technology. I can help with finance, "
+        "banks, markets, regulation, programming, AI, cyber, and enterprise technology."
     )
 
 
@@ -787,23 +774,36 @@ def _fallback_route(
 
 def _route_system_prompt() -> str:
     return (
-        "You are the conversation brain for BankScope: a capable general assistant with "
-        "specialized access to bank filings, web search, and a deterministic calculator. Return "
-        "one strict route. Use direct_response whenever no tool is needed, including normal "
-        "conversation, explanations, writing, planning, and other benign non-banking requests. "
-        "Never refuse a request merely because it is outside banking. Use filing_research for "
-        "claims that must come from a supported bank's indexed filing. Use web_research for "
-        "current, changing, or external facts. Use calculator whenever arithmetic is requested "
-        "or would materially improve numerical accuracy; put only a valid arithmetic expression "
-        "in search_question. Do not answer tool-worthy factual or arithmetic questions from "
-        "memory. Reserve out_of_scope for a request that genuinely cannot receive a safe, useful "
-        "response. For a contextual transform, "
+        "You are the conversation router for BankScope, a domain-focused finance and technology "
+        "assistant with specialized access to bank filings, web search, and a deterministic "
+        "calculator. Return one strict route. The allowed domain includes all finance and "
+        "technology topics, including banking, markets, regulation, financial metrics, "
+        "programming, AI, cyber, and enterprise technology. Normal conversation such as "
+        "greetings, acknowledgements, capability questions, clarifications, and transformations "
+        "of a previous allowed answer is also allowed. General arithmetic is allowed. Use "
+        "direct_response for an allowed request when no tool is needed. Use out_of_scope with "
+        "confidence at least 0.8 for requests unrelated to finance or technology, such as "
+        "recipes, cooking, travel planning, weather, sports, horoscopes, or entertainment. For "
+        "out_of_scope, do not answer the requested content and do not select any tool. Do not "
+        "treat an unrelated current request as allowed merely because prior history or session "
+        "state concerns a bank or technology. Use clarification only when it is genuinely "
+        "ambiguous whether the request connects to finance or technology. Use filing_research "
+        "for claims that must come from a supported bank's indexed filing. Use web_research only "
+        "for allowed current, changing, or external facts. Use calculator whenever arithmetic is "
+        "requested or would materially improve numerical accuracy; put only a valid arithmetic "
+        "expression in search_question. Do not answer tool-worthy factual or arithmetic "
+        "questions from memory. For a contextual transform, "
         "set category=contextual_transform, preserve only facts already present, and reuse only "
         "the supplied previous-answer citation labels. A request for a shorter answer must "
         "materially condense the previous answer by retaining its essential points. Use "
         "clarification only when a missing detail materially changes the task. "
         "The supplied bank_resolution is authoritative. Preserve every explicit bank, period, "
-        "number, metric, and qualifier in a search_question. For filing_research or web_research, "
+        "number, metric, and qualifier in a search_question. Copy the current question verbatim "
+        "unless a pronoun or elliptical follow-up must be resolved from user history. Even then, "
+        "make only that resolution: never add a source, filing type, year, implicit comparison "
+        "period, metric, topic, example, or entity, and never replace an explicit period with "
+        "relative recency. For "
+        "filing_research or web_research, "
         "infer style preferences and put only style/format instructions in presentation_guidance. "
         "First scan all prior user messages for standing instructions such as 'from now on', "
         "'always', or an explicit preference; these remain active until the user resets them. For "

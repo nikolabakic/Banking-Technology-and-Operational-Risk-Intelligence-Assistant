@@ -64,17 +64,20 @@ def test_conversation_routing_fixture_has_required_coverage() -> None:
 
     validate_cases(cases)
 
-    assert len(cases) == 45
+    assert len(cases) == 55
     actions = {case["expected_action"] for case in cases}
     assert actions == {
         "filing_research",
         "direct_response",
         "clarification",
+        "out_of_scope",
         "web_research",
         "calculator",
     }
     assert any("Citigroup's material cybersecurity risks" in case["question"] for case in cases)
     assert any(case["question"] == "Daj mi recept za pitu sa jabukama." for case in cases)
+    assert any(case["question"] == "How do Python async functions work?" for case in cases)
+    assert any(case["case_id"] == "out_stale_bank_history_54" for case in cases)
     assert any(
         case["question"] == "Korisnik pita kako Citi opisuje rizik modela." for case in cases
     )
@@ -96,15 +99,23 @@ def test_routing_summary_enforces_all_acceptance_thresholds() -> None:
             "action_correct": True,
             "scope_preserved": True,
         },
+        {
+            "expected_action": "out_of_scope",
+            "actual_action": "out_of_scope",
+            "expected_tickers": [],
+            "action_correct": True,
+            "scope_preserved": True,
+        },
     ]
 
     passing = summarize(rows)
     assert passing["supported_bank_filing_recall"] == 1.0
     assert passing["unrelated_no_retrieval_rate"] == 1.0
+    assert passing["out_of_scope_recall"] == 1.0
     assert passing["gate_passed"] is True
 
-    rows[1]["actual_action"] = "filing_research"
-    rows[1]["action_correct"] = False
+    rows[2]["actual_action"] = "direct_response"
+    rows[2]["action_correct"] = False
     assert summarize(rows)["gate_passed"] is False
 
 
@@ -113,7 +124,8 @@ def test_prompt_candidate_must_not_regress_against_baseline() -> None:
         "route_accuracy": 0.96,
         "supported_bank_filing_recall": 1.0,
         "unrelated_no_retrieval_rate": 1.0,
-        "scope_preservation_passes": 45,
+        "out_of_scope_recall": 1.0,
+        "scope_preservation_passes": 55,
     }
     candidate = {**baseline, "route_accuracy": 0.95}
 
@@ -123,7 +135,7 @@ def test_prompt_candidate_must_not_regress_against_baseline() -> None:
     assert comparison["regressions"]["route_accuracy"]["baseline"] == 0.96
 
 
-def test_all_45_routes_pass_offline_graph_evaluation_without_network() -> None:
+def test_all_55_routes_pass_offline_graph_evaluation_without_network() -> None:
     cases = read_jsonl("data/evaluation/conversation_routing_v1.jsonl")
     expected_actions = {case["question"]: case["expected_action"] for case in cases}
     graph = ConversationGraph(
@@ -152,8 +164,9 @@ def test_all_45_routes_pass_offline_graph_evaluation_without_network() -> None:
         )
 
     result = summarize(rows)
-    assert result["case_count"] == 45
+    assert result["case_count"] == 55
     assert result["route_accuracy"] == 1.0
     assert result["supported_bank_filing_recall"] == 1.0
     assert result["unrelated_no_retrieval_rate"] == 1.0
+    assert result["out_of_scope_recall"] == 1.0
     assert result["gate_passed"] is True

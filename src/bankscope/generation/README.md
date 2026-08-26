@@ -5,7 +5,8 @@
 ```mermaid
 flowchart TD
     Question[question + summary + bounded raw history] --> FrontDoor{strict conversation function}
-    FrontDoor -->|respond_directly| General[greeting / help / general explanation]
+    FrontDoor -->|respond_directly| General[in-scope explanation / conversation]
+    FrontDoor -->|decline_out_of_scope| Scope[finance / technology scope response]
     FrontDoor -->|ask_clarification| Clarify[one concise assistant question]
     FrontDoor -->|research_filings| Context[validated standalone search question]
     Context --> Resolve[resolve_bank with server-owned session scope]
@@ -51,7 +52,7 @@ retrieval/contextualization diagnostics. `retrieve_evidence()` returns a generat
 Threaded API calls explicitly pass conversation history, including an empty history for a new
 thread. That activates the conversational front door. CLI and compatibility callers that omit
 history keep the direct domain-pipeline contract. Every threaded turn returns a `dialog_act`:
-`answer`, `clarification`, a direct-conversation category, or `retryable_error`.
+`answer`, `clarification`, `out_of_scope`, a direct-conversation category, or `retryable_error`.
 
 ## Bounded agentic mode
 
@@ -104,17 +105,19 @@ presenting the already validated supported bank answers.
   the original question instead of terminating the turn. Focused retrieval searches the validated
   rewrite, the original wording, and a deterministic bank-scoped concept query for operational
   risk, cybersecurity, third-party risk, or CET1 when applicable.
-- Direct responses may handle any benign general request, even when a stale bank remains in thread
-  scope, but cannot bypass filing research for a new supported-bank filing claim. Capability
-  answers are rendered from the server-owned bank registry rather than model-authored bank names.
-- Current/external questions may invoke cited web search; arithmetic may invoke the bounded
+- Direct responses handle finance, technology, normal conversational turns, and transformations of
+  prior allowed answers, but cannot bypass filing research for a new supported-bank filing claim.
+  Requests outside finance and technology use the existing `out_of_scope` result without retrieval
+  or another tool, even when a stale bank remains in thread scope. Capability answers are rendered
+  from the server-owned bank registry rather than model-authored bank names.
+- Allowed current/external questions may invoke cited web search; arithmetic may invoke the bounded
   Decimal calculator. Neither path runs filing retrieval.
 - Single-bank generation selects one of four strict tools for supported numeric, supported
   narrative, ambiguous, or unsupported results. Truncation and contract-shape failures receive at
   most one repair retry; unsupported display text is server-rendered.
-- The model handles normal conversation and vague-CET1 semantics; deterministic policy validates
-  its source choice. Product-domain mismatch is not a refusal reason. One bank's validation failure
-  cannot abort the remaining comparison banks.
+- The model handles in-scope conversation, finance/technology scope decisions, and vague-CET1
+  semantics; deterministic policy validates its source choice. One bank's validation failure cannot
+  abort the remaining comparison banks.
 - A fully supported comparison adds one synthesis request after its per-bank calls; partial and
   fully unsupported comparisons do not.
 - Model-specific request options are explicit; responses pass strict Pydantic validation.

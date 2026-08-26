@@ -13,7 +13,8 @@ contains cross-cutting decisions, current status, and durable evaluation reports
 | [generation_hardening.md](generation_hardening.md) | Frozen GPT-5.1 candidate result and citation caveat |
 | [reliability-hardening.md](reliability-hardening.md) | Current failure analysis, GitHub research, controls, and verification contract |
 | [ADR 013](decisions/013-rag-reliability-hardening.md) | Current deterministic RAG and UI reliability boundaries |
-| [ADR 015](decisions/015-general-chat-web-and-calculator.md) | Current general-chat, calculator, web-search, and Ally reliability decision |
+| [ADR 016](decisions/016-finance-technology-conversation-scope.md) | Current conversation scope for direct answers and web search |
+| [ADR 015](decisions/015-general-chat-web-and-calculator.md) | Calculator, web-search, and Ally reliability decision; general-chat scope superseded by ADR 016 |
 | [ADR 012](decisions/012-bounded-hybrid-agent-loop.md) | Superseded bounded hybrid agentic retrieval design |
 | [ADR 011](decisions/011-eval-first-agentic-rag.md) | Superseded one-step experiment and measured evaluation result |
 
@@ -30,8 +31,8 @@ records the first one-step agentic experiment and its failed gate. ADR 012 intro
 search/read/verifier loop. ADR 013 keeps it disabled by default while tightening bank resolution,
 comparison decomposition, memory selection, evidence ordering, budgets, and UI transport safety.
 ADR 015 records why the reported Ally failure was a citation-schema ambiguity rather than a memory
-failure, broadens the conversational boundary, and compares the selected web-search provider with
-the fallback options.
+failure and compares the selected web-search provider with the fallback options. ADR 016 supersedes
+its general-chat boundary with the active finance-and-technology scope.
 
 ## Archived material
 

@@ -5,7 +5,7 @@ evaluation gate. Pydantic schemas define structure; prompts retain only semantic
 
 | Call | Prompt version | Inputs | Output contract | Evaluator / gate |
 |---|---|---|---|---|
-| Conversation router | `conversation-langgraph-router-v4-model-context` | Summary, bounded raw history, previous grounded answer, deterministic bank scope, current question | Strict `RouteDecision` function | `evaluate_conversation_routing.py`; ≥95% accuracy, 100% bank filing recall, 100% unrelated no-retrieval, zero scope violations |
+| Conversation router | `conversation-langgraph-router-v6-finance-technology-scope` | Summary, bounded raw history, previous grounded answer, deterministic bank scope, current question | Strict `RouteDecision` function | `evaluate_conversation_routing.py`; ≥95% accuracy, 100% bank filing recall, 100% out-of-scope recall, 100% expected no-retrieval, zero scope violations |
 | Conversation compaction | `conversation-summary-tool-v1` | Prior summary and old complete pairs | Strict `ConversationSummary` function | Memory unit tests; checkpoint and six-pair retention tests |
 | Grounded answer | `generation-grounded-tool-v7-presentation` | Current/resolved question, one-bank retrieved evidence, style guidance | Four mutually exclusive strict answer functions | Answer, citation, numeric, bank-isolation, and generation gates |
 | Comparison synthesis | `generation-comparison-synthesis-v5-presentation` | Validated per-bank answers and owned citation labels | Strict `ComparisonSynthesis` function | Comparison schema, coverage, citation ownership, and pipeline tests |

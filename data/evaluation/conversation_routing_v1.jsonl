@@ -18,14 +18,14 @@
 {"case_id":"filing_pita_word_18","question":"Korisnik pita kako Citi opisuje rizik modela.","expected_action":"filing_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
 {"case_id":"filing_followup_19","question":"What about 2024?","expected_action":"filing_research","expected_tickers":["JPM"],"history":[{"role":"user","content":"What was JPM's CET1 ratio in 2025?"},{"role":"assistant","content":"The filing answer was provided with citations."}],"session_tickers":["JPM"]}
 {"case_id":"filing_followup_20","question":"A kako su opisali sajber rizik?","expected_action":"filing_research","expected_tickers":["C"],"history":[{"role":"user","content":"Šta je Citi naveo o operativnom riziku?"},{"role":"assistant","content":"Odgovor je zasnovan na 10-K izveštaju."}],"session_tickers":["C"]}
-{"case_id":"direct_recipe_21","question":"Give me an apple pie recipe.","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
-{"case_id":"direct_recipe_sr_22","question":"Daj mi recept za pitu sa jabukama.","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":["JPM"]}
-{"case_id":"web_weather_23","question":"What is the weather forecast for Budapest?","expected_action":"web_research","expected_tickers":[],"history":[],"session_tickers":[]}
-{"case_id":"web_football_24","question":"Who won the football match last night?","expected_action":"web_research","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_recipe_21","question":"Give me an apple pie recipe.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_recipe_sr_22","question":"Daj mi recept za pitu sa jabukama.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":["JPM"]}
+{"case_id":"out_weather_23","question":"What is the weather forecast for Budapest?","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_football_24","question":"Who won the football match last night?","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
 {"case_id":"calculator_percent_25","question":"What is 17.5% of 2,400?","expected_action":"calculator","expected_tickers":[],"history":[],"session_tickers":[]}
-{"case_id":"direct_cooking_26","question":"How long should I cook pasta?","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
-{"case_id":"direct_basketball_27","question":"Objasni pravila košarke.","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
-{"case_id":"direct_travel_28","question":"Plan a three-day beach holiday.","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_cooking_26","question":"How long should I cook pasta?","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_basketball_27","question":"Objasni pravila košarke.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_travel_28","question":"Plan a three-day beach holiday.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
 {"case_id":"direct_greeting_29","question":"Hello!","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
 {"case_id":"direct_greeting_sr_30","question":"Zdravo!","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
 {"case_id":"direct_thanks_31","question":"Thank you.","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
@@ -43,3 +43,13 @@
 {"case_id":"web_market_43","question":"How did Bank of America stock trade this morning?","expected_action":"web_research","expected_tickers":["BAC"],"history":[],"session_tickers":[]}
 {"case_id":"web_price_sr_44","question":"Kolika je današnja cena Citi akcije?","expected_action":"web_research","expected_tickers":["C"],"history":[],"session_tickers":[]}
 {"case_id":"web_external_45","question":"What did regulators announce about JPM yesterday?","expected_action":"web_research","expected_tickers":["JPM"],"history":[],"session_tickers":[]}
+{"case_id":"direct_programming_46","question":"How do Python async functions work?","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"direct_ai_47","question":"Explain retrieval-augmented generation.","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"direct_cyber_48","question":"What is a zero-trust network architecture?","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"web_technology_49","question":"What is the latest stable Python version?","expected_action":"web_research","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"web_nonbank_finance_50","question":"What is Apple's share price today?","expected_action":"web_research","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_horoscope_51","question":"What does my horoscope say today?","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_entertainment_52","question":"Write me a pirate joke.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_travel_sr_53","question":"Planiraj mi vikend putovanje u Rim.","expected_action":"out_of_scope","expected_tickers":[],"history":[],"session_tickers":[]}
+{"case_id":"out_stale_bank_history_54","question":"Kakvo će vreme biti sutra u Beogradu?","expected_action":"out_of_scope","expected_tickers":[],"history":[{"role":"user","content":"Šta JPM navodi o sajber riziku?"},{"role":"assistant","content":"Odgovor je zasnovan na 10-K izveštaju."}],"session_tickers":["JPM"]}
+{"case_id":"direct_technology_sr_55","question":"Objasni osnovne principe zero-trust arhitekture.","expected_action":"direct_response","expected_tickers":[],"history":[],"session_tickers":[]}

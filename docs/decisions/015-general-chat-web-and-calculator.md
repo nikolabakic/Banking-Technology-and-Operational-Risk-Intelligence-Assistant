@@ -1,6 +1,6 @@
 # ADR 015: General chat with optional web and calculator tools
 
-- Status: Accepted
+- Status: Accepted; conversational scope superseded by ADR 016
 - Date: 2026-08-24
 
 ## Context

@@ -149,7 +149,11 @@ class FakeWebSearchProvider:
         ),
         (
             "Give me a recipe",
-            route_arguments("out_of_scope"),
+            route_arguments(
+                "out_of_scope",
+                response_text="I can only help with finance and technology.",
+                category="general_explanation",
+            ),
             DeclineOutOfScopeArgs,
         ),
         (
@@ -395,7 +399,20 @@ def test_low_confidence_out_of_scope_becomes_clarification() -> None:
     assert decision.reason == "low_confidence_out_of_scope_requires_clarification"
 
 
-def test_benign_non_banking_request_is_answered_as_general_chat() -> None:
+def test_recipe_is_declined_as_out_of_scope() -> None:
+    decision = ConversationGraph(
+        client=SimpleNamespace(),
+        model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        chat_model=FakeChatModel(route_arguments("out_of_scope")),
+    ).route("Give me a recipe for apple pie.", [])
+
+    assert isinstance(decision.action, DeclineOutOfScopeArgs)
+    assert decision.route_action == "out_of_scope"
+
+
+def test_general_technology_request_is_answered_directly() -> None:
     decision = ConversationGraph(
         client=SimpleNamespace(),
         model="test-model",
@@ -404,14 +421,13 @@ def test_benign_non_banking_request_is_answered_as_general_chat() -> None:
         chat_model=FakeChatModel(
             route_arguments(
                 "direct_response",
-                response_text="Here is an apple pie recipe.",
+                response_text="Async functions can suspend while awaiting I/O.",
                 category="general_explanation",
             )
         ),
-    ).route("Give me a recipe for apple pie.", [])
+    ).route("How do Python async functions work?", [])
 
     assert isinstance(decision.action, DirectResponseArgs)
-    assert decision.action.answer == "Here is an apple pie recipe."
     assert decision.route_action == "direct_response"
 
 
@@ -1087,13 +1103,8 @@ def test_web_rewrite_scope_violation_falls_back_to_original_question() -> None:
 
 
 def test_pipeline_recipe_does_not_retrieve_despite_stale_session_ticker() -> None:
-    model = FakeChatModel(
-        route_arguments(
-            "direct_response",
-            response_text="Pomešaj jabuke, cimet i šećer, pa ispeci u kori za pitu.",
-            category="general_explanation",
-        )
-    )
+    model = FakeChatModel(route_arguments("out_of_scope"))
+    web_provider = FakeWebSearchProvider()
     pipeline = BankAnswerPipeline(
         retriever=NeverCalled(),
         query_encoder=NeverCalled(),
@@ -1102,6 +1113,7 @@ def test_pipeline_recipe_does_not_retrieve_despite_stale_session_ticker() -> Non
         bank_names=BANK_NAMES,
         bank_aliases=BANK_ALIASES,
         conversation_model=model,
+        web_search_provider=web_provider,
     )
 
     run = pipeline.answer(
@@ -1113,11 +1125,13 @@ def test_pipeline_recipe_does_not_retrieve_despite_stale_session_ticker() -> Non
         ],
     )
 
-    assert run.output["dialog_act"] == "general_explanation"
-    assert run.output["status"] == "supported"
+    assert run.output["dialog_act"] == "out_of_scope"
+    assert run.output["status"] == "unsupported"
     assert run.output["retrieval"]["mode"] == "none"
     assert run.diagnostics["model_request_count"] == 1
+    assert run.diagnostics["route"] == "scope_guard"
     assert len(model.calls) == 1
+    assert web_provider.calls == []
 
 
 def test_pipeline_uses_deterministic_calculator_without_retrieval() -> None:
