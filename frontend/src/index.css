@@ -325,6 +325,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 .source-title small { margin-top: 4px; color: #7e8fa5; font-size: 9.5px; }
 .source-card > .ui-button { margin-top: 4px; text-decoration: none; }
 .source-loading { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 100px; color: #7488a0; font-size: 10px; }
+.show-context-button { margin-top: 8px; margin-bottom: 12px; color: #6f87a4; font-size: 10px; }
+.show-context-button .rotated { transform: rotate(180deg); transition: transform 0.2s ease; }
 .source-error { margin: 18px 0; padding: 13px; border: 1px solid #efcbd0; border-radius: 9px; color: #795158; background: #fff7f8; }
 .source-error.stale { border-color: #e6d49e; color: #725d28; background: #fffaf0; }
 .source-error strong { font-size: 11px; }

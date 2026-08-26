@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowRight,
   BadgeCheck,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -507,6 +508,7 @@ function SourcePanel({ source, onChange, onClose }: { source: OpenSource; onChan
   const sourcePosition = filingSources.findIndex((item) => item.index === source.index);
   const [context, setContext] = useState<CitationContext | null>(null);
   const [error, setError] = useState<{ message: string; stale: boolean } | null>(null);
+  const [showContextChunks, setShowContextChunks] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -551,12 +553,24 @@ function SourcePanel({ source, onChange, onClose }: { source: OpenSource; onChan
             </div>
             {!context && !error && <div className="source-loading"><span className="spinner" /> Loading canonical evidence…</div>}
             {error && <div className={`source-error ${error.stale ? "stale" : ""}`}><strong>{error.stale ? "Source version changed" : "Source unavailable"}</strong><p>{error.message}</p></div>}
-            {context?.chunks.map((chunk) => (
-              <section className={`context-chunk ${chunk.role}`} key={`${chunk.target_chunk_id}-${chunk.role}`}>
-                <small>{chunk.role === "anchor" ? "Cited evidence" : `${chunk.role} context`}</small>
-                <MarkdownContent text={chunk.document} />
-              </section>
-            ))}
+            {context?.chunks && context.chunks.some(chunk => chunk.role !== "anchor") && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowContextChunks(!showContextChunks)}
+                className="show-context-button"
+              >
+                <ChevronDown size={14} className={showContextChunks ? "rotated" : ""} />
+                {showContextChunks ? "Hide context" : "Show previous & next chunks"}
+              </Button>
+            )}
+            {context?.chunks?.filter(chunk => showContextChunks || chunk.role === "anchor")
+              .map((chunk) => (
+                <section className={`context-chunk ${chunk.role}`} key={`${chunk.target_chunk_id}-${chunk.role}`}>
+                  <small>{chunk.role === "anchor" ? "Cited evidence" : `${chunk.role} context`}</small>
+                  <MarkdownContent text={chunk.document} />
+                </section>
+              ))}
             {(context?.source_url || citation.source_url) && (
               <Button asChild variant="outline" size="sm"><a href={context?.source_url || citation.source_url} target="_blank" rel="noreferrer">Open original filing <ArrowRight size={14} /></a></Button>
             )}
