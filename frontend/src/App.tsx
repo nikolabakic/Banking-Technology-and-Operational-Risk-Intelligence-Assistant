@@ -1,4 +1,5 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   ArrowDown,
   ArrowRight,
@@ -40,14 +41,16 @@ import { uploadDocument } from "./api";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { MotionButton } from "@/components/ui/motion-button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/motion-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/motion-sheet";
+import { Skeleton } from "@/components/ui/motion-skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { FileUploadButton } from "@/components/ui/file-upload-button";
 import { FileList } from "@/components/ui/file-list";
+import { container, item, spring } from "@/components/ui/motion-presets";
 
 type OpenSource = {
   response: AnswerResponse;
@@ -208,24 +211,24 @@ function Composer({ value, onChange, onSubmit, onStop, loading, compact = false 
       />
       <div className="composer-footer">
         <span><Sparkles size={13} /> Bank and filing detection is automatic</span>
-        <div className="send-group">
+        <motion.div className="send-group" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
           {!compact && <small>Enter to send · Shift + Enter for a new line</small>}
           {loading ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button type="button" size="icon" className="send-button stop-button" onClick={onStop} aria-label="Stop generating"><Square size={14} fill="currentColor" /></Button>
+                <MotionButton type="button" size="icon" className="send-button stop-button" onClick={onStop} aria-label="Stop generating"><Square size={14} fill="currentColor" /></MotionButton>
               </TooltipTrigger>
               <TooltipContent>Stop generating</TooltipContent>
             </Tooltip>
           ) : (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button type="submit" size="icon" className="send-button" disabled={!value.trim()} aria-label="Send question"><Send size={17} /></Button>
+                <MotionButton type="submit" size="icon" className="send-button" disabled={!value.trim()} aria-label="Send question"><Send size={17} /></MotionButton>
               </TooltipTrigger>
               <TooltipContent>Send message</TooltipContent>
             </Tooltip>
           )}
-        </div>
+        </motion.div>
       </div>
     </form>
   );
@@ -241,29 +244,40 @@ function ThreadList({ threads, activeId, loading, onOpen, onRename, onDelete }: 
 }) {
   return (
     <ScrollArea className="thread-scroll">
-      <div className="thread-list">
+      <motion.div
+        className="thread-list"
+        variants={container}
+        initial="hidden"
+        animate="visible"
+      >
         <span className="thread-label">Recent conversations</span>
         {loading && (
           <div className="thread-skeletons" aria-label="Loading conversations">
-            <Skeleton /><Skeleton /><Skeleton />
+            <Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" />
           </div>
         )}
         {!loading && threads.length === 0 && (
-          <div className="thread-empty"><MessageSquare size={18} /><p>No saved conversations yet.</p></div>
+          <motion.div className="thread-empty" variants={item}><MessageSquare size={18} /><p>No saved conversations yet.</p></motion.div>
         )}
         {threads.map((thread) => (
-          <div className={`thread-item ${thread.id === activeId ? "active" : ""}`} key={thread.id}>
+          <motion.div
+            key={thread.id}
+            className={`thread-item ${thread.id === activeId ? "active" : ""}`}
+            variants={item}
+            whileHover={{ scale: 1.01 }}
+            transition={spring}
+          >
             <button className="thread-open" onClick={() => onOpen(thread.id)} title={thread.title} aria-current={thread.id === activeId ? "page" : undefined}>
               <MessageSquare size={15} />
               <span>{thread.title}</span>
             </button>
             <div className="thread-actions">
-              <Button variant="ghost" size="icon" onClick={() => onRename(thread)} aria-label={`Rename ${thread.title}`} title="Rename conversation"><Pencil size={14} /></Button>
-              <Button variant="ghost" size="icon" className="thread-delete" onClick={() => onDelete(thread)} aria-label={`Delete ${thread.title}`} title="Delete conversation"><Trash2 size={14} /></Button>
+              <MotionButton variant="ghost" size="icon" onClick={() => onRename(thread)} aria-label={`Rename ${thread.title}`} title="Rename conversation"><Pencil size={14} /></MotionButton>
+              <MotionButton variant="ghost" size="icon" className="thread-delete" onClick={() => onDelete(thread)} aria-label={`Delete ${thread.title}`} title="Delete conversation"><Trash2 size={14} /></MotionButton>
             </div>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
     </ScrollArea>
   );
 }
@@ -455,7 +469,12 @@ function AssistantTurn({ turn, copied, onCopy, onSource, onRetry, retryDisabled 
   retryDisabled: boolean;
 }) {
   return (
-    <article className="assistant-turn">
+    <motion.article
+      className="assistant-turn"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+    >
       <div className="assistant-heading">
         <span className="assistant-mark" aria-hidden="true"><img src="/brand/bankscope-target.svg" alt="" /></span>
         <div>
@@ -464,20 +483,45 @@ function AssistantTurn({ turn, copied, onCopy, onSource, onRetry, retryDisabled 
         </div>
       </div>
       {turn.state === "loading" && (
-        <div className="thinking-card" role="status">
-          <span className="spinner" />
-          <div><Skeleton /><Skeleton /><Skeleton /></div>
-        </div>
+        <motion.div
+          className="thinking-card"
+          role="status"
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={spring}
+        >
+          <motion.span className="spinner" animate={{ rotate: 360 }} transition={{ duration: 0.7, repeat: Infinity, ease: "linear" }} />
+          <div><Skeleton className="h-4 w-3/4" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-4 w-2/3" /></div>
+        </motion.div>
       )}
+      {turn.state === "error" && <div className="answer-actions error-diagnostics"><DiagnosticsPanel diagnostics={turn.diagnostics} /></div>}
       {turn.state === "error" && (
-        <><div className="error-card" role="alert"><strong>Answer could not be generated.</strong><p>{turn.error}</p></div><div className="answer-actions error-diagnostics"><DiagnosticsPanel diagnostics={turn.diagnostics} /></div></>
+        <motion.div
+          className="error-card"
+          role="alert"
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <strong>Answer could not be generated.</strong><p>{turn.error}</p>
+        </motion.div>
       )}
       {turn.state === "answered" && turn.response && (
-        <div className="answer-body">
+        <motion.div
+          className="answer-body"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+        >
           <AnswerText response={turn.response} onSource={(index) => onSource(turn.response!, index)} />
           <ComparisonResults response={turn.response} onSource={(index) => onSource(turn.response!, index)} />
           {hasAnswerMetadata(turn.response) && (
-            <div className="answer-meta">
+            <motion.div
+              className="answer-meta"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.2 }}
+            >
               {turn.response.ticker && <Badge variant="secondary">{turn.response.ticker} detected</Badge>}
               {turn.response.tickers && turn.response.tickers.length > 1 && (
                 <Badge variant="secondary">{turn.response.tickers.join(" vs ")}</Badge>
@@ -494,21 +538,26 @@ function AssistantTurn({ turn, copied, onCopy, onSource, onRetry, retryDisabled 
               {(turn.response.dialog_act === "answer" || turn.response.citations.length > 0 || turn.response.mode === "comparison") && (
                 <><span className="meta-separator" /><StatusBadge status={turn.response.status} /></>
               )}
-            </div>
+            </motion.div>
           )}
-          <div className="answer-actions">
-            <Button variant="ghost" size="sm" onClick={onCopy}><Copy size={14} /> {copied ? "Copied" : "Copy"}</Button>
+          <motion.div
+            className="answer-actions"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+          >
+            <MotionButton variant="ghost" size="sm" onClick={onCopy}><Copy size={14} /> {copied ? "Copied" : "Copy"}</MotionButton>
             {turn.response.dialog_act === "retryable_error" && (
-              <Button variant="outline" size="sm" disabled={retryDisabled} onClick={() => onRetry(turn.question)}>Retry</Button>
+              <MotionButton variant="outline" size="sm" disabled={retryDisabled} onClick={() => onRetry(turn.question)}>Retry</MotionButton>
             )}
             {turn.response.citations.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={() => onSource(turn.response!, 0)}><FileSearch size={14} /> Sources</Button>
+              <MotionButton variant="ghost" size="sm" onClick={() => onSource(turn.response!, 0)}><FileSearch size={14} /> Sources</MotionButton>
             )}
             <DiagnosticsPanel diagnostics={turn.response.diagnostics} />
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
-    </article>
+    </motion.article>
   );
 }
 
@@ -549,7 +598,7 @@ function SourcePanel({ source, onChange, onClose }: { source: OpenSource; onChan
 
   return (
     <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent className="source-panel" aria-describedby="source-description">
+      <SheetContent open className="source-panel" aria-describedby="source-description">
         <div className="source-header">
           <div>
             <span>Evidence viewer</span>
@@ -815,76 +864,156 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="app-shell persistent-shell">
-        <header className="app-header">
+        <motion.header
+          className="app-header"
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
           <div className="header-left">
-            <Button variant="ghost" size="icon" className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="Open conversations"><Menu size={20} /></Button>
-            <Brand />
+            <MotionButton variant="ghost" size="icon" className="mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="Open conversations"><Menu size={20} /></MotionButton>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
+              <Brand />
+            </motion.div>
           </div>
-          <div className="header-actions">
+          <motion.div
+            className="header-actions"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.3 }}
+          >
             <Badge variant="success" className="corpus-status"><i /> Corpus ready</Badge>
             <FileUploadButton
               onUpload={handleUploadDocument}
               threadId={activeThreadId ?? undefined}
             />
-            <Button variant="secondary" className="new-chat" onClick={newConversation}><Plus size={16} /> <span>New conversation</span></Button>
-          </div>
-        </header>
-        <div className="workspace">
+            <MotionButton variant="secondary" className="new-chat" onClick={newConversation}><Plus size={16} /> <span>New conversation</span></MotionButton>
+          </motion.div>
+        </motion.header>
+        <motion.div
+          className="workspace"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+        >
           <ThreadSidebar {...sidebarProps} />
-          <div className="workspace-main">
-            {pageError && <div className="page-error" role="alert"><span>{pageError}</span><Button variant="ghost" size="sm" onClick={() => setPageError(null)}>Dismiss</Button></div>}
+          <motion.div
+            className="workspace-main"
+            initial={{ opacity: 0, scale: 0.99 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3, delay: 0.35 }}
+          >
+            {pageError && (
+              <motion.div className="page-error" role="alert" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}>
+                <span>{pageError}</span>
+                <MotionButton variant="ghost" size="sm" onClick={() => setPageError(null)}>Dismiss</MotionButton>
+              </motion.div>
+            )}
             {historyLoading ? (
               <main className="welcome"><div className="source-loading"><span className="spinner" /> Loading conversation…</div></main>
             ) : showWelcome ? (
               <main className="welcome">
-                <section className="welcome-content">
-                  <div className="eyebrow"><Sparkles size={14} /> BankScope</div>
-                  <h1>Ask any question.<br /><span>Follow the evidence.</span></h1>
-                  <p>Chat naturally, calculate, research indexed bank filings, or search current web sources. Tool-based answers keep their evidence attached.</p>
-                  <Composer value={question} onChange={setQuestion} onSubmit={ask} onStop={stopGenerating} loading={loading} />
-                  <div className="suggestions"><span>Try a research prompt</span><div>
-                    {prompts.map((prompt) => (
-                      <button key={prompt.label} onClick={() => void ask(prompt.text)}>
-                        <span><strong>{prompt.label}</strong><small>{prompt.text}</small></span><ArrowRight size={16} />
-                      </button>
-                    ))}
-                  </div></div>
-                  <div className="trust-line"><BadgeCheck size={15} /> Filing and web claims stay linked to verifiable sources.</div>
-                </section>
+                <motion.section
+                  className="welcome-content"
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, ease: "easeOut" }}
+                >
+                  <motion.div className="eyebrow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
+                    <Sparkles size={14} /> BankScope
+                  </motion.div>
+                  <motion.h1
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                  >
+                    Ask any question.<br /><span>Follow the evidence.</span>
+                  </motion.h1>
+                  <motion.p
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4 }}
+                  >
+                    Chat naturally, calculate, research indexed bank filings, or search current web sources. Tool-based answers keep their evidence attached.
+                  </motion.p>
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.5 }}
+                  >
+                    <Composer value={question} onChange={setQuestion} onSubmit={ask} onStop={stopGenerating} loading={loading} />
+                  </motion.div>
+                  <motion.div className="suggestions" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }}>
+                    <span>Try a research prompt</span>
+                    <div>
+                      {prompts.map((prompt, index) => (
+                        <motion.button
+                          key={prompt.label}
+                          onClick={() => void ask(prompt.text)}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.7 + index * 0.05 }}
+                          whileHover={{ scale: 1.02, y: -2 }}
+                          whileTap={{ scale: 0.98 }}
+                        >
+                          <span><strong>{prompt.label}</strong><small>{prompt.text}</small></span><ArrowRight size={16} />
+                        </motion.button>
+                      ))}
+                    </div>
+                  </motion.div>
+                  <motion.div className="trust-line" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.9 }}>
+                    <BadgeCheck size={15} /> Filing and web claims stay linked to verifiable sources.
+                  </motion.div>
+                </motion.section>
               </main>
             ) : (
               <main className="conversation">
                 <div className="conversation-scroll" ref={conversationRef} onScroll={onConversationScroll}>
                   {activeThreadId && <FileList key={fileRefreshKey} threadId={activeThreadId} onFileDelete={refreshFiles} />}
                   <div className="conversation-list">
-                    {turns.map((turn) => (
-                      <section className="turn" key={turn.id}>
-                        <div className="user-turn"><span>You</span><p>{turn.question}</p></div>
-                        <AssistantTurn
-                          turn={turn}
-                          copied={copiedId === turn.id}
-                          onCopy={() => void copyAnswer(turn)}
-                          onSource={openCitation}
-                          onRetry={ask}
-                          retryDisabled={loading}
-                        />
-                      </section>
-                    ))}
+                    <AnimatePresence>
+                      {turns.map((turn) => (
+                        <motion.section
+                          key={turn.id}
+                          className="turn"
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.3, ease: "easeOut" }}
+                          layout
+                        >
+                          <div className="user-turn"><span>You</span><p>{turn.question}</p></div>
+                          <AssistantTurn
+                            turn={turn}
+                            copied={copiedId === turn.id}
+                            onCopy={() => void copyAnswer(turn)}
+                            onSource={openCitation}
+                            onRetry={ask}
+                            retryDisabled={loading}
+                          />
+                        </motion.section>
+                      ))}
+                    </AnimatePresence>
                     <div ref={endRef} />
                   </div>
                 </div>
-                {showScrollDown && <Button variant="outline" size="icon" className="scroll-bottom" onClick={scrollToBottom} aria-label="Scroll to latest message"><ArrowDown size={17} /></Button>}
-                <div className="conversation-composer">
+                {showScrollDown && <MotionButton variant="outline" size="icon" className="scroll-bottom" onClick={scrollToBottom} aria-label="Scroll to latest message"><ArrowDown size={17} /></MotionButton>}
+                <motion.div
+                  className="conversation-composer"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                >
                   <Composer compact value={question} onChange={setQuestion} onSubmit={ask} onStop={stopGenerating} loading={loading} />
                   <small className="composer-disclaimer">BankScope can make mistakes. Verify important details in the cited sources.</small>
-                </div>
+                </motion.div>
               </main>
             )}
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
 
         <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-          <SheetContent side="left" className="mobile-nav-sheet">
+          <SheetContent open={mobileNavOpen} side="left" className="mobile-nav-sheet">
             <SheetTitle className="sr-only">Conversations</SheetTitle>
             <SheetDescription className="sr-only">Browse and manage saved conversations.</SheetDescription>
             <ThreadSidebar {...sidebarProps} mobile />
@@ -892,7 +1021,7 @@ export default function App() {
         </Sheet>
 
         <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open) setRenameTarget(null); }}>
-          <DialogContent>
+          <DialogContent open={Boolean(renameTarget)}>
             <form onSubmit={(event) => void handleRename(event)}>
               <DialogHeader>
                 <DialogTitle>Rename conversation</DialogTitle>
@@ -900,8 +1029,8 @@ export default function App() {
               </DialogHeader>
               <input className="dialog-input" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} aria-label="Conversation title" autoFocus />
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setRenameTarget(null)}>Cancel</Button>
-                <Button type="submit" disabled={!renameValue.trim()}>Save title</Button>
+                <MotionButton type="button" variant="outline" onClick={() => setRenameTarget(null)}>Cancel</MotionButton>
+                <MotionButton type="submit" disabled={!renameValue.trim()}>Save title</MotionButton>
               </DialogFooter>
             </form>
           </DialogContent>
