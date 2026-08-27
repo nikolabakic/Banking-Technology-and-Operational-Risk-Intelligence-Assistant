@@ -4,10 +4,10 @@ import { Button } from "./button";
 import { LiquidGlassCard } from "@/components/kokonutui/liquid-glass-card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 import { UserDocument, listDocuments, deleteDocument } from "@/api";
+import { toast } from "sonner";
 
 interface FileListProps {
   threadId: string;
-  onFileDelete?: () => void;
 }
 
 const ALLOWED_TYPES: Record<string, string> = {
@@ -67,7 +67,7 @@ function getFileColor(contentType: string): string {
   return colors[type] || "default";
 }
 
-export function FileList({ threadId, onFileDelete }: FileListProps) {
+export function FileList({ threadId }: FileListProps) {
   const [files, setFiles] = useState<UserDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -96,7 +96,7 @@ export function FileList({ threadId, onFileDelete }: FileListProps) {
     try {
       await deleteDocument(documentId);
       setFiles((prev) => prev.filter((f) => f.id !== documentId));
-      onFileDelete?.();
+      toast.success("Document removed");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete file");
     }
@@ -107,13 +107,13 @@ export function FileList({ threadId, onFileDelete }: FileListProps) {
   return (
     <div className="file-list">
       {loading && (
-        <div className="file-list-loading">
+        <div className="file-list-loading" role="status">
           <span className="spinner" /> Loading files...
         </div>
       )}
 
       {error && (
-        <div className="file-list-error">
+        <div className="file-list-error" role="alert">
           <span>{error}</span>
         </div>
       )}

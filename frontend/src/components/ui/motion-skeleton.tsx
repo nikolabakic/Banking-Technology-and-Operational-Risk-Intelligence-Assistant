@@ -1,4 +1,3 @@
-import type * as React from "react";
 import { motion, type HTMLMotionProps } from "motion/react";
 import { cn } from "@/lib/utils";
 
@@ -30,23 +29,4 @@ function Skeleton({
   );
 }
 
-function SkeletonText({
-  className,
-  lines = 1,
-  width = "100%",
-  ...props
-}: React.ComponentProps<"div"> & { lines?: number; width?: string | number }) {
-  return (
-    <div className={cn("flex flex-col gap-2", className)} {...props}>
-      {Array.from({ length: lines }).map((_, i) => (
-        <Skeleton
-          key={i}
-          className="h-4"
-          style={{ width: i === lines - 1 ? width : "100%" }}
-        />
-      ))}
-    </div>
-  );
-}
-
-export { Skeleton, SkeletonText };
+export { Skeleton };

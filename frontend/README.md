@@ -10,7 +10,8 @@ cited web answers, and deterministic calculations.
 - React 19 + TypeScript + Vite
 - Geist variable font
 - Lucide icons
-- CSS design tokens using BankScope blue `#3459b1` and red `#ee413b`
+- formal primitive, semantic, structural, and motion tokens
+- Radix UI primitives with BankScope feature components
 
 ## Architecture
 
@@ -20,7 +21,7 @@ flowchart LR
     App --> Client[api.ts typed client]
     Client -->|REST + SSE through Vite proxy| API[FastAPI :8000]
     API --> Client
-    App --> Sources[Citation sheet]
+    App --> Sources[Lazy citation sheet]
     App --> Threads[Thread navigation]
     Components[components/ui] --> App
 ```
@@ -96,7 +97,31 @@ flag back to `false` and restarting restores baseline routing/retrieval behavior
 npm.cmd run lint
 npm.cmd test
 npm.cmd run build
+npm.cmd run test:a11y
+npm.cmd run analyze
 ```
+
+`test:a11y` runs focused Chromium + axe checks for critical workspace flows. Automated checks catch
+common violations; they do not establish complete WCAG conformance. Install the Playwright browser
+once with `npx playwright install chromium`. `analyze` writes a static bundle report during a
+separate production build and does not affect normal builds.
+
+## Design system
+
+Reusable decisions live in `src/styles/`: `tokens.css` defines primitive and structural values,
+`themes.css` maps the semantic BankScope color roles, `globals.css` owns document defaults, and
+`motion.css` owns keyframes and the reduced-motion policy. `index.css` contains primitive and
+application component styles. Keep new feature styles on semantic tokens rather than adding a new
+hard-coded palette.
+
+Generic reusable controls belong in `src/components/ui`. Add a primitive there only when it is
+behavior-light and useful across features. BankScope-specific interfaces belong in the closest
+`src/features/<feature>` directory; do not make a generic primitive depend on filing or chat types.
+
+Storybook was not added in this pass: documenting the live design system was lower-cost than adding
+and maintaining another Vite build surface while the components still rely on the application CSS
+entry point. ESLint's JSX accessibility plugin was also not forced because its current stable
+release declares support only through ESLint 9 while this repository uses ESLint 10.
 
 ## Brand assets
 

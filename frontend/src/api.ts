@@ -647,15 +647,6 @@ export type DocumentListResponse = {
   documents: UserDocument[];
 };
 
-export type DocumentResponse = {
-  document: UserDocument;
-};
-
-export type DocumentContentResponse = {
-  content: string;
-  document: UserDocument;
-};
-
 // Document API functions
 export async function uploadDocument(file: File, threadId?: string): Promise<UserDocument> {
   const formData = new FormData();
@@ -686,16 +677,6 @@ export async function listDocuments(threadId?: string, signal?: AbortSignal): Pr
   const url = threadId ? `/api/documents?thread_id=${encodeURIComponent(threadId)}` : "/api/documents";
   const payload = await requestJson<DocumentListResponse>(url, { signal });
   return payload.documents;
-}
-
-export async function getDocument(documentId: string, signal?: AbortSignal): Promise<UserDocument> {
-  const payload = await requestJson<DocumentResponse>(`/api/documents/${documentId}`, { signal });
-  return payload.document;
-}
-
-export async function getDocumentContent(documentId: string, signal?: AbortSignal): Promise<DocumentContentResponse> {
-  const payload = await requestJson<DocumentContentResponse>(`/api/documents/${documentId}/content`, { signal });
-  return payload;
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {

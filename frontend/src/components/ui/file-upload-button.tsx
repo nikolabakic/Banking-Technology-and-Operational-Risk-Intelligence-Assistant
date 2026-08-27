@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Plus } from "lucide-react";
 import { AttractButton } from "@/components/kokonutui/attract-button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
-import { FileUploadDialog } from "./file-upload-dialog";
+
+const FileUploadDialog = lazy(() => import("./file-upload-dialog").then((module) => ({ default: module.FileUploadDialog })));
 
 interface FileUploadButtonProps {
   threadId?: string;
@@ -51,13 +52,17 @@ export function FileUploadButton({
         <TooltipContent>Upload document</TooltipContent>
       </Tooltip>
 
-      <FileUploadDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        onUpload={handleUpload}
-        threadId={threadId}
-        loading={uploading}
-      />
+      {dialogOpen && (
+        <Suspense fallback={<span className="sr-only" role="status">Opening upload dialog…</span>}>
+          <FileUploadDialog
+            open
+            onOpenChange={setDialogOpen}
+            onUpload={handleUpload}
+            threadId={threadId}
+            loading={uploading}
+          />
+        </Suspense>
+      )}
     </>
   );
 }

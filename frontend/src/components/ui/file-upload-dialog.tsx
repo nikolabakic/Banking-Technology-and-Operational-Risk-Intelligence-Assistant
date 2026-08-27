@@ -134,7 +134,7 @@ export function FileUploadDialog({ open, onOpenChange, onUpload, threadId, loadi
                     <span className="file-name">{file.name}</span>
                     <span className="file-size">{formatFileSize(file.size)}</span>
                   </div>
-                  <Button type="button" variant="ghost" size="icon" onClick={handleRemoveFile}>
+                  <Button type="button" variant="ghost" size="icon" onClick={handleRemoveFile} aria-label={`Remove ${file.name}`}>
                     <X size={16} />
                   </Button>
                 </div>
@@ -142,28 +142,21 @@ export function FileUploadDialog({ open, onOpenChange, onUpload, threadId, loadi
             )}
 
             {status.type === "uploading" && (
-              <div className="upload-status uploading">
+              <div className="upload-status uploading" role="status" aria-live="polite">
                 <span className="spinner" />
                 <span>{status.message} ({status.fileName})</span>
               </div>
             )}
 
             {status.type === "success" && (
-              <div className="upload-status success">
+              <div className="upload-status success" role="status" aria-live="polite">
                 <CheckCircle size={16} />
                 <span>{status.message}</span>
               </div>
             )}
 
-            {status.type === "error" && (
-              <div className="upload-status error">
-                <AlertCircle size={16} />
-                <span>{status.message}</span>
-              </div>
-            )}
-
             {error && (
-              <div className="file-upload-error">
+              <div className="file-upload-error" role="alert">
                 <AlertCircle size={16} />
                 <span>{error}</span>
               </div>

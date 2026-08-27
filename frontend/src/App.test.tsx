@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   loadCitationContext: vi.fn(),
   createThread: vi.fn(),
   streamAnswer: vi.fn(),
+  uploadDocument: vi.fn(),
 }));
 
 vi.mock("./api", async (importOriginal) => ({
@@ -88,6 +89,11 @@ const context: CitationContext = {
   }],
 };
 
+function RouteControls() {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate("/")}>Go to empty workspace</button>;
+}
+
 function renderThread() {
   return render(
     <MemoryRouter initialEntries={[`/chats/${thread.id}`]}>
@@ -105,6 +111,7 @@ describe("persistent chat workspace", () => {
     mocks.deleteThread.mockResolvedValue(undefined);
     mocks.loadCitationContext.mockResolvedValue(context);
     mocks.streamAnswer.mockResolvedValue(turn);
+    mocks.uploadDocument.mockResolvedValue(undefined);
   });
 
   it("restores a saved thread and opens its canonical citation source", async () => {
@@ -258,6 +265,102 @@ describe("persistent chat workspace", () => {
 
     expect(mocks.createThread).toHaveBeenCalledTimes(1);
     expect(mocks.streamAnswer).not.toHaveBeenCalled();
+  });
+
+  it("preserves a newly created conversation when the initial thread list resolves late", async () => {
+    const newThread = { ...thread, id: "77777777-7777-4777-8777-777777777777", title: "New fast thread" };
+    let resolveThreads!: (threads: ThreadSummary[]) => void;
+    mocks.listThreads.mockReturnValue(new Promise((resolve) => { resolveThreads = resolve; }));
+    mocks.createThread.mockResolvedValue(newThread);
+    mocks.streamAnswer.mockReturnValue(new Promise<Turn>(() => undefined));
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    const composer = screen.getByRole("textbox", { name: "Research question" });
+    fireEvent.change(composer, { target: { value: "Create immediately" } });
+    fireEvent.submit(composer.closest("form")!);
+    await waitFor(() => expect(mocks.streamAnswer).toHaveBeenCalledWith(
+      newThread.id,
+      "Create immediately",
+      expect.any(Function),
+      expect.any(AbortSignal),
+    ));
+
+    resolveThreads([thread]);
+
+    expect(await screen.findByTitle(newThread.title)).toBeInTheDocument();
+    expect(await screen.findByTitle(thread.title)).toBeInTheDocument();
+  });
+
+  it("removes a conversation created for an upload when the upload fails", async () => {
+    const uploadThread = { ...thread, id: "88888888-8888-4888-8888-888888888888", title: "File: broken.pdf" };
+    mocks.createThread.mockResolvedValue(uploadThread);
+    mocks.uploadDocument.mockRejectedValue(new Error("Upload failed safely"));
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Upload file" }));
+    const input = await screen.findByLabelText("Choose document to upload");
+    fireEvent.change(input, {
+      target: { files: [new File(["broken"], "broken.pdf", { type: "application/pdf" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload File" }));
+
+    await waitFor(() => expect(mocks.deleteThread).toHaveBeenCalledWith(uploadThread.id));
+    expect(await screen.findByText("Upload failed safely")).toBeInTheDocument();
+    expect(screen.queryByTitle(uploadThread.title)).not.toBeInTheDocument();
+  });
+
+  it("does not carry a previous conversation into a thread created after returning home", async () => {
+    const newThread = { ...thread, id: "66666666-6666-4666-8666-666666666666", title: "New conversation" };
+    mocks.createThread.mockResolvedValue(newThread);
+    mocks.streamAnswer.mockReturnValue(new Promise<Turn>(() => undefined));
+    render(
+      <MemoryRouter initialEntries={[`/chats/${thread.id}`]}>
+        <RouteControls />
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(response.question)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Go to empty workspace" }));
+    await waitFor(() => expect(screen.queryByText(response.question)).not.toBeInTheDocument());
+
+    const composer = screen.getByRole("textbox", { name: "Research question" });
+    fireEvent.change(composer, { target: { value: "Start clean" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    await waitFor(() => expect(mocks.streamAnswer).toHaveBeenCalledWith(
+      newThread.id,
+      "Start clean",
+      expect.any(Function),
+      expect.any(AbortSignal),
+    ));
+    expect(screen.queryByText(response.question)).not.toBeInTheDocument();
+    expect(await screen.findByText("Start clean")).toBeInTheDocument();
+  });
+
+  it("ignores a previous thread load that resolves after navigation returned home", async () => {
+    let resolveHistory!: (history: { thread: ThreadSummary; turns: Turn[] }) => void;
+    mocks.loadThread.mockReturnValue(new Promise((resolve) => { resolveHistory = resolve; }));
+    render(
+      <MemoryRouter initialEntries={[`/chats/${thread.id}`]}>
+        <RouteControls />
+        <App />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Go to empty workspace" }));
+    resolveHistory({ thread, turns: [turn] });
+
+    expect(await screen.findByRole("textbox", { name: "Research question" })).toBeInTheDocument();
+    expect(screen.queryByText(response.question)).not.toBeInTheDocument();
   });
 
   it("renders web citations as safe external links without opening the filing evidence viewer", async () => {

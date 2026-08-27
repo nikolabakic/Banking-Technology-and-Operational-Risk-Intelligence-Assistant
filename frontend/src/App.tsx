@@ -1,11 +1,10 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { lazy, Suspense, type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { toast } from "sonner";
 import {
   ArrowDown,
   ArrowRight,
   BadgeCheck,
-  ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Copy,
   FileSearch,
@@ -20,19 +19,14 @@ import {
 } from "lucide-react";
 import { useMatch, useNavigate } from "react-router-dom";
 import {
-  ApiError,
   createThread,
   deleteThread,
   listThreads,
-  loadCitationContext,
   loadThread,
   renameThread,
   streamAnswer,
   type AnswerResponse,
-  type CitationContext,
   type Diagnostics,
-  type DocumentCitation,
-  type FilingCitation,
   type ThreadSummary,
   type Turn,
 } from "./api";
@@ -51,12 +45,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { FileUploadButton } from "@/components/ui/file-upload-button";
 import { FileList } from "@/components/ui/file-list";
 import { container, item, spring } from "@/components/ui/motion-presets";
+import { FeatureErrorBoundary } from "@/components/FeatureErrorBoundary";
+import type { OpenSource } from "@/features/citations/SourcePanel";
 
-type OpenSource = {
-  response: AnswerResponse;
-  index: number;
-  citation: FilingCitation | DocumentCitation;
-};
+const SourcePanel = lazy(() => import("@/features/citations/SourcePanel"));
 type AnswerStatus = AnswerResponse["status"];
 
 const statusVariants: Record<AnswerStatus, "success" | "warning" | "danger"> = {
@@ -216,14 +208,14 @@ function Composer({ value, onChange, onSubmit, onStop, loading, compact = false 
           {loading ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <MotionButton type="button" size="icon" className="send-button stop-button" onClick={onStop} aria-label="Stop generating"><Square size={14} fill="currentColor" /></MotionButton>
+                <MotionButton type="button" size="icon" className="send-button stop-button" whileHover={{ scale: 1 }} onClick={onStop} aria-label="Stop generating"><Square size={14} fill="currentColor" /></MotionButton>
               </TooltipTrigger>
               <TooltipContent>Stop generating</TooltipContent>
             </Tooltip>
           ) : (
             <Tooltip>
               <TooltipTrigger asChild>
-                <MotionButton type="submit" size="icon" className="send-button" disabled={!value.trim()} aria-label="Send question"><Send size={17} /></MotionButton>
+                <MotionButton type="submit" size="icon" className="send-button" whileHover={{ scale: 1 }} disabled={!value.trim()} aria-label="Send question"><Send size={17} /></MotionButton>
               </TooltipTrigger>
               <TooltipContent>Send message</TooltipContent>
             </Tooltip>
@@ -253,7 +245,7 @@ function ThreadList({ threads, activeId, loading, onOpen, onRename, onDelete }: 
         <span className="thread-label">Recent conversations</span>
         {loading && (
           <div className="thread-skeletons" aria-label="Loading conversations">
-            <Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" />
+            <Skeleton className="thread-list-skeleton" /><Skeleton className="thread-list-skeleton" /><Skeleton className="thread-list-skeleton" />
           </div>
         )}
         {!loading && threads.length === 0 && (
@@ -491,7 +483,7 @@ function AssistantTurn({ turn, copied, onCopy, onSource, onRetry, retryDisabled 
           transition={spring}
         >
           <motion.span className="spinner" animate={{ rotate: 360 }} transition={{ duration: 0.7, repeat: Infinity, ease: "linear" }} />
-          <div><Skeleton className="h-4 w-3/4" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-4 w-2/3" /></div>
+          <div><Skeleton className="answer-skeleton answer-skeleton-wide" /><Skeleton className="answer-skeleton answer-skeleton-short" /><Skeleton className="answer-skeleton answer-skeleton-medium" /></div>
         </motion.div>
       )}
       {turn.state === "error" && <div className="answer-actions error-diagnostics"><DiagnosticsPanel diagnostics={turn.diagnostics} /></div>}
@@ -561,97 +553,6 @@ function AssistantTurn({ turn, copied, onCopy, onSource, onRetry, retryDisabled 
   );
 }
 
-function metadataValue(chunk: CitationContext["chunks"][number] | undefined, key: string): string {
-  const value = chunk?.metadata?.[key];
-  return typeof value === "string" || typeof value === "number" ? String(value) : "";
-}
-
-function SourcePanel({ source, onChange, onClose }: { source: OpenSource; onChange: (index: number) => void; onClose: () => void }) {
-  const citation = source.citation;
-  const filingSources = source.response.citations.flatMap((item, index) => (
-    item.kind === "filing" ? [{ citation: item, index }] : []
-  ));
-  const sourcePosition = filingSources.findIndex((item) => item.index === source.index);
-  const [context, setContext] = useState<CitationContext | null>(null);
-  const [error, setError] = useState<{ message: string; stale: boolean } | null>(null);
-  const [showContextChunks, setShowContextChunks] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    loadCitationContext(citation.citation_id, controller.signal)
-      .then(setContext)
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted) return;
-        const apiError = caught instanceof ApiError ? caught : null;
-        setError({
-          message: caught instanceof Error ? caught.message : "The citation source is unavailable.",
-          stale: apiError?.code === "citation_corpus_mismatch",
-        });
-      });
-    return () => controller.abort();
-  }, [citation.citation_id]);
-
-  const anchor = context?.chunks.find((chunk) => chunk.role === "anchor");
-  const page = (citation.display_page_start ?? citation.page_start ?? metadataValue(anchor, "start_display_page")) || metadataValue(anchor, "page_start");
-  const section = citation.section_title || metadataValue(anchor, "section_title") || "Filing evidence";
-  const filingDate = citation.filing_date || metadataValue(anchor, "filing_date");
-
-  return (
-    <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent open className="source-panel" aria-describedby="source-description">
-        <div className="source-header">
-          <div>
-            <span>Evidence viewer</span>
-            <SheetTitle>{filingSources.length} {filingSources.length === 1 ? "source" : "sources"}</SheetTitle>
-            <SheetDescription id="source-description">Canonical filing context for this answer.</SheetDescription>
-          </div>
-        </div>
-        <div className="source-tabs" role="tablist" aria-label="Answer sources">
-          {filingSources.map((item) => (
-            <button key={item.citation.citation_id} role="tab" aria-selected={item.index === source.index} className={item.index === source.index ? "active" : ""} onClick={() => onChange(item.index)}>{item.citation.label}</button>
-          ))}
-        </div>
-        <ScrollArea className="source-scroll">
-          <div className="source-card">
-            <div className="source-title">
-              <Badge>{citation.ticker || source.response.ticker || "SEC"}</Badge>
-              <div><strong>{section}</strong><small>{[citation.record_type, page ? `page ${page}` : "", filingDate].filter(Boolean).join(" · ")}</small></div>
-            </div>
-            {!context && !error && <div className="source-loading"><span className="spinner" /> Loading canonical evidence…</div>}
-            {error && <div className={`source-error ${error.stale ? "stale" : ""}`}><strong>{error.stale ? "Source version changed" : "Source unavailable"}</strong><p>{error.message}</p></div>}
-            {context?.chunks && context.chunks.some(chunk => chunk.role !== "anchor") && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowContextChunks(!showContextChunks)}
-                className="show-context-button"
-              >
-                <ChevronDown size={14} className={showContextChunks ? "rotated" : ""} />
-                {showContextChunks ? "Hide context" : "Show previous & next chunks"}
-              </Button>
-            )}
-            {context?.chunks?.filter(chunk => showContextChunks || chunk.role === "anchor")
-              .map((chunk) => (
-                <section className={`context-chunk ${chunk.role}`} key={`${chunk.target_chunk_id}-${chunk.role}`}>
-                  <small>{chunk.role === "anchor" ? "Cited evidence" : `${chunk.role} context`}</small>
-                  <MarkdownContent text={chunk.document} />
-                </section>
-              ))}
-            {(context?.source_url || citation.source_url) && (
-              <Button asChild variant="outline" size="sm"><a href={context?.source_url || citation.source_url} target="_blank" rel="noreferrer">Open original filing <ArrowRight size={14} /></a></Button>
-            )}
-          </div>
-        </ScrollArea>
-        <div className="source-navigation">
-          <Button variant="ghost" size="sm" disabled={sourcePosition <= 0} onClick={() => onChange(filingSources[sourcePosition - 1].index)}><ChevronLeft size={15} /> Previous</Button>
-          <span>{sourcePosition + 1} of {filingSources.length}</span>
-          <Button variant="ghost" size="sm" disabled={sourcePosition < 0 || sourcePosition === filingSources.length - 1} onClick={() => onChange(filingSources[sourcePosition + 1].index)}>Next <ChevronRight size={15} /></Button>
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
 export default function App() {
   const navigate = useNavigate();
   const match = useMatch("/chats/:threadId");
@@ -675,6 +576,8 @@ export default function App() {
   const conversationRef = useRef<HTMLDivElement>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const locallyCreatedThreadIdsRef = useRef(new Set<string>());
+  const initialThreadListPendingRef = useRef(true);
 
   const refreshThreads = async () => {
     const next = await listThreads();
@@ -688,26 +591,58 @@ export default function App() {
 
   const handleUploadDocument = async (file: File, threadId?: string) => {
     let targetThreadId = threadId;
+    let newThread: ThreadSummary | null = null;
 
-    // If no active thread, create a new conversation for the file
     if (!targetThreadId) {
-      const newThread = await createThread(`File: ${file.name}`);
+      newThread = await createThread(`File: ${file.name}`);
       targetThreadId = newThread.id;
+    }
+
+    try {
+      await uploadDocument(file, targetThreadId);
+    } catch (error) {
+      if (newThread) {
+        try {
+          await deleteThread(newThread.id);
+        } catch (cleanupError) {
+          setPageError(cleanupError instanceof Error ? cleanupError.message : "Could not remove the empty conversation.");
+        }
+      }
+      throw error;
+    }
+
+    if (newThread) {
+      if (initialThreadListPendingRef.current) locallyCreatedThreadIdsRef.current.add(newThread.id);
+      setQuestion("");
+      setTurns([]);
+      setOpenSource(null);
       setThreads((current) => [newThread, ...current]);
       setLoadedThreadId(newThread.id);
       navigate(`/chats/${newThread.id}`);
     }
-
-    await uploadDocument(file, targetThreadId);
     refreshFiles();
   };
 
   useEffect(() => {
     const controller = new AbortController();
     listThreads(controller.signal)
-      .then(setThreads)
+      .then((listedThreads) => {
+        if (controller.signal.aborted) return;
+        setThreads((current) => {
+          const listedIds = new Set(listedThreads.map((thread) => thread.id));
+          const locallyCreated = current.filter((thread) => (
+            locallyCreatedThreadIdsRef.current.has(thread.id) && !listedIds.has(thread.id)
+          ));
+          return [...locallyCreated, ...listedThreads];
+        });
+        locallyCreatedThreadIdsRef.current.clear();
+        initialThreadListPendingRef.current = false;
+      })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setPageError(error instanceof Error ? error.message : "Could not load conversations.");
+        if (!controller.signal.aborted) {
+          initialThreadListPendingRef.current = false;
+          setPageError(error instanceof Error ? error.message : "Could not load conversations.");
+        }
       })
       .finally(() => { if (!controller.signal.aborted) setThreadsLoading(false); });
     return () => controller.abort();
@@ -718,6 +653,7 @@ export default function App() {
     const controller = new AbortController();
     loadThread(activeThreadId, controller.signal)
       .then((history) => {
+        if (controller.signal.aborted) return;
         setTurns(history.turns);
         setLoadedThreadId(activeThreadId);
         shouldAutoScrollRef.current = true;
@@ -745,6 +681,8 @@ export default function App() {
       if (!threadId) {
         const thread = await createThread();
         threadId = thread.id;
+        if (initialThreadListPendingRef.current) locallyCreatedThreadIdsRef.current.add(thread.id);
+        setTurns([]);
         setThreads((current) => [thread, ...current]);
         setLoadedThreadId(thread.id);
         navigate(`/chats/${thread.id}`);
@@ -813,6 +751,7 @@ export default function App() {
       const updated = await renameThread(renameTarget.id, title);
       setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
       setRenameTarget(null);
+      toast.success("Conversation renamed");
     } catch (error) { setPageError(error instanceof Error ? error.message : "Could not rename conversation."); }
   };
 
@@ -823,6 +762,7 @@ export default function App() {
       setThreads((current) => current.filter((item) => item.id !== deleteTarget.id));
       if (activeThreadId === deleteTarget.id) newConversation();
       setDeleteTarget(null);
+      toast.success("Conversation deleted");
     } catch (error) { setPageError(error instanceof Error ? error.message : "Could not delete conversation."); }
   };
 
@@ -830,6 +770,7 @@ export default function App() {
     if (!turn.response) return;
     await navigator.clipboard.writeText(turn.response.answer);
     setCopiedId(turn.id);
+    toast.success("Answer copied to clipboard");
     window.setTimeout(() => setCopiedId(null), 1400);
   };
 
@@ -969,7 +910,7 @@ export default function App() {
             ) : (
               <main className="conversation">
                 <div className="conversation-scroll" ref={conversationRef} onScroll={onConversationScroll}>
-                  {activeThreadId && <FileList key={fileRefreshKey} threadId={activeThreadId} onFileDelete={refreshFiles} />}
+                  {activeThreadId && <FileList key={fileRefreshKey} threadId={activeThreadId} />}
                   <div className="conversation-list">
                     <AnimatePresence>
                       {turns.map((turn) => (
@@ -1049,8 +990,12 @@ export default function App() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {openSource && (
-          <SourcePanel key={openSource.citation.citation_id} source={openSource} onChange={(index) => openCitation(openSource.response, index)} onClose={() => setOpenSource(null)} />
+        {openSource && activeThreadId && (
+          <FeatureErrorBoundary feature="Evidence viewer">
+            <Suspense fallback={<div className="source-panel-loading" role="status">Opening evidence viewer…</div>}>
+              <SourcePanel key={openSource.citation.citation_id} source={openSource} markdown={MarkdownContent} onChange={(index) => openCitation(openSource.response, index)} onClose={() => setOpenSource(null)} />
+            </Suspense>
+          </FeatureErrorBoundary>
         )}
       </div>
     </TooltipProvider>

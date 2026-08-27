@@ -1,10 +1,18 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath, URL } from "node:url";
+import { analyzer } from "vite-bundle-analyzer";
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
+export default defineConfig(({ mode }) => ({
+  plugins: [
+    react(),
+    mode === "analyze" && analyzer({
+      analyzerMode: "static",
+      fileName: "bundle-report",
+      openAnalyzer: false,
+      reportTitle: "BankScope frontend bundle",
+    }),
+  ],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -16,4 +24,4 @@ export default defineConfig({
       "/api": "http://127.0.0.1:8000",
     },
   },
-});
+}));

@@ -1,0 +1,42 @@
+:root {
+  color-scheme: light;
+  --color-background: #f8fbff;
+  --color-surface: #f8fbff;
+  --color-surface-elevated: #ffffff;
+  --color-surface-subtle: #f1f6fc;
+  --color-text: #10213f;
+  --color-text-muted: #657590;
+  --color-primary: var(--blue-600);
+  --color-primary-hover: var(--blue-700);
+  --color-border: #d6deed;
+  --color-focus: rgb(52 89 177 / 48%);
+  --color-success: #145c38;
+  --color-success-border: #91cfad;
+  --color-success-surface: #e1f5e9;
+  --color-warning: #704700;
+  --color-warning-border: #dfbd70;
+  --color-warning-surface: #fff2cf;
+  --color-danger: var(--red-600);
+  --color-danger-text: #94272b;
+  --color-danger-border: #e7aaa8;
+  --color-danger-surface: #ffebe9;
+  /* Compatibility aliases used by existing application styles. */
+  --brand-blue: var(--color-primary);
+  --brand-blue-strong: var(--color-primary-hover);
+  --surface: var(--color-surface);
+  --surface-strong: var(--color-surface-elevated);
+  --ink: var(--color-text);
+  --muted: var(--color-text-muted);
+  --line: var(--color-border);
+  --focus-ring: var(--color-focus);
+  --success-ink: var(--color-success);
+  --success-line: var(--color-success-border);
+  --success-bg: var(--color-success-surface);
+  --warning-ink: var(--color-warning);
+  --warning-line: var(--color-warning-border);
+  --warning-bg: var(--color-warning-surface);
+  --danger: var(--color-danger);
+  --danger-ink: var(--color-danger-text);
+  --danger-line: var(--color-danger-border);
+  --danger-bg: var(--color-danger-surface);
+}

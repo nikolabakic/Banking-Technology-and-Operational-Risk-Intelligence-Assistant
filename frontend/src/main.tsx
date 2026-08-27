@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 import { MotionConfig } from "motion/react";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
+import { Toaster } from "./components/ui/toaster";
 import "./index.css";
 
 createRoot(document.getElementById("root")!).render(
@@ -14,6 +15,7 @@ createRoot(document.getElementById("root")!).render(
         <BrowserRouter>
           <App />
         </BrowserRouter>
+        <Toaster />
       </MotionConfig>
     </ErrorBoundary>
   </StrictMode>,

@@ -10,5 +10,6 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
+    exclude: ["tests/accessibility/**", "node_modules/**", "dist/**"],
   },
 });

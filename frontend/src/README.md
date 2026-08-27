@@ -9,7 +9,9 @@ src/
 ├── App.tsx                  # thread, answer, source, and dialog UI
 ├── api.ts                   # typed REST/SSE client and wire contracts
 ├── data.ts                  # static suggestion content
-├── index.css                # design tokens and application styling
+├── index.css                # primitive and application styling
+├── styles/                  # tokens, semantic colors, globals, and motion policy
+├── features/citations/      # lazy canonical evidence viewer
 ├── App.test.tsx             # user-visible component behavior
 ├── test-setup.ts            # Vitest DOM setup
 ├── components/ui/           # small Radix-based primitives
@@ -49,7 +51,8 @@ turn. A stream must yield a valid answer or error turn before completion; otherw
 Keep discriminated status/type unions synchronized with backend response models.
 
 `App.tsx` owns routing, selected-thread state, optimistic loading turns, stream cancellation,
-dialogs, comparison rendering, Markdown answer presentation, and the source sheet. UI primitives
+dialogs, comparison rendering, and Markdown answer presentation. The citation viewer is an isolated
+feature chunk. UI primitives
 under `components/ui` should remain behavior-light. `DiagnosticsPanel` is a native collapsed
 `details` view for grounded and recovery turns; it must not treat execution checks as a
 factual-accuracy score. Direct and clarification turns do not claim filing grounding or display a
