@@ -28,6 +28,7 @@ class FakePipeline:
         conversation_summary="",
         previous_answer=None,
         conversation_metadata=None,
+        thread_id=None,
         on_progress=None,
     ):
         self.calls.append((question, ticker, list(tickers), list(conversation_history)))
@@ -584,6 +585,7 @@ def test_validation_error_becomes_stable_conversation_turn(tmp_path) -> None:
             conversation_summary="",
             previous_answer=None,
             conversation_metadata=None,
+            thread_id=None,
             on_progress=None,
         ):
             raise GenerationValidationError(
@@ -642,6 +644,7 @@ def test_recovery_preserves_generation_evidence_and_history_diagnostics(tmp_path
             conversation_summary="",
             previous_answer=None,
             conversation_metadata=None,
+            thread_id=None,
             on_progress=None,
         ):
             assert len(conversation_history) == 2

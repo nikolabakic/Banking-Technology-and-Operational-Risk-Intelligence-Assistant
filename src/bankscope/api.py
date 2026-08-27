@@ -10,14 +10,15 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
+from starlette.concurrency import run_in_threadpool
 
 from bankscope.chat import ChatStore, CitationSourceResolver, StaleCitationError
 from bankscope.generation.answer_generator import GenerationValidationError, question_language
@@ -50,10 +51,7 @@ def _validated_web_citation_url(value: object) -> str:
         not source_url
         or len(source_url) > MAX_WEB_CITATION_URL_LENGTH
         or any(
-            character.isspace()
-            or ord(character) < 32
-            or ord(character) == 127
-            or character == "\\"
+            character.isspace() or ord(character) < 32 or ord(character) == 127 or character == "\\"
             for character in source_url
         )
     ):
@@ -401,6 +399,7 @@ class AppServices:
                     "summary_updated": summary_updated,
                     "unresolved_requests": context.get("unresolved_requests", []),
                 },
+                thread_id=thread_id,
                 on_progress=tracked_progress,
             )
             return persist_answer(jsonable(run.output))
@@ -632,6 +631,35 @@ def create_app(services: AppServices) -> FastAPI:
             metadata = citation.get("metadata")
             if isinstance(metadata, Mapping) and metadata.get("kind") == "web":
                 return JSONResponse(content=_web_citation_context(citation))
+            if isinstance(metadata, Mapping) and metadata.get("source_kind") == "user_document":
+                document_id = str(metadata.get("document_id") or "").strip()
+                document = services.store.get_document(document_id)
+                parsed_text = services.store.get_document_text(document_id)
+                target_id = str(citation["target_chunk_id"])
+                return JSONResponse(
+                    content={
+                        "citation": citation,
+                        "target_chunk_id": target_id,
+                        "record_type": "text",
+                        "ticker": "UPLOAD",
+                        "source_url": "",
+                        "corpus_hash": citation["corpus_hash"],
+                        "chunks": [
+                            {
+                                "target_chunk_id": target_id,
+                                "role": "anchor",
+                                "record_type": "text",
+                                "document": parsed_text,
+                                "metadata": {
+                                    "source_kind": "user_document",
+                                    "document_id": document_id,
+                                    "filename": document["filename"],
+                                    "section_title": document["filename"],
+                                },
+                            }
+                        ],
+                    }
+                )
             context = services.sources.context(
                 citation["target_chunk_id"],
                 expected_corpus_hash=citation["corpus_hash"],
@@ -674,5 +702,108 @@ def create_app(services: AppServices) -> FastAPI:
                 status_code=500,
                 content={"error": PIPELINE_ERROR_MESSAGE, "code": "pipeline_failed"},
             )
+
+    @app.post("/api/documents/upload")
+    async def upload_document(
+        file: Annotated[UploadFile, File()],
+        thread_id: Annotated[str | None, Form()] = None,
+    ) -> JSONResponse:
+        """Upload a document to be stored in the database."""
+        try:
+            if not file.filename:
+                raise ValueError("No filename provided.")
+
+            content = await file.read()
+
+            document = await run_in_threadpool(
+                services.store.upload_document,
+                thread_id=thread_id,
+                filename=file.filename,
+                content_type=file.content_type or "application/octet-stream",
+                file_content=content,
+                metadata={
+                    "upload_filename": file.filename,
+                    "content_type": file.content_type,
+                },
+            )
+
+            return JSONResponse(content={"document": document})
+        except ValueError as error:
+            return JSONResponse(
+                status_code=422,
+                content={"error": str(error), "code": "invalid_document"},
+            )
+        except Exception:
+            LOGGER.exception("document_upload_failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Failed to upload document.", "code": "upload_failed"},
+            )
+
+    @app.get("/api/documents")
+    def list_documents(thread_id: str | None = None) -> JSONResponse:
+        """List all uploaded documents, optionally filtered by thread."""
+        try:
+            documents = services.store.list_documents(thread_id=thread_id)
+            return JSONResponse(content={"documents": documents})
+        except ValueError as error:
+            LOGGER.exception("document_list_failed")
+            return JSONResponse(
+                status_code=422,
+                content={"error": str(error), "code": "invalid_thread_id"},
+            )
+        except Exception:
+            LOGGER.exception("document_list_failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Failed to list documents.", "code": "list_failed"},
+            )
+
+    @app.get("/api/documents/{document_id}")
+    def get_document(document_id: str) -> JSONResponse:
+        """Get document metadata."""
+        try:
+            document = services.store.get_document(str(document_id))
+            return JSONResponse(content={"document": document})
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Document not found.") from error
+        except Exception:
+            LOGGER.exception("document_get_failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Failed to get document.", "code": "get_failed"},
+            )
+
+    @app.get("/api/documents/{document_id}/content")
+    def get_document_content(document_id: str) -> JSONResponse:
+        """Get the raw content of a document."""
+        try:
+            content = services.store.get_document_content(str(document_id))
+            document = services.store.get_document(str(document_id))
+            return JSONResponse(
+                content={
+                    "content": content.decode("utf-8", errors="replace"),
+                    "document": document,
+                }
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Document not found.") from error
+        except Exception:
+            LOGGER.exception("document_content_failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Failed to get document content.", "code": "content_failed"},
+            )
+
+    @app.delete("/api/documents/{document_id}", status_code=204)
+    def delete_document(document_id: str) -> None:
+        """Delete a document."""
+        try:
+            services.store.delete_document(str(document_id))
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Document not found.") from error
+        except Exception as error:
+            LOGGER.exception("document_delete_failed")
+            raise HTTPException(status_code=500, detail="Failed to delete document.") from error
 
     return app

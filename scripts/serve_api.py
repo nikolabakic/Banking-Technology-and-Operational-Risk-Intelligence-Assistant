@@ -192,6 +192,14 @@ def build_services(args: argparse.Namespace) -> AppServices:
         client=client,
         generation_model=generation_model,
     )
+    store = ChatStore(_project_path(args.chat_db))
+    try:
+        store.initialize()
+    except BaseException:
+        if web_search_provider is not None:
+            _close_startup_resource(web_search_provider, resource_name="web_search_provider")
+        raise
+
     try:
         pipeline = BankAnswerPipeline.from_paths(
             client=client,
@@ -208,15 +216,13 @@ def build_services(args: argparse.Namespace) -> AppServices:
             conversation_model=create_langchain_chat_model(settings, model=generation_model),
             conversation_router_backend=settings.conversation_router_backend,
             web_search_provider=web_search_provider,
+            store=store,
         )
     except BaseException:
         if web_search_provider is not None:
             _close_startup_resource(web_search_provider, resource_name="web_search_provider")
         raise
-
     try:
-        store = ChatStore(_project_path(args.chat_db))
-        store.initialize()
         sources = CitationSourceResolver.from_paths(chunks, tables)
     except BaseException:
         _close_startup_resource(pipeline, resource_name="pipeline")

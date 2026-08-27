@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import sqlite3
@@ -12,13 +13,39 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 DEFAULT_THREAD_TITLE = "New conversation"
 DEFAULT_MEMORY_MAX_TOKENS = 12_000
 DEFAULT_MEMORY_MIN_RECENT_TURNS = 6
 _MAX_UNRESOLVED_REQUESTS = 3
 _MAX_UNRESOLVED_REQUEST_CHARS = 4_000
 _MAX_UNRESOLVED_REQUEST_TOTAL_CHARS = 8_000
+_MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024  # 10MB max file size
+_MAX_PARSED_DOCUMENT_CHARS = 200_000
+_ALLOWED_DOCUMENT_TYPES = {
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/json",
+}
+
+# Mapping from file extensions to content types
+_EXTENSION_TO_CONTENT_TYPE = {
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".json": "application/json",
+}
 _RETRY_ONLY_REQUEST_PATTERN = re.compile(
     r"^(?:(?:(?:please|can you|could you|would you)\s+)?"
     r"(?:try(?:\s+(?:it|that|this))?\s+(?:again|once\s+more)|"
@@ -138,6 +165,8 @@ class ChatStore:
                     """
                 )
                 connection.commit()
+                version = 3
+
             if version == 1:
                 connection.execute(
                     "ALTER TABLE chat_threads ADD COLUMN "
@@ -151,6 +180,7 @@ class ChatStore:
                 connection.execute("PRAGMA user_version = 2")
                 connection.commit()
                 version = 2
+
             if version == 2:
                 connection.execute(
                     "ALTER TABLE chat_threads ADD COLUMN "
@@ -165,6 +195,35 @@ class ChatStore:
                 )
                 connection.execute("PRAGMA user_version = 3")
                 connection.commit()
+                version = 3
+
+            if version == 3:
+                connection.executescript(
+                    """
+                    CREATE TABLE user_documents (
+                        id TEXT PRIMARY KEY,
+                        thread_id TEXT REFERENCES chat_threads(id) ON DELETE CASCADE,
+                        filename TEXT NOT NULL,
+                        content_type TEXT NOT NULL,
+                        file_size INTEGER NOT NULL,
+                        file_content BLOB NOT NULL,
+                        uploaded_at TEXT NOT NULL,
+                        metadata_json TEXT NOT NULL DEFAULT '{}'
+                    );
+                    CREATE INDEX ix_user_documents_thread ON user_documents(thread_id);
+                    CREATE INDEX ix_user_documents_uploaded ON user_documents(uploaded_at);
+                    PRAGMA user_version = 4;
+                    """
+                )
+                connection.commit()
+                version = 4
+
+            if version == 4:
+                connection.execute("ALTER TABLE user_documents ADD COLUMN parsed_text TEXT")
+                connection.execute("ALTER TABLE user_documents ADD COLUMN parse_error TEXT")
+                connection.execute("PRAGMA user_version = 5")
+                connection.commit()
+                version = 5
 
     @staticmethod
     def _thread(row: sqlite3.Row) -> dict[str, Any]:
@@ -350,9 +409,7 @@ class ChatStore:
                 completed_pairs.append((user, assistant))
 
         checkpoint = int(memory_state["summary_through_sequence"] or 0)
-        unsummarized = [
-            pair for pair in completed_pairs if int(pair[1]["sequence"]) > checkpoint
-        ]
+        unsummarized = [pair for pair in completed_pairs if int(pair[1]["sequence"]) > checkpoint]
         raw_messages = [
             {"role": message["role"], "content": str(message["content"])}
             for pair in unsummarized
@@ -371,9 +428,7 @@ class ChatStore:
         )
         compact_pair_count = max(0, len(unsummarized) - min_recent_turns)
         compact_pairs = (
-            unsummarized[:compact_pair_count]
-            if total_estimated_tokens > max_tokens
-            else []
+            unsummarized[:compact_pair_count] if total_estimated_tokens > max_tokens else []
         )
         compaction_messages = [
             {
@@ -670,3 +725,231 @@ class ChatStore:
             "corpus_hash": row["corpus_hash"],
             "metadata": json.loads(row["metadata_json"]),
         }
+
+    def upload_document(
+        self,
+        thread_id: str | None,
+        filename: str,
+        content_type: str,
+        file_content: bytes,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Upload a document, parse it, and store it in the database."""
+        if len(file_content) > _MAX_DOCUMENT_SIZE_BYTES:
+            maximum_mb = _MAX_DOCUMENT_SIZE_BYTES // (1024 * 1024)
+            raise ValueError(f"File size exceeds maximum of {maximum_mb}MB.")
+
+        # If content_type is empty or not in allowed types, try to infer from filename
+        if not content_type or content_type not in _ALLOWED_DOCUMENT_TYPES:
+            inferred_type = self._infer_content_type(filename)
+            if not inferred_type:
+                raise ValueError(f"File type {content_type} is not allowed.")
+            content_type = inferred_type
+
+        if not file_content:
+            raise ValueError("Document is empty.")
+
+        parsed_text = self._parse_document(file_content, content_type, filename)
+
+        now = _now()
+        document_id = str(uuid.uuid4())
+
+        with self._connection() as connection:
+            connection.execute(
+                """INSERT INTO user_documents
+                   (id, thread_id, filename, content_type, file_size, file_content,
+                    parsed_text, parse_error, uploaded_at, metadata_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    document_id,
+                    thread_id,
+                    filename,
+                    content_type,
+                    len(file_content),
+                    file_content,
+                    parsed_text,
+                    None,
+                    now,
+                    _json(metadata or {}),
+                ),
+            )
+            connection.commit()
+
+        return self.get_document(document_id)
+
+    def list_documents(self, thread_id: str | None = None) -> list[dict[str, Any]]:
+        """List all documents, optionally filtered by thread_id."""
+        with self._connection() as connection:
+            if thread_id:
+                rows = connection.execute(
+                    "SELECT * FROM user_documents WHERE thread_id = ? ORDER BY uploaded_at DESC",
+                    (thread_id,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM user_documents ORDER BY uploaded_at DESC"
+                ).fetchall()
+
+        return [self._document(row) for row in rows]
+
+    def get_document(self, document_id: str) -> dict[str, Any]:
+        """Get a single document by ID."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM user_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(document_id)
+        return self._document(row)
+
+    def delete_document(self, document_id: str) -> None:
+        """Delete a document from the database."""
+        with self._connection() as connection:
+            cursor = connection.execute("DELETE FROM user_documents WHERE id = ?", (document_id,))
+            if cursor.rowcount == 0:
+                raise KeyError(document_id)
+            connection.commit()
+
+    @staticmethod
+    def _document(row: sqlite3.Row) -> dict[str, Any]:
+        """Convert a database row to a document dictionary."""
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            metadata = {}
+
+        parsed_text = row["parsed_text"]
+        if parsed_text is None:
+            parsed = False
+        else:
+            parsed = bool(parsed_text)
+
+        parse_error = row["parse_error"]
+        if parse_error is None:
+            parse_error = None
+        else:
+            parse_error = str(parse_error)
+
+        return {
+            "id": str(row["id"]),
+            "thread_id": str(row["thread_id"]) if row["thread_id"] else None,
+            "filename": str(row["filename"]),
+            "content_type": str(row["content_type"]),
+            "file_size": int(row["file_size"]),
+            "uploaded_at": str(row["uploaded_at"]),
+            "metadata": metadata,
+            "parsed": parsed,
+            "parse_error": parse_error,
+        }
+
+    def get_document_content(self, document_id: str) -> bytes:
+        """Get the raw content of a document."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT file_content FROM user_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(document_id)
+        content = row["file_content"]
+        if isinstance(content, bytes):
+            return content
+        if isinstance(content, memoryview):
+            return bytes(content)
+        return bytes(content)
+
+    def get_document_text(self, document_id: str) -> str:
+        """Return parsed text for one uploaded document."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT parsed_text FROM user_documents WHERE id = ?", (document_id,)
+            ).fetchone()
+        if row is None or not row["parsed_text"]:
+            raise KeyError(document_id)
+        parsed_text = row["parsed_text"]
+        if isinstance(parsed_text, str):
+            return parsed_text
+        return str(parsed_text)
+
+    def get_thread_documents_text(self, thread_id: str) -> list[dict[str, Any]]:
+        """Get all successfully parsed documents for a thread."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                """SELECT id, filename, parsed_text, parse_error
+                   FROM user_documents
+                   WHERE thread_id = ? AND parsed_text IS NOT NULL
+                   ORDER BY uploaded_at DESC""",
+                (thread_id,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "filename": row["filename"],
+                "text": row["parsed_text"],
+                "parse_error": row["parse_error"],
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def _infer_content_type(filename: str) -> str | None:
+        """Infer content type from filename extension."""
+        import os
+
+        extension = os.path.splitext(filename.lower())[1]
+        return _EXTENSION_TO_CONTENT_TYPE.get(extension)
+
+    def _parse_document(self, content: bytes, content_type: str, filename: str) -> str:
+        """Parse one supported document into bounded Markdown/text."""
+        normalized_type = content_type.lower()
+        if normalized_type in {"text/plain", "text/markdown", "text/csv", "application/json"}:
+            text = content.decode("utf-8", errors="replace")
+            return self._bounded_document_text(text)
+        if normalized_type == "application/pdf":
+            embedded_text = self._extract_pdf_text(content)
+            if embedded_text:
+                return self._bounded_document_text(embedded_text)
+
+        try:
+            from docling.datamodel.base_models import DocumentStream
+            from docling.document_converter import DocumentConverter
+        except ImportError as error:
+            raise ValueError(
+                "Docling is required to parse this document type. Install the docling extra."
+            ) from error
+
+        try:
+            source = DocumentStream(name=filename, stream=io.BytesIO(content))
+            result = DocumentConverter().convert(source, raises_on_error=True)
+            text = result.document.export_to_markdown()
+        except Exception as error:
+            raise ValueError(f"Docling could not parse {filename}: {error}") from error
+        return self._bounded_document_text(text)
+
+    @staticmethod
+    def _extract_pdf_text(content: bytes) -> str:
+        """Extract embedded PDF text when Docling's optional layout models are unavailable."""
+        try:
+            import pypdfium2
+
+            document = pypdfium2.PdfDocument(content)
+            pages: list[str] = []
+            for page in document:
+                text_page = page.get_textpage()
+                pages.append(text_page.get_text_range())
+                text_page.close()
+                page.close()
+            document.close()
+            return "\n\n".join(page.strip() for page in pages if page.strip())
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _bounded_document_text(text: str) -> str:
+        normalized = text.strip()
+        if not normalized:
+            raise ValueError("Document contains no extractable text.")
+        if len(normalized) > _MAX_PARSED_DOCUMENT_CHARS:
+            normalized = normalized[:_MAX_PARSED_DOCUMENT_CHARS].rstrip()
+            normalized += "\n\n[Document truncated at the upload context limit.]"
+        return normalized

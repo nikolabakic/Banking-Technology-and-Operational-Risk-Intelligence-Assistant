@@ -455,11 +455,11 @@ export async function listThreads(signal?: AbortSignal): Promise<ThreadSummary[]
   return payload.threads.map(parseThreadSummary);
 }
 
-export async function createThread(): Promise<ThreadSummary> {
+export async function createThread(title?: string): Promise<ThreadSummary> {
   const payload = await requestJson<unknown>("/api/threads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: "{}",
+    body: JSON.stringify({ title: title || undefined }),
   });
   return parseThreadSummary(payload);
 }
@@ -595,4 +595,86 @@ export async function loadCitationContext(
     corpus_hash: requiredString(payload.corpus_hash, "source corpus hash"),
     chunks,
   };
+}
+
+// Document types
+export type UserDocument = {
+  id: string;
+  thread_id: string | null;
+  filename: string;
+  content_type: string;
+  file_size: number;
+  uploaded_at: string;
+  metadata: Record<string, unknown>;
+};
+
+export type DocumentUploadResponse = {
+  document: UserDocument;
+};
+
+export type DocumentListResponse = {
+  documents: UserDocument[];
+};
+
+export type DocumentResponse = {
+  document: UserDocument;
+};
+
+export type DocumentContentResponse = {
+  content: string;
+  document: UserDocument;
+};
+
+// Document API functions
+export async function uploadDocument(file: File, threadId?: string): Promise<UserDocument> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (threadId) {
+    formData.append("thread_id", threadId);
+  }
+
+  const response = await fetch("/api/documents/upload", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as ErrorPayload;
+    throw new ApiError(
+      payload.error || payload.detail || "Failed to upload document.",
+      response.status,
+      payload.code,
+    );
+  }
+
+  const payload = await response.json() as DocumentUploadResponse;
+  return payload.document;
+}
+
+export async function listDocuments(threadId?: string, signal?: AbortSignal): Promise<UserDocument[]> {
+  const url = threadId ? `/api/documents?thread_id=${encodeURIComponent(threadId)}` : "/api/documents";
+  const payload = await requestJson<DocumentListResponse>(url, { signal });
+  return payload.documents;
+}
+
+export async function getDocument(documentId: string, signal?: AbortSignal): Promise<UserDocument> {
+  const payload = await requestJson<DocumentResponse>(`/api/documents/${documentId}`, { signal });
+  return payload.document;
+}
+
+export async function getDocumentContent(documentId: string, signal?: AbortSignal): Promise<DocumentContentResponse> {
+  const payload = await requestJson<DocumentContentResponse>(`/api/documents/${documentId}/content`, { signal });
+  return payload;
+}
+
+export async function deleteDocument(documentId: string): Promise<void> {
+  const response = await fetch(`/api/documents/${documentId}`, { method: "DELETE" });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as ErrorPayload;
+    throw new ApiError(
+      payload.detail || "Failed to delete document.",
+      response.status,
+      payload.code,
+    );
+  }
 }

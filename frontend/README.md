@@ -71,6 +71,8 @@ flag back to `false` and restarting restores baseline routing/retrieval behavior
 - persisted history -> `GET /api/threads/{thread_id}/messages`
 - streamed question -> `POST /api/threads/{thread_id}/stream`
 - source context -> `GET /api/citations/{citation_id}/context`
+- document upload/list/delete -> `POST /api/documents/upload`, `GET /api/documents`, and
+  `DELETE /api/documents/{document_id}`
 - compatibility question -> `POST /api/answer`
 - answer status -> `supported | partial | ambiguous | unsupported`
 - dialog act -> `answer | clarification | greeting | acknowledgement | capability |
@@ -78,6 +80,7 @@ flag back to `false` and restarting restores baseline routing/retrieval behavior
   calculation | out_of_scope | retryable_error`
 - filing source chips hydrate canonical evidence; web chips open validated HTTP(S) sources in a
   new `noopener` tab
+- attachments are scoped to a conversation, limited to 10 MB, and shown above its turns
 - bank selection is deliberately absent; the server resolves one bank or an ordered comparison set
 - optional and legacy diagnostics are normalized defensively before rendering
 - expected threaded model/pipeline failures arrive as answered `retryable_error` turns; red error

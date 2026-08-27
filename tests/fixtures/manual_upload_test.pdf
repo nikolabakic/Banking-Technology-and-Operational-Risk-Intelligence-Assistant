@@ -1,0 +1,61 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 771 >>
+stream
+BT
+/F1 16 Tf
+72 740 Td
+(BankScope Manual Upload Test) Tj
+/F1 11 Tf
+0 -28 Td
+(Institution: North River Bank) Tj
+0 -18 Td
+(Reporting period: fiscal year 2025) Tj
+0 -18 Td
+(Operational incidents: 14) Tj
+0 -18 Td
+(Total operational losses: USD 2.75 million) Tj
+0 -18 Td
+(Critical services availability: 99.97 percent) Tj
+0 -18 Td
+(Severe cyber incidents: 0) Tj
+0 -18 Td
+(High-risk third-party providers: 3) Tj
+0 -18 Td
+(Technology resilience investment: USD 18.4 million) Tj
+0 -28 Td
+(The bank completed two disaster recovery exercises.) Tj
+0 -18 Td
+(Average recovery time was 37 minutes, below the 45-minute target.) Tj
+0 -18 Td
+(The main remediation priority is privileged-access monitoring.) Tj
+0 -18 Td
+(The next resilience exercise is scheduled for October 2026.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001062 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1132
+%%EOF

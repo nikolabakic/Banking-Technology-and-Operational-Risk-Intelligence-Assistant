@@ -11,6 +11,7 @@ sequenceDiagram
     participant S as CitationSourceResolver
     UI->>API: stream question for thread
     API->>DB: load completed same-thread history
+    API->>DB: load parsed thread documents
     API->>P: answer(question, history, session scope)
     P-->>API: filing answer, web answer, calculation, direct response, clarification, or recovery
     API->>DB: atomically persist turn and citation metadata
@@ -25,12 +26,14 @@ sequenceDiagram
 
 | File | Public symbols | Responsibility |
 |---|---|---|
-| `store.py` | `ChatStore` | Initialize/migrate schema; manage threads; group turns; bound history; atomically persist answer/error turns; load citations |
+| `store.py` | `ChatStore` | Initialize/migrate schema; manage threads and uploaded documents; group turns; bound history; atomically persist answer/error turns; load citations |
 | `sources.py` | `CitationSourceResolver`, `StaleCitationError` | Index corpus targets and reopen canonical narrative or complete-table evidence |
 
 `ChatStore` exposes thread CRUD, `list_messages()`, `list_turns()`, bounded
 `conversation_context()`, `conversation_history()`, summary checkpoints, turn persistence, and
-`get_citation()`.
+`get_citation()`. Uploaded files are limited to 10 MB, stored with their parsed text, and deleted
+with their owning thread. Parsed document context is bounded before generation; the original file
+remains local in SQLite.
 Answered filing turns update the server-owned single/comparison bank scope. Direct responses,
 clarifications, and recovery turns retain the existing scope. Every threaded request receives the
 available raw history. Once summary plus transcript exceed 12,000 estimated tokens, older complete
@@ -52,6 +55,8 @@ The older error-turn contract remains available for infrastructure-level failure
 anchor plus neighboring narrative chunks; table citations return the complete table. Stale or
 missing targets fail closed. Web citations persist as `kind=web` with a validated HTTP(S) URL and
 open externally; they do not pretend to be members of the local filing corpus.
+Uploaded-document citations persist `source_kind=user_document` and a document ID. The API resolves
+them from the same thread-local SQLite source instead of passing them to the filing corpus resolver.
 
 ## Invariants and changes
 

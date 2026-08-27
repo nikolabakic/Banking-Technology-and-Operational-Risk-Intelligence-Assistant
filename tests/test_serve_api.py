@@ -138,7 +138,7 @@ def test_build_services_closes_web_provider_when_pipeline_construction_fails(
 
 
 @pytest.mark.parametrize("failure_stage", ["store", "sources"])
-def test_build_services_closes_pipeline_when_later_startup_fails(
+def test_build_services_cleans_up_constructed_resources_when_later_startup_fails(
     monkeypatch, tmp_path: Path, failure_stage: str
 ) -> None:
     startup_error = ValueError(f"{failure_stage} construction failed")
@@ -188,7 +188,7 @@ def test_build_services_closes_pipeline_when_later_startup_fails(
         serve_api.build_services(_service_args(tmp_path))
 
     assert exc_info.value is startup_error
-    assert pipeline.close_calls == 1
+    assert pipeline.close_calls == (1 if failure_stage == "sources" else 0)
 
 
 def test_auto_web_provider_uses_sticky_tavily_fallback_when_key_is_configured() -> None:

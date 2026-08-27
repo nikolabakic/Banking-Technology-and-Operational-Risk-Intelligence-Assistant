@@ -137,3 +137,4 @@ sandbox/experiments/jpm_sec2md_data/sec2md_builtin/embedding_records.jsonl
 sandbox/experiments/jpm_sec2md_data/structure_aware/chunks.jsonl
 sandbox/experiments/jpm_sec2md_data/structure_aware/embedding_records.jsonl
 sandbox/experiments/jpm_sec2md_data/structure_aware/table_parents.jsonl
+AGENTS.md

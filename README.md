@@ -45,6 +45,8 @@ supporting excerpts for each bank in a comparison.
 - validates the model's source-selection and clarification decisions before retrieval;
 - diversifies retrieval across five filing aspects for whole-10-K summary requests;
 - persists local threads and citation metadata in SQLite;
+- accepts thread-scoped PDF, text, Markdown, CSV, JSON, Word, and Excel uploads and answers from
+  their parsed content with document-owned citations;
 - evaluates retrieval, generation, conversation memory, and comparisons separately.
 
 ## Quick start
@@ -65,6 +67,9 @@ python -m pip install -e ".[dev,llm]"
 Copy-Item .env.example .env
 npm.cmd install --prefix frontend
 ```
+
+Install `.[dev,llm,docling]` instead when Word, Excel, scanned PDF, or other layout-aware document
+parsing is needed. Text-based PDFs use the lightweight parser already installed with the project.
 
 Populate `.env`, then build the local data products:
 

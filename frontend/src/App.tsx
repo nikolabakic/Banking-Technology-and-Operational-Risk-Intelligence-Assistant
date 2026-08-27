@@ -35,6 +35,7 @@ import {
   type Turn,
 } from "./api";
 import { prompts } from "./data";
+import { uploadDocument } from "./api";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,8 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { FileUploadButton } from "@/components/ui/file-upload-button";
+import { FileList } from "@/components/ui/file-list";
 
 type OpenSource = { response: AnswerResponse; index: number; citation: FilingCitation };
 type AnswerStatus = AnswerResponse["status"];
@@ -604,6 +607,7 @@ export default function App() {
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ThreadSummary | null>(null);
   const [showScrollDown, setShowScrollDown] = useState(false);
+  const [fileRefreshKey, setFileRefreshKey] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
@@ -613,6 +617,26 @@ export default function App() {
     const next = await listThreads();
     setThreads(next);
     return next;
+  };
+
+  const refreshFiles = () => {
+    setFileRefreshKey((prev) => prev + 1);
+  };
+
+  const handleUploadDocument = async (file: File, threadId?: string) => {
+    let targetThreadId = threadId;
+
+    // If no active thread, create a new conversation for the file
+    if (!targetThreadId) {
+      const newThread = await createThread(`File: ${file.name}`);
+      targetThreadId = newThread.id;
+      setThreads((current) => [newThread, ...current]);
+      setLoadedThreadId(newThread.id);
+      navigate(`/chats/${newThread.id}`);
+    }
+
+    await uploadDocument(file, targetThreadId);
+    refreshFiles();
   };
 
   useEffect(() => {
@@ -784,6 +808,10 @@ export default function App() {
           </div>
           <div className="header-actions">
             <Badge variant="success" className="corpus-status"><i /> Corpus ready</Badge>
+            <FileUploadButton
+              onUpload={handleUploadDocument}
+              threadId={activeThreadId ?? undefined}
+            />
             <Button variant="secondary" className="new-chat" onClick={newConversation}><Plus size={16} /> <span>New conversation</span></Button>
           </div>
         </header>
@@ -813,6 +841,7 @@ export default function App() {
             ) : (
               <main className="conversation">
                 <div className="conversation-scroll" ref={conversationRef} onScroll={onConversationScroll}>
+                  {activeThreadId && <FileList key={fileRefreshKey} threadId={activeThreadId} onFileDelete={refreshFiles} />}
                   <div className="conversation-list">
                     {turns.map((turn) => (
                       <section className="turn" key={turn.id}>

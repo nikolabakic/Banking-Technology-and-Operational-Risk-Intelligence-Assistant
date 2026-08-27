@@ -38,6 +38,7 @@ from bankscope.generation.conversation import (
     ConversationGraph,
     DeclineOutOfScopeArgs,
     DirectResponseArgs,
+    DocumentResearchArgs,
     ResearchFilingsArgs,
     WebResearchArgs,
     is_retry_only_request,
@@ -78,6 +79,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CHUNKS = PROJECT_ROOT / "data/processed/chunks.jsonl"
 DEFAULT_TABLES = PROJECT_ROOT / "data/processed/tables.jsonl"
 DEFAULT_GLOSSARY_LOCATORS = PROJECT_ROOT / "data/processed/lexical_glossary_locators_v1.jsonl"
+MAX_USER_DOCUMENT_CONTEXT_CHARS = 120_000
 DEFAULT_QDRANT_PATH = PROJECT_ROOT / "data/processed/qdrant"
 DEFAULT_QDRANT_MANIFEST = PROJECT_ROOT / "data/processed/qdrant_manifest.json"
 DEFAULT_BANK_REGISTRY = PROJECT_ROOT / "config/banks.yaml"
@@ -104,9 +106,7 @@ def _web_answer_with_citations(
         elif ordered_sources[existing][1] is None and title is not None:
             ordered_sources[existing] = (url, title, ordered_sources[existing][2] or snippet)
 
-    label_by_url = {
-        url: f"E{index}" for index, (url, _, _) in enumerate(ordered_sources, start=1)
-    }
+    label_by_url = {url: f"E{index}" for index, (url, _, _) in enumerate(ordered_sources, start=1)}
     answer = result.text
     insertions: dict[int, list[str]] = {}
     for citation in result.citations:
@@ -249,6 +249,7 @@ class BankAnswerPipeline:
         conversation_model: Any | None = None,
         conversation_router_backend: Literal["langgraph", "legacy"] = "langgraph",
         web_search_provider: WebSearchProvider | None = None,
+        store: Any | None = None,
     ) -> None:
         if not generation_model.strip():
             raise ValueError("generation_model cannot be empty.")
@@ -273,6 +274,7 @@ class BankAnswerPipeline:
         self.agentic_rag_enabled = agentic_rag_enabled
         self.context_expander = context_expander
         self.web_search_provider = web_search_provider
+        self.store = store
         self.conversation_graph = ConversationGraph(
             client=client,
             model=generation_model,
@@ -310,6 +312,7 @@ class BankAnswerPipeline:
         conversation_model: Any | None = None,
         conversation_router_backend: Literal["langgraph", "legacy"] = "langgraph",
         web_search_provider: WebSearchProvider | None = None,
+        store: Any | None = None,
     ) -> BankAnswerPipeline:
         chunks_path = Path(chunks_path)
         tables_path = Path(tables_path)
@@ -368,6 +371,7 @@ class BankAnswerPipeline:
                 conversation_model=conversation_model,
                 conversation_router_backend=conversation_router_backend,
                 web_search_provider=web_search_provider,
+                store=store,
             )
         except Exception:
             qdrant.close()
@@ -1005,6 +1009,7 @@ class BankAnswerPipeline:
         limit: int = 5,
         candidate_k: int = 30,
         rrf_k: int = 60,
+        thread_id: str | None = None,
         on_progress: Callable[[str, Mapping[str, Any]], None] | None = None,
     ) -> AnswerRun:
         if self._closed:
@@ -1040,6 +1045,9 @@ class BankAnswerPipeline:
         contextualization_fallback = False
         contextualization_error_code: str | None = None
         unresolved_requests: tuple[str, ...] = ()
+        user_documents: list[dict[str, Any]] = []
+        if chat_mode and self.store is not None and thread_id is not None:
+            user_documents = self.store.get_thread_documents_text(thread_id)
 
         if chat_mode:
             if on_progress is not None:
@@ -1051,9 +1059,7 @@ class BankAnswerPipeline:
                     if value and value.strip()
                 )
             )
-            raw_unresolved_requests = (conversation_metadata or {}).get(
-                "unresolved_requests", ()
-            )
+            raw_unresolved_requests = (conversation_metadata or {}).get("unresolved_requests", ())
             unresolved_requests = tuple(
                 str(value).strip()
                 for value in (
@@ -1071,6 +1077,10 @@ class BankAnswerPipeline:
                 conversation_summary=conversation_summary,
                 previous_answer=previous_answer,
                 unresolved_requests=unresolved_requests,
+                available_documents=[
+                    {"id": str(document["id"]), "filename": str(document["filename"])}
+                    for document in user_documents
+                ],
             )
             orchestration_request_count += decision.request_count
             action = decision.action
@@ -1094,11 +1104,18 @@ class BankAnswerPipeline:
                         (conversation_metadata or {}).get("estimated_tokens") or 0
                     ),
                     "summary_used": bool(conversation_summary),
-                    "summary_updated": bool(
-                        (conversation_metadata or {}).get("summary_updated")
-                    ),
+                    "summary_updated": bool((conversation_metadata or {}).get("summary_updated")),
                 }
             )
+            if isinstance(action, DocumentResearchArgs):
+                return self._document_research_run(
+                    question,
+                    action,
+                    user_documents=user_documents,
+                    stages=stages,
+                    model_request_count=orchestration_request_count,
+                    on_progress=on_progress,
+                )
             if isinstance(action, (ResearchFilingsArgs, WebResearchArgs)):
                 handled = self._research_handlers[decision.route_action](
                     question,
@@ -1431,6 +1448,100 @@ class BankAnswerPipeline:
             diagnostics=diagnostics,
             stage_trace=tuple(stages),
             agentic_plans=tuple(bank_plans),
+        )
+
+    def _document_research_run(
+        self,
+        question: str,
+        action: DocumentResearchArgs,
+        *,
+        user_documents: Sequence[Mapping[str, Any]],
+        stages: list[dict[str, Any]],
+        model_request_count: int,
+        on_progress: Callable[[str, Mapping[str, Any]], None] | None,
+    ) -> AnswerRun:
+        evidence: list[dict[str, Any]] = []
+        remaining_chars = MAX_USER_DOCUMENT_CONTEXT_CHARS
+        for document in user_documents:
+            text = str(document.get("text") or "").strip()
+            if not text or document.get("parse_error") or remaining_chars <= 0:
+                continue
+            included = text[:remaining_chars]
+            remaining_chars -= len(included)
+            document_id = str(document.get("id") or "").strip()
+            filename = str(document.get("filename") or "Uploaded document").strip()
+            evidence.append(
+                {
+                    "document": included,
+                    "ticker": "UPLOAD",
+                    "record_type": "text",
+                    "target_chunk_id": f"user_document:{document_id}",
+                    "metadata": {
+                        "source_kind": "user_document",
+                        "document_id": document_id,
+                        "filename": filename,
+                        "section_title": filename,
+                    },
+                }
+            )
+
+        if on_progress is not None:
+            on_progress(
+                "generating",
+                {
+                    "message": "Answering from attached documents...",
+                    "evidence_count": len(evidence),
+                },
+            )
+        started = perf_counter()
+        answer = generate_answer(
+            question,
+            evidence,
+            client=self.client,
+            model=self.generation_model,
+            expected_ticker="UPLOAD",
+            expected_bank_name="Attached documents",
+            temperature=self.temperature,
+            resolved_question=action.search_question,
+            presentation_guidance=action.presentation_guidance,
+            source_description="user-uploaded document",
+        )
+        generation_latency_ms = (perf_counter() - started) * 1000
+        stages.append(
+            {
+                "stage": "generating",
+                "status": "completed",
+                "latency_ms": generation_latency_ms,
+                "source": "user_documents",
+            }
+        )
+        output = {
+            "question": question,
+            "dialog_act": "answer",
+            "ticker": None,
+            "document_ids": [str(document.get("id") or "") for document in user_documents],
+            **answer,
+        }
+        generation_requests = int((answer.get("generation") or {}).get("request_count") or 0)
+        diagnostics = self._diagnostics(
+            route="user_documents",
+            outcome=str(answer.get("status") or "unknown"),
+            stages=stages,
+            initial_evidence_count=len(evidence),
+            final_evidence_count=len(evidence),
+            model_request_count=model_request_count + generation_requests,
+            bank_plans=[],
+            output=output,
+        )
+        output["diagnostics"] = diagnostics
+        return AnswerRun(
+            output=output,
+            evidence=evidence,
+            embedding_latency_ms=0.0,
+            retrieval_latency_ms=0.0,
+            generation_latency_ms=generation_latency_ms,
+            diagnostics=diagnostics,
+            stage_trace=tuple(stages),
         )
 
     @staticmethod
@@ -1886,9 +1997,7 @@ class BankAnswerPipeline:
             for item in (source_answer or {}).get("citations") or []
         }
         citations = [
-            source_citations[label]
-            for label in action.citation_ids
-            if label in source_citations
+            source_citations[label] for label in action.citation_ids if label in source_citations
         ]
         contextual_transform = action.category == "contextual_transform"
         output: dict[str, Any] = {
@@ -1896,9 +2005,7 @@ class BankAnswerPipeline:
             "dialog_act": action.category,
             "ticker": (source_answer or {}).get("ticker") if contextual_transform else None,
             "tickers": (
-                list((source_answer or {}).get("tickers") or [])
-                if contextual_transform
-                else []
+                list((source_answer or {}).get("tickers") or []) if contextual_transform else []
             ),
             "contextualization": {
                 "applied": False,
@@ -2137,9 +2244,7 @@ class BankAnswerPipeline:
         try:
             result = self.web_search_provider.search(standalone_question)
         except WebSearchError as error:
-            provider_request_count = _web_request_count(
-                getattr(error, "request_count", 1)
-            )
+            provider_request_count = _web_request_count(getattr(error, "request_count", 1))
             web_stages.append(
                 {
                     "stage": "searching_web",
@@ -2163,16 +2268,13 @@ class BankAnswerPipeline:
                 unresolved_requests=unresolved_requests,
                 failure_code=error.code,
                 failure_answer=(
-                    "I could not complete a reliable web search for this message. "
-                    "Please try again."
+                    "I could not complete a reliable web search for this message. Please try again."
                 ),
                 provider_request_count=provider_request_count,
                 retryable=True,
                 on_progress=on_progress,
             )
-        provider_request_count = _web_request_count(
-            getattr(result, "request_count", 1)
-        )
+        provider_request_count = _web_request_count(getattr(result, "request_count", 1))
         answer, citations, evidence = _web_answer_with_citations(result)
         if not result.used_web_search or not citations:
             failure_code = (

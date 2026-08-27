@@ -21,7 +21,7 @@ flowchart LR
 | Parsing and tables | `test_corpus`, `test_tables`, `test_glossary_locators` |
 | Retrieval and Qdrant | `test_hybrid_retriever`, `test_mixed_retriever`, `test_qdrant_retriever`, `test_retrieval_metrics` |
 | Generation, planning, agentic orchestration, and comparisons | `test_answer_generator`, `test_query_planner`, `test_answer_pipeline`, `test_agentic_rag`, `test_answer_metrics`, `test_evaluate_comparisons` |
-| Conversation and API | `test_contextualizer`, `test_chat_store`, `test_chat_sources`, `test_frontend_api` |
+| Conversation, documents, and API | `test_contextualizer`, `test_chat_store`, `test_chat_sources`, `test_documents`, `test_frontend_api` |
 | Evaluation/client utilities | evaluator, semantic judge, embedding, download, model-access, and benchmark tests |
 
 Most tests use temporary paths, fake clients, and small deterministic fixtures. Tests must not
@@ -49,5 +49,9 @@ python -m ruff format --check .
 For a bug fix, add the smallest regression test at the owning layer. For a contract change, update
 producer and consumer tests together. Frozen evaluation runs complement tests but do not replace
 them.
+
+For a manual document-upload smoke test, use `tests/fixtures/manual_upload_test.pdf`; expected
+questions and answers are listed beside it in `manual_upload_test_questions.md`. These fixtures are
+deterministic and contain no confidential or production data.
 
 [Repository guide](../README.md) · [Evaluation package](../src/bankscope/evaluation/README.md)
