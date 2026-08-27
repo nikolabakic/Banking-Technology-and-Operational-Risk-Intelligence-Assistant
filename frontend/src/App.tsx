@@ -997,7 +997,7 @@ export default function App() {
                     <div ref={endRef} />
                   </div>
                 </div>
-                {showScrollDown && <MotionButton variant="outline" size="icon" className="scroll-bottom" onClick={scrollToBottom} aria-label="Scroll to latest message"><ArrowDown size={17} /></MotionButton>}
+                {showScrollDown && <div className="scroll-bottom"><MotionButton variant="outline" size="icon" whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={scrollToBottom} aria-label="Scroll to latest message"><ArrowDown size={17} /></MotionButton></div>}
                 <motion.div
                   className="conversation-composer"
                   initial={{ opacity: 0, y: 20 }}

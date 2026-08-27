@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { Button } from "./button";
+import { AttractButton } from "@/components/kokonutui/attract-button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 import { FileUploadDialog } from "./file-upload-dialog";
 
@@ -37,7 +37,7 @@ export function FileUploadButton({
     <>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
+          <AttractButton
             type="button"
             size={size}
             variant={variant}
@@ -46,7 +46,7 @@ export function FileUploadButton({
             aria-label="Upload file"
           >
             <Plus size={size === "icon" ? 16 : 14} />
-          </Button>
+          </AttractButton>
         </TooltipTrigger>
         <TooltipContent>Upload document</TooltipContent>
       </Tooltip>

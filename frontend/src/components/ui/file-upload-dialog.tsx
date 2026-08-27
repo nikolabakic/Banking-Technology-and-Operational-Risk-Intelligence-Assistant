@@ -1,5 +1,6 @@
-import { useState, useRef, type ChangeEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type DragEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { File, Upload, X, CheckCircle, AlertCircle } from "lucide-react";
+import { FileUpload } from "@/components/kokonutui/file-upload";
 import { Button } from "./button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./dialog";
 
@@ -21,10 +22,6 @@ export function FileUploadDialog({ open, onOpenChange, onUpload, threadId, loadi
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<UploadStatus>({ type: "idle" });
   const [error, setError] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const dropZoneRef = useRef<HTMLDivElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
 
   const allowedTypes = [
     "application/pdf",
@@ -67,51 +64,10 @@ export function FileUploadDialog({ open, onOpenChange, onUpload, threadId, loadi
     setFile(selectedFile);
   };
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    selectFile(event.target.files?.[0]);
-  };
-
   const handleRemoveFile = () => {
     setFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
     setError(null);
     setStatus({ type: "idle" });
-  };
-
-  const handleDragEnter = (event: DragEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (event: DragEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDragOver = (event: DragEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDrop = (event: DragEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDragging(false);
-
-    selectFile(event.dataTransfer.files?.[0]);
-  };
-
-  const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
   };
 
   const handleSubmit = async (event: FormEvent) => {
@@ -126,9 +82,6 @@ export function FileUploadDialog({ open, onOpenChange, onUpload, threadId, loadi
       await onUpload(file, threadId);
       setStatus({ type: "success", message: "File uploaded successfully!", fileName: file.name });
       setFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
       // Close dialog after a short delay to show success message
       setTimeout(() => onOpenChange(false), 1500);
     } catch (err) {
@@ -161,34 +114,16 @@ export function FileUploadDialog({ open, onOpenChange, onUpload, threadId, loadi
           </DialogDescription>
         </DialogHeader>
 
-        <form ref={formRef} onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit}>
           <div className="file-upload-area">
             {status.type === "idle" && !file && (
-              <div
-                className={`file-upload-placeholder ${isDragging ? "dragging" : ""}`}
-                ref={dropZoneRef}
-                onClick={handleClick}
-                onDragEnter={handleDragEnter}
-                onDragLeave={handleDragLeave}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-              >
-                <Upload size={48} className="file-upload-icon" />
-                <p className="file-upload-title">
-                  {isDragging ? "Drop file here" : "Drag & drop file here or click to browse"}
-                </p>
-                <p className="file-upload-hint">Supported: PDF, TXT, MD, CSV, DOC, DOCX, XLS, XLSX, JSON</p>
-                <p className="file-upload-hint">Max size: 10MB</p>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  accept=".pdf,.txt,.md,.csv,.doc,.docx,.xls,.xlsx,.json"
-                  className="file-upload-input"
-                  id="file-upload"
-                  style={{ display: 'none' }}
-                />
-              </div>
+              <FileUpload
+                accept=".pdf,.txt,.md,.csv,.doc,.docx,.xls,.xlsx,.json"
+                disabled={loading}
+                hint="PDF, TXT, MD, CSV, DOC, DOCX, XLS, XLSX or JSON · up to 10MB"
+                isInvalid={Boolean(error)}
+                onFileSelect={selectFile}
+              />
             )}
 
             {file && (

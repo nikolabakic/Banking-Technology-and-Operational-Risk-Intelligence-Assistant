@@ -302,8 +302,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 .composer-compact .composer-footer { position: absolute; right: 6px; bottom: 6px; min-height: 44px; padding: 3px; }
 .composer-compact .composer-footer > span { display: none; }
 .composer-disclaimer { display: block; margin: 7px 0 0; color: #8998aa; text-align: center; font-size: 8.5px; }
-.scroll-bottom { position: absolute; z-index: 12; right: 50%; bottom: 119px; width: 36px; height: 36px; border-radius: 50%; box-shadow: 0 8px 24px rgba(14, 57, 107, .17); transform: translateX(50%); }
-.scroll-bottom:hover { transform: translateX(50%) translateY(-1px); }
+.scroll-bottom { position: absolute; z-index: 12; left: 50%; bottom: 119px; width: 36px; height: 36px; transform: translateX(-50%); }
+.scroll-bottom .ui-button { width: 36px; height: 36px; border-radius: 50%; box-shadow: 0 8px 24px rgba(14, 57, 107, .17); }
 
 /* source sheet */
 .source-panel { min-width: 0; overflow: hidden; padding: 0; background: var(--blue-50); }
@@ -454,9 +454,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 }
 
 .file-item:hover {
-  background: var(--blue-50);
+  background: rgba(241, 244, 251, .88);
   border-color: var(--blue-100);
 }
+
+.file-item .kokonut-glass-content { display: flex; align-items: center; gap: .5rem; width: 100%; }
 
 .file-item-info {
   display: flex;
@@ -543,6 +545,39 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
   position: relative;
   display: inline-flex;
 }
+
+/* Kokonut UI primitives adapted to BankScope design tokens. */
+.kokonut-file-upload {
+  position: relative;
+  display: flex;
+  min-height: 220px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .4rem;
+  padding: 1.5rem;
+  overflow: hidden;
+  border: 1.5px dashed var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+  background: linear-gradient(145deg, rgba(255,255,255,.94), var(--blue-50));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+}
+.kokonut-file-upload:hover, .kokonut-file-upload.is-dragging { border-color: var(--brand-blue); background: linear-gradient(145deg, #fff, var(--blue-100)); box-shadow: 0 0 0 3px var(--focus-ring); }
+.kokonut-file-upload.is-invalid { border-color: var(--danger); }
+.kokonut-file-upload[aria-disabled="true"] { opacity: .58; cursor: not-allowed; }
+.kokonut-file-upload strong { color: var(--ink); font-size: 15px; }
+.kokonut-file-upload span { font-size: 13px; }
+.kokonut-file-upload small { max-width: 360px; margin-top: .45rem; text-align: center; font-size: 11.5px; line-height: 1.45; }
+.kokonut-file-upload-icon { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: .55rem; border: 1px solid var(--blue-100); border-radius: 18px; color: var(--brand-blue); background: rgba(255,255,255,.85); box-shadow: 0 10px 25px rgba(52,89,177,.13); }
+.kokonut-magnet-shell { display: inline-flex; border-radius: 10px; }
+.kokonut-magnet-button { overflow: visible; will-change: transform; }
+.kokonut-glass-card { position: relative; overflow: hidden; border: 1px solid rgba(214,222,237,.78); background: linear-gradient(135deg, rgba(255,255,255,.82), rgba(225,232,248,.5)); box-shadow: inset 0 1px 0 rgba(255,255,255,.92), 0 7px 18px rgba(8,38,83,.07); backdrop-filter: blur(12px) saturate(135%); }
+.kokonut-glass-shine { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(115deg, transparent 25%, rgba(255,255,255,.62) 48%, transparent 70%); opacity: 0; transform: translateX(-50%); transition: opacity .22s ease, transform .45s ease; }
+.kokonut-glass-card:hover .kokonut-glass-shine { opacity: .75; transform: translateX(50%); }
+.kokonut-glass-content { position: relative; z-index: 1; }
 
 /* File Upload Dialog Styles */
 .file-upload-dialog {

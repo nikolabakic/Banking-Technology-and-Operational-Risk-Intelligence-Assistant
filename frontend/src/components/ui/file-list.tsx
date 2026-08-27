@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { File, X } from "lucide-react";
 import { Button } from "./button";
+import { LiquidGlassCard } from "@/components/kokonutui/liquid-glass-card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 import { UserDocument, listDocuments, deleteDocument } from "@/api";
 
@@ -124,7 +125,7 @@ export function FileList({ threadId, onFileDelete }: FileListProps) {
           </h4>
           <div className="file-items-grid">
             {files.map((file) => (
-              <div key={file.id} className={`file-item file-item-${getFileColor(file.content_type)}`}>
+              <LiquidGlassCard key={file.id} className={`file-item file-item-${getFileColor(file.content_type)}`}>
                 <div className="file-item-info">
                   {getFileIcon(file.content_type)}
                   <div className="file-item-details">
@@ -147,7 +148,7 @@ export function FileList({ threadId, onFileDelete }: FileListProps) {
                   </TooltipTrigger>
                   <TooltipContent>Delete file</TooltipContent>
                 </Tooltip>
-              </div>
+              </LiquidGlassCard>
             ))}
           </div>
         </div>
