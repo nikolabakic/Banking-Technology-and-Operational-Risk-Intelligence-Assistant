@@ -112,8 +112,10 @@ presenting the already validated supported bank answers.
   from the server-owned bank registry rather than model-authored bank names.
 - Allowed current/external questions may invoke cited web search; arithmetic may invoke the bounded
   Decimal calculator. Neither path runs filing retrieval.
-- Questions that explicitly rely on a thread attachment use the `document_research` route. Parsed
-  document text is bounded, treated as untrusted evidence, and kept separate from filing retrieval.
+- Questions that explicitly rely only on a thread attachment use the `document_research` route.
+  Comparisons between an attachment and a supported bank use `document_filing_comparison`: document
+  evidence stays document-owned while each bank is retrieved independently through the production
+  Qdrant + BM25S + RRF path. Parsed document text is bounded and treated as untrusted evidence.
 - Single-bank generation selects one of four strict tools for supported numeric, supported
   narrative, ambiguous, or unsupported results. Truncation and contract-shape failures receive at
   most one repair retry; unsupported display text is server-rendered.

@@ -47,6 +47,40 @@ def test_comparison_normalizes_redundant_citation_ids_from_inline_markers() -> N
     assert _normalize_claim_citation_ids(malformed) == (malformed, False)
 
 
+def test_mixed_partial_comparison_explicitly_reports_missing_filing_disclosure() -> None:
+    from bankscope.generation.comparison_generator import synthesize_comparison
+
+    result = synthesize_comparison(
+        "Compare the metric in the upload with JPMorgan.",
+        [
+            {
+                "ticker": "UPLOAD",
+                "bank_name": "north-river.pdf",
+                "status": "supported",
+                "answer": "North River disclosed metric A [E1].",
+                "citations": [{"label": "E1"}],
+            },
+            {
+                "ticker": "JPM",
+                "bank_name": "JPMorgan Chase & Co.",
+                "source_kind": "filing",
+                "status": "unsupported",
+                "answer": "Unsupported.",
+                "citations": [],
+            },
+        ],
+        client=SimpleNamespace(),
+        model="generation-model",
+        source_comparison=True,
+    )
+
+    assert result["generation"]["final_status"] == "partial"
+    assert (
+        "indexed filing does not provide comparable disclosure for JPMorgan Chase & Co."
+        in result["answer"]
+    )
+
+
 class MockEncoder:
     def __init__(self) -> None:
         self.calls = []
@@ -227,6 +261,71 @@ class ComparisonCompletions(MockCompletions):
         return SimpleNamespace(
             choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
         )
+
+
+class DocumentFilingComparisonCompletions(MockCompletions):
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        tool_names = {tool["function"]["name"] for tool in (kwargs.get("tools") or [])}
+        prompt = kwargs["messages"][1]["content"]
+        if "route_conversation" in tool_names:
+            payload = json.loads(prompt)
+            content = {
+                "action": "document_research",
+                "confidence": 0.98,
+                "search_question": payload["current_question"],
+                "reason": "The attachment is required.",
+                "response_text": None,
+                "category": None,
+                "missing": None,
+                "citation_ids": [],
+                "presentation_guidance": None,
+            }
+            name = "route_conversation"
+        elif "submit_comparison_synthesis" in tool_names:
+            content = {
+                "claims": [
+                    {
+                        "text": (
+                            "North River reported 14.6% [E1], comparable with "
+                            "JPMorgan's 14.6% [E2]."
+                        ),
+                        "tickers": ["UPLOAD", "JPM"],
+                        "citation_ids": ["E1", "E2"],
+                    }
+                ]
+            }
+            name = "submit_comparison_synthesis"
+        else:
+            content = {
+                "status": "supported",
+                "answer_type": "narrative",
+                "answer": "The disclosed ratio was 14.6% [E1].",
+                "facts": None,
+                "citation_ids": ["E1"],
+                "reason": "Direct support.",
+            }
+            name = "submit_supported_narrative_answer"
+        function = SimpleNamespace(name=name, arguments=json.dumps(content))
+        message = SimpleNamespace(
+            content=None, refusal=None, tool_calls=[SimpleNamespace(function=function)]
+        )
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=message, finish_reason="tool_calls")]
+        )
+
+
+class DocumentStore:
+    def get_thread_documents_text(self, thread_id):
+        assert thread_id == "thread-1"
+        return [
+            {
+                "id": "doc-1",
+                "filename": "north-river.pdf",
+                "text": "North River reported that its ratio was 14.6% in 2025.",
+                "parse_error": None,
+            }
+        ]
 
 
 class PartialRetriever(MockRetriever):
@@ -590,6 +689,37 @@ def test_comparison_retrieves_independent_bank_subquestions_before_synthesis() -
         encoder.calls[:2],
         encoder.calls[2:],
     ]
+
+
+def test_document_filing_comparison_preserves_source_ownership_and_retrieves_filing() -> None:
+    encoder = MockEncoder()
+    retriever = MockRetriever()
+    completions = DocumentFilingComparisonCompletions()
+    pipeline = SingleBankAnswerPipeline(
+        retriever=retriever,
+        query_encoder=encoder,
+        client=SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co."},
+        bank_aliases={"JPM": ("JPMorgan",)},
+        store=DocumentStore(),
+    )
+
+    run = pipeline.answer(
+        "Compare the 2025 ratio in the attached North River PDF with JPMorgan's 10-K.",
+        conversation_history=[],
+        thread_id="thread-1",
+    )
+
+    assert run.output["diagnostics"]["route"] == "document_filing_comparison"
+    assert run.output["source_scope"] == "uploaded_document_and_indexed_filing"
+    assert [result["ticker"] for result in run.output["bank_results"]] == ["UPLOAD", "JPM"]
+    assert run.output["citations"][0]["kind"] == "document"
+    assert run.output["citations"][0]["document_id"] == "doc-1"
+    assert run.output["citations"][1]["kind"] == "filing"
+    assert run.output["citations"][1]["ticker"] == "JPM"
+    assert {call[2]["ticker"] for call in retriever.calls} == {"JPM"}
+    assert len(run.evidence) == 2
 
 
 def test_comparison_rechecks_one_abstention_when_focused_evidence_is_strong() -> None:

@@ -595,6 +595,29 @@ def test_two_to_four_bank_topics_cannot_route_to_direct_response(question) -> No
     assert decision.reason == "bank_specific_filing_claim_requires_filing_research"
 
 
+def test_uploaded_document_bank_comparison_uses_mixed_source_route() -> None:
+    decision = ConversationGraph(
+        client=SimpleNamespace(),
+        model="test-model",
+        bank_names=BANK_NAMES,
+        bank_aliases=BANK_ALIASES,
+        chat_model=FakeChatModel(
+            route_arguments(
+                "document_research",
+                search_question="Compare the attached PDF with JPMorgan's filing.",
+            )
+        ),
+    ).route(
+        "Compare the metrics in the attached North River PDF with JPMorgan's 10-K.",
+        [],
+        available_documents=[{"id": "doc-1", "filename": "north-river.pdf"}],
+    )
+
+    assert type(decision.action).__name__ == "DocumentFilingComparisonArgs"
+    assert decision.route_action == "document_filing_comparison"
+    assert decision.reason == "uploaded_document_and_supported_bank_require_isolated_sources"
+
+
 @pytest.mark.parametrize(
     "question",
     [

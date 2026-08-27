@@ -19,6 +19,19 @@ export type FilingCitation = CitationBase & {
   display_page_end?: string | number | null;
 };
 
+export type DocumentCitation = CitationBase & {
+  kind: "document";
+  target_chunk_id: string;
+  ticker: "UPLOAD";
+  record_type: "text";
+  document_id: string;
+  filename: string;
+  section_title?: string;
+  filing_date?: string;
+  page_start?: string | number | null;
+  display_page_start?: string | number | null;
+};
+
 export type WebCitation = CitationBase & {
   kind: "web";
   source_url: string;
@@ -34,7 +47,7 @@ export type WebCitation = CitationBase & {
   display_page_end?: string | number | null;
 };
 
-export type Citation = FilingCitation | WebCitation;
+export type Citation = FilingCitation | DocumentCitation | WebCitation;
 
 export type DialogAct =
   | "answer"
@@ -108,6 +121,7 @@ export type AnswerResponse = {
   question: string;
   dialog_act?: DialogAct;
   mode?: "comparison";
+  source_scope?: "uploaded_document_and_indexed_filing";
   ticker: string | null;
   tickers?: string[];
   status: "supported" | "partial" | "ambiguous" | "unsupported";
@@ -149,7 +163,7 @@ export type SourceChunk = {
 };
 
 export type CitationContext = {
-  citation: { id: string; label: string; metadata: FilingCitation };
+  citation: { id: string; label: string; metadata: FilingCitation | DocumentCitation };
   target_chunk_id: string;
   record_type: string;
   ticker: string;
@@ -235,8 +249,10 @@ function parseCitation(value: unknown): Citation {
   const item = asRecord(value);
   if (!item) throw new ApiError("The answer service returned an invalid citation.", 502, "invalid_response");
   const optionalScalar = (input: unknown) => typeof input === "string" || typeof input === "number" || input === null ? input : undefined;
-  const kind = item.kind === undefined ? "filing" : item.kind;
-  if (kind !== "filing" && kind !== "web") {
+  const kind = item.kind === undefined
+    ? item.source_kind === "user_document" ? "document" : "filing"
+    : item.kind;
+  if (kind !== "filing" && kind !== "document" && kind !== "web") {
     throw new ApiError("The answer service returned an invalid citation kind.", 502, "invalid_response");
   }
   const common = {
@@ -259,6 +275,18 @@ function parseCitation(value: unknown): Citation {
       page_end: optionalScalar(item.page_end),
       display_page_start: optionalScalar(item.display_page_start),
       display_page_end: optionalScalar(item.display_page_end),
+    };
+  }
+  if (kind === "document") {
+    return {
+      ...common,
+      kind,
+      target_chunk_id: requiredString(item.target_chunk_id, "citation target"),
+      ticker: "UPLOAD",
+      record_type: "text",
+      document_id: requiredString(item.document_id, "document ID"),
+      filename: requiredString(item.filename, "document filename"),
+      section_title: optionalString(item.section_title),
     };
   }
   return {
@@ -379,6 +407,9 @@ export function parseAnswerPayload(value: unknown): AnswerResponse {
     question: requiredString(item.question, "question"),
     dialog_act: dialogAct,
     mode: item.mode === "comparison" ? "comparison" : undefined,
+    source_scope: item.source_scope === "uploaded_document_and_indexed_filing"
+      ? item.source_scope
+      : undefined,
     ticker: typeof item.ticker === "string" ? item.ticker : null,
     tickers: Array.isArray(item.tickers) ? item.tickers.filter((ticker): ticker is string => typeof ticker === "string") : undefined,
     status,
@@ -566,8 +597,8 @@ export async function loadCitationContext(
   if (!payload || !Array.isArray(payload.chunks)) throw new ApiError("The answer service returned invalid citation context.", 502, "invalid_response");
   const citationWrapper = asRecord(payload.citation);
   const metadata = parseCitation(asRecord(citationWrapper?.metadata));
-  if (metadata.kind !== "filing") {
-    throw new ApiError("The answer service returned invalid filing citation context.", 502, "invalid_response");
+  if (metadata.kind !== "filing" && metadata.kind !== "document") {
+    throw new ApiError("The answer service returned invalid citation context.", 502, "invalid_response");
   }
   const chunks = payload.chunks.map((value) => {
     const chunk = asRecord(value);

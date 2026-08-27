@@ -30,6 +30,7 @@ import {
   type AnswerResponse,
   type CitationContext,
   type Diagnostics,
+  type DocumentCitation,
   type FilingCitation,
   type ThreadSummary,
   type Turn,
@@ -48,7 +49,11 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { FileUploadButton } from "@/components/ui/file-upload-button";
 import { FileList } from "@/components/ui/file-list";
 
-type OpenSource = { response: AnswerResponse; index: number; citation: FilingCitation };
+type OpenSource = {
+  response: AnswerResponse;
+  index: number;
+  citation: FilingCitation | DocumentCitation;
+};
 type AnswerStatus = AnswerResponse["status"];
 
 const statusVariants: Record<AnswerStatus, "success" | "warning" | "danger"> = {
@@ -399,6 +404,13 @@ function ComparisonResults({ response, onSource }: {
 function assistantSubtitle(turn: Turn): string {
   if (turn.state === "loading") return turn.status || "Preparing the answer…";
   if (turn.state !== "answered" || !turn.response) return "BankScope assistant";
+  const hasDocument = turn.response.citations.some((citation) => citation.kind === "document");
+  const hasFiling = turn.response.citations.some((citation) => citation.kind === "filing");
+  if (
+    turn.response.source_scope === "uploaded_document_and_indexed_filing"
+    || turn.response.diagnostics?.route === "document_filing_comparison"
+    || (hasDocument && hasFiling)
+  ) return "Grounded in uploaded document and indexed filing";
   switch (turn.response.dialog_act) {
     case "clarification": return "One detail is needed";
     case "retryable_error": return "Research paused safely";
@@ -406,7 +418,9 @@ function assistantSubtitle(turn: Turn): string {
     case "web_answer": return "Researched on the web";
     case "web_research_unavailable": return "Web research unavailable";
     case "calculation": return "Calculated result";
-    case "answer": return "Grounded in indexed filings";
+    case "answer": return hasDocument
+      ? "Grounded in uploaded document"
+      : "Grounded in indexed filings";
     default:
       return turn.response.citations.some((citation) => citation.kind === "web")
         ? "Researched on the web"

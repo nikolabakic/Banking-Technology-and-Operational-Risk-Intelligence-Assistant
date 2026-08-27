@@ -596,7 +596,9 @@ def _usage_payload(usage: Any) -> dict[str, int]:
 
 def _citation(label: str, evidence: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _metadata(evidence)
+    source_kind = str(metadata.get("source_kind") or "filing")
     return {
+        "kind": "document" if source_kind == "user_document" else "filing",
         "label": label,
         "target_chunk_id": _field(evidence, "target_chunk_id"),
         "ticker": _field(evidence, "ticker"),
@@ -611,7 +613,7 @@ def _citation(label: str, evidence: Mapping[str, Any]) -> dict[str, Any]:
         "source_url": str(metadata.get("source_url") or ""),
         "document_id": str(metadata.get("document_id") or ""),
         "filename": str(metadata.get("filename") or ""),
-        "source_kind": str(metadata.get("source_kind") or "filing"),
+        "source_kind": source_kind,
     }
 
 

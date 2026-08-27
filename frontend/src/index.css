@@ -164,7 +164,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 .mobile-menu-button { display: none; color: white; }
 
 .workspace { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 12px; height: calc(100dvh - 68px); padding: 0 12px 12px; }
-.workspace-main { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid rgba(210, 229, 250, .52); border-radius: 20px; background: var(--blue-50); box-shadow: 0 22px 60px rgba(0, 20, 51, .24); }
+.workspace-main { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid rgba(210, 229, 250, .52); border-radius: 20px; background: #dcecff url("/chatbot-background.jpg") center bottom / cover no-repeat; box-shadow: 0 22px 60px rgba(0, 20, 51, .24); }
 .thread-sidebar, .mobile-sidebar { display: flex; flex-direction: column; min-height: 0; color: #dceaff; }
 .thread-sidebar { position: relative; z-index: 2; height: 100%; }
 .sidebar-heading { padding: 8px 4px 12px; }
@@ -201,8 +201,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 
 /* welcome */
 .welcome { position: relative; display: grid; place-items: center; height: 100%; min-height: 0; padding: 46px 24px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(78, 131, 194, .35) transparent; background:
-  radial-gradient(circle at 50% 22%, rgba(81, 154, 237, .18), transparent 39%),
-  linear-gradient(150deg, #e7f2ff 0%, #f5f9ff 56%, #dcecff 100%); }
+  radial-gradient(circle at 50% 22%, rgba(81, 154, 237, .12), transparent 39%),
+  linear-gradient(180deg, rgba(239, 247, 255, .38), rgba(240, 247, 255, .12)); }
 .welcome-content { width: 100%; max-width: 860px; min-width: 0; }
 .eyebrow { display: flex; justify-content: center; align-items: center; gap: 7px; color: #155bb1; font-size: 11px; font-weight: 720; text-transform: uppercase; letter-spacing: .07em; }
 .welcome h1 { margin: 18px 0 15px; color: #0c2c58; text-align: center; font-size: clamp(40px, 5vw, 64px); line-height: 1.02; font-weight: 670; letter-spacing: -3.6px; }
@@ -233,8 +233,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 
 /* conversation */
 .conversation { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100%; min-height: 0; background:
-  radial-gradient(circle at 84% 0, rgba(97, 166, 243, .13), transparent 35%),
-  linear-gradient(180deg, #eef6ff 0%, #f7faff 100%); }
+  radial-gradient(circle at 84% 0, rgba(97, 166, 243, .1), transparent 35%),
+  linear-gradient(180deg, rgba(238, 246, 255, .7), rgba(247, 250, 255, .58)); }
 .conversation-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #a7c3e3 transparent; }
 .conversation-scroll::-webkit-scrollbar, .composer textarea::-webkit-scrollbar, .welcome::-webkit-scrollbar { width: 9px; }
 .conversation-scroll::-webkit-scrollbar-track, .composer textarea::-webkit-scrollbar-track, .welcome::-webkit-scrollbar-track { background: transparent; }
@@ -296,7 +296,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visib
 .error-card { padding: 14px 16px; border: 1px solid #efc9cd; border-left: 3px solid var(--danger); border-radius: 10px; background: #fff6f7; }
 .error-card strong { color: #8e303a; font-size: 12px; }
 .error-card p { margin: 5px 0 0; color: #80535a; font-size: 11px; line-height: 1.5; }
-.conversation-composer { position: relative; z-index: 10; width: 100%; padding: 20px max(20px, calc((100% - 820px) / 2)) 11px; background: linear-gradient(transparent, rgba(247,250,255,.96) 24%, #f7faff 48%); }
+.conversation-composer { position: relative; z-index: 10; width: 100%; padding: 20px max(20px, calc((100% - 820px) / 2)) 11px; background: linear-gradient(transparent, rgba(235, 245, 255, .9) 24%, rgba(240, 247, 255, .96) 48%); }
 .composer-compact { padding: 6px; border-radius: 15px; }
 .composer-compact textarea { min-height: 44px; max-height: 168px; padding: 11px 55px 9px 12px; }
 .composer-compact .composer-footer { position: absolute; right: 6px; bottom: 6px; min-height: 44px; padding: 3px; }

@@ -38,6 +38,7 @@ from bankscope.generation.conversation import (
     ConversationGraph,
     DeclineOutOfScopeArgs,
     DirectResponseArgs,
+    DocumentFilingComparisonArgs,
     DocumentResearchArgs,
     ResearchFilingsArgs,
     WebResearchArgs,
@@ -1116,6 +1117,20 @@ class BankAnswerPipeline:
                     model_request_count=orchestration_request_count,
                     on_progress=on_progress,
                 )
+            if isinstance(action, DocumentFilingComparisonArgs):
+                return self._document_filing_comparison_run(
+                    question,
+                    action,
+                    resolution=explicit_resolution,
+                    user_documents=user_documents,
+                    record_type=record_type,
+                    limit=limit,
+                    candidate_k=candidate_k,
+                    rrf_k=rrf_k,
+                    stages=stages,
+                    model_request_count=orchestration_request_count,
+                    on_progress=on_progress,
+                )
             if isinstance(action, (ResearchFilingsArgs, WebResearchArgs)):
                 handled = self._research_handlers[decision.route_action](
                     question,
@@ -1542,6 +1557,211 @@ class BankAnswerPipeline:
             generation_latency_ms=generation_latency_ms,
             diagnostics=diagnostics,
             stage_trace=tuple(stages),
+        )
+
+    def _document_filing_comparison_run(
+        self,
+        question: str,
+        action: DocumentFilingComparisonArgs,
+        *,
+        resolution: BankResolution,
+        user_documents: Sequence[Mapping[str, Any]],
+        record_type: str | None,
+        limit: int,
+        candidate_k: int,
+        rrf_k: int,
+        stages: list[dict[str, Any]],
+        model_request_count: int,
+        on_progress: Callable[[str, Mapping[str, Any]], None] | None,
+    ) -> AnswerRun:
+        """Compare document evidence with independently retrieved filing evidence."""
+        document_evidence: list[dict[str, Any]] = []
+        remaining_chars = MAX_USER_DOCUMENT_CONTEXT_CHARS
+        document_names: list[str] = []
+        document_ids: list[str] = []
+        for document in user_documents:
+            value = str(document.get("text") or "").strip()
+            if not value or document.get("parse_error") or remaining_chars <= 0:
+                continue
+            included = value[:remaining_chars]
+            remaining_chars -= len(included)
+            document_id = str(document.get("id") or "").strip()
+            filename = str(document.get("filename") or "Uploaded document").strip()
+            document_names.append(filename)
+            document_ids.append(document_id)
+            document_evidence.append(
+                {
+                    "document": included,
+                    "ticker": "UPLOAD",
+                    "record_type": "text",
+                    "target_chunk_id": f"user_document:{document_id}",
+                    "metadata": {
+                        "source_kind": "user_document",
+                        "document_id": document_id,
+                        "filename": filename,
+                        "section_title": filename,
+                    },
+                }
+            )
+
+        selected_tickers = tuple(resolution.tickers)
+        source_results: list[dict[str, Any]] = []
+        all_evidence = list(document_evidence)
+        embedding_latency_ms = retrieval_latency_ms = generation_latency_ms = 0.0
+        initial_evidence_count = len(document_evidence)
+        filing_retrieval: list[dict[str, Any]] = []
+        bank_plans: list[dict[str, Any]] = []
+        next_citation_index = 1
+
+        if on_progress is not None:
+            on_progress("generating", {"message": "Analyzing the uploaded document..."})
+        started = perf_counter()
+        document_answer = generate_answer(
+            question,
+            document_evidence,
+            client=self.client,
+            model=self.generation_model,
+            expected_ticker="UPLOAD",
+            expected_bank_name=", ".join(document_names) or "Uploaded document",
+            temperature=self.temperature,
+            resolved_question=action.search_question,
+            comparison_scope=True,
+            presentation_guidance=action.presentation_guidance,
+            source_description="user-uploaded document",
+        )
+        generation_latency_ms += (perf_counter() - started) * 1000
+        relabeled, next_citation_index = self._relabel_bank_result(
+            document_answer, next_citation_index
+        )
+        source_results.append(
+            {
+                "ticker": "UPLOAD",
+                "bank_name": ", ".join(document_names) or "Uploaded document",
+                "source_kind": "user_document",
+                **relabeled,
+            }
+        )
+
+        for ticker in selected_tickers:
+            bank_name = self.bank_names.get(ticker, ticker)
+            if on_progress is not None:
+                on_progress("retrieving", {"message": f"Searching {ticker} indexed filings..."})
+            retrieval_run = self.retrieve_evidence(
+                action.search_question,
+                ticker=ticker,
+                original_question=question,
+                record_type=record_type,
+                limit=limit,
+                candidate_k=candidate_k,
+                rrf_k=rrf_k,
+                on_progress=None,
+            )
+            evidence = retrieval_run.evidence
+            all_evidence.extend(evidence)
+            initial_evidence_count += retrieval_run.initial_evidence_count
+            embedding_latency_ms += retrieval_run.embedding_latency_ms
+            retrieval_latency_ms += retrieval_run.retrieval_latency_ms
+            model_request_count += retrieval_run.model_request_count
+            bank_plans.extend(dict(plan) for plan in retrieval_run.agentic_plans)
+            stages.extend({**dict(stage), "ticker": ticker} for stage in retrieval_run.stage_trace)
+            filing_retrieval.append(
+                {
+                    "ticker": ticker,
+                    "query": action.search_question,
+                    "queries": list(retrieval_run.diagnostics.get("queries") or []),
+                    "evidence_count": len(evidence),
+                }
+            )
+            if on_progress is not None:
+                on_progress("generating", {"message": f"Generating the {ticker} filing answer..."})
+            started = perf_counter()
+            filing_answer = generate_answer(
+                question,
+                evidence,
+                client=self.client,
+                model=self.generation_model,
+                expected_ticker=ticker,
+                expected_bank_name=bank_name,
+                expected_record_type=record_type,
+                temperature=self.temperature,
+                resolved_question=action.search_question,
+                comparison_scope=True,
+                presentation_guidance=action.presentation_guidance,
+            )
+            generation_latency_ms += (perf_counter() - started) * 1000
+            relabeled, next_citation_index = self._relabel_bank_result(
+                filing_answer, next_citation_index
+            )
+            source_results.append(
+                {"ticker": ticker, "bank_name": bank_name, "source_kind": "filing", **relabeled}
+            )
+
+        supported_count = sum(result["status"] == "supported" for result in source_results)
+        status = "supported" if supported_count == len(source_results) else (
+            "partial" if supported_count else "unsupported"
+        )
+        started = perf_counter()
+        synthesis = synthesize_comparison(
+            question,
+            source_results,
+            client=self.client,
+            model=self.generation_model,
+            resolved_question=action.search_question,
+            presentation_guidance=action.presentation_guidance,
+            source_comparison=True,
+        )
+        generation_latency_ms += (perf_counter() - started) * 1000
+        citations = [
+            dict(citation) for result in source_results for citation in result["citations"]
+        ]
+        generation_request_count = sum(
+            int((result.get("generation") or {}).get("request_count") or 0)
+            for result in source_results
+        ) + int(synthesis["generation"].get("request_count") or 0)
+        stages.append({"stage": "synthesizing", "status": "completed", "latency_ms": 0.0})
+        output = {
+            "question": question,
+            "dialog_act": "answer",
+            "mode": "comparison",
+            "ticker": None,
+            "tickers": list(selected_tickers),
+            "document_ids": document_ids,
+            "source_scope": "uploaded_document_and_indexed_filing",
+            "status": status,
+            "answer_type": "narrative",
+            "answer": synthesis["answer"],
+            "facts": None,
+            "reason": "The uploaded document and indexed filing were evaluated independently.",
+            "citations": citations,
+            "bank_results": source_results,
+            "retrieval": {
+                "backend": "mixed",
+                "mode": "document_filing_comparison",
+                "evidence_count": len(all_evidence),
+                "per_bank": filing_retrieval,
+            },
+            "generation": {**synthesis["generation"], "request_count": generation_request_count},
+        }
+        diagnostics = self._diagnostics(
+            route="document_filing_comparison",
+            outcome=status,
+            stages=stages,
+            initial_evidence_count=initial_evidence_count,
+            final_evidence_count=len(all_evidence),
+            model_request_count=model_request_count + generation_request_count,
+            bank_plans=bank_plans,
+            output=output,
+        )
+        output["diagnostics"] = diagnostics
+        return AnswerRun(
+            output=output,
+            evidence=all_evidence,
+            embedding_latency_ms=embedding_latency_ms,
+            retrieval_latency_ms=retrieval_latency_ms,
+            generation_latency_ms=generation_latency_ms,
+            diagnostics=diagnostics,
+            stage_trace=tuple(stages),
+            agentic_plans=tuple(bank_plans),
         )
 
     @staticmethod

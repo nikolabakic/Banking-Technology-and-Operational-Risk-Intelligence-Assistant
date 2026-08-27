@@ -175,6 +175,33 @@ describe("persistent chat workspace", () => {
     expect(screen.queryByText("Grounded in indexed filings")).not.toBeInTheDocument();
   });
 
+  it("labels mixed document and filing answers with both source classes", async () => {
+    const mixed: AnswerResponse = {
+      ...response,
+      source_scope: "uploaded_document_and_indexed_filing",
+      diagnostics: { ...response.diagnostics!, route: "document_filing_comparison" },
+      citations: [
+        {
+          kind: "document",
+          citation_id: "44444444-4444-4444-8444-444444444444",
+          label: "E1",
+          target_chunk_id: "user_document:doc-1",
+          ticker: "UPLOAD",
+          record_type: "text",
+          document_id: "doc-1",
+          filename: "north-river.pdf",
+        },
+      ],
+    };
+    mocks.loadThread.mockResolvedValue({ thread, turns: [{ ...turn, response: mixed }] });
+
+    renderThread();
+
+    expect(
+      await screen.findByText("Grounded in uploaded document and indexed filing"),
+    ).toBeInTheDocument();
+  });
+
   it("retries a retryable answer through the existing stream path only after the user clicks", async () => {
     const retryQuestion = "How does Ally define operational risk?";
     const retryableResponse: AnswerResponse = {
@@ -338,7 +365,7 @@ describe("persistent chat workspace", () => {
 
   it("renders a comparison summary, bank cards, partial status and bank sources", async () => {
     const bacCitation = {
-      ...response.citations[0],
+      ...filingCitation,
       citation_id: "44444444-4444-4444-8444-444444444444",
       label: "E2",
       ticker: "BAC",
@@ -351,7 +378,7 @@ describe("persistent chat workspace", () => {
       tickers: ["JPM", "BAC"],
       status: "partial",
       answer: "JPM is supported [E1]; BAC lacks sufficient evidence.",
-      citations: [response.citations[0], bacCitation],
+      citations: [filingCitation, bacCitation],
       bank_results: [
         {
           ticker: "JPM",
