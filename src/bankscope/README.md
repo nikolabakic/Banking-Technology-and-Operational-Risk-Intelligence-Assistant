@@ -62,6 +62,10 @@ are flushed immediately, include heartbeat comments during long work, and can ad
 diagnostics contain each hybrid/exact search, context read, verifier verdict, budget count, and
 schema-recovery event.
 
+Standard filing answers may also include optional `evidence_audit`. It is persisted with the turn
+before response delivery and is advisory; `unavailable` never changes the answer's status or HTTP
+behavior. Historical turns without the field remain valid.
+
 When `AGENTIC_RAG_ENABLED=true`, `BankAnswerPipeline.retrieve_evidence()` performs initial hybrid
 retrieval and then an isolated additive bounded loop for each bank. Runtime, not the model, supplies ticker,
 accession, backend, windows, and limits. Calculator and web providers are internal conversational

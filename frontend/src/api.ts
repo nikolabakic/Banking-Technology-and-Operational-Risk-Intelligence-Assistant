@@ -117,6 +117,16 @@ export type Diagnostics = {
   quality_gate: { passed: boolean; checks: Record<string, boolean> };
 };
 
+export type EvidenceAudit = {
+  status: "passed" | "review_recommended" | "unavailable";
+  question_addressed: boolean;
+  grounded: boolean;
+  citation_coverage_ok: boolean;
+  contradiction_found: boolean;
+  summary: string;
+  metadata?: Record<string, unknown>;
+};
+
 export type AnswerResponse = {
   question: string;
   dialog_act?: DialogAct;
@@ -130,6 +140,7 @@ export type AnswerResponse = {
   reason: string;
   citations: Citation[];
   bank_results?: BankResult[];
+  evidence_audit?: EvidenceAudit;
   diagnostics?: Diagnostics;
 };
 
@@ -346,6 +357,39 @@ function parseDiagnostics(value: unknown): Diagnostics | undefined {
   };
 }
 
+function parseEvidenceAudit(value: unknown): EvidenceAudit | undefined {
+  const item = asRecord(value);
+  if (!item) return undefined;
+  const status = item.status;
+  if (status !== "passed" && status !== "review_recommended" && status !== "unavailable") {
+    return undefined;
+  }
+  if (
+    typeof item.question_addressed !== "boolean"
+    || typeof item.grounded !== "boolean"
+    || typeof item.citation_coverage_ok !== "boolean"
+    || typeof item.contradiction_found !== "boolean"
+  ) return undefined;
+  const summary = optionalTrimmedString(item.summary);
+  if (!summary) return undefined;
+  const checksPass = item.question_addressed
+    && item.grounded
+    && item.citation_coverage_ok
+    && !item.contradiction_found;
+  if ((status === "passed" && !checksPass) || (status === "review_recommended" && checksPass)) {
+    return undefined;
+  }
+  return {
+    status,
+    question_addressed: item.question_addressed,
+    grounded: item.grounded,
+    citation_coverage_ok: item.citation_coverage_ok,
+    contradiction_found: item.contradiction_found,
+    summary,
+    metadata: asRecord(item.metadata) ?? undefined,
+  };
+}
+
 function parseBankResult(value: unknown): BankResult {
   const item = asRecord(value);
   if (!item) throw new ApiError("The answer service returned an invalid bank result.", 502, "invalid_response");
@@ -418,6 +462,7 @@ export function parseAnswerPayload(value: unknown): AnswerResponse {
     reason: requiredString(item.reason, "answer reason"),
     citations: item.citations.map(parseCitation),
     bank_results: Array.isArray(item.bank_results) ? item.bank_results.map(parseBankResult) : undefined,
+    evidence_audit: parseEvidenceAudit(item.evidence_audit),
     diagnostics: parseDiagnostics(item.diagnostics),
   };
 }

@@ -90,6 +90,32 @@ describe("answer API contracts", () => {
     });
 
     expect(errorTurn.diagnostics?.quality_gate).toEqual({ passed: false, checks: {} });
+    expect(parseAnswerPayload(answer).evidence_audit).toBeUndefined();
+    expect(parseAnswerPayload({
+      ...answer,
+      evidence_audit: { status: "passed", grounded: true },
+    }).evidence_audit).toBeUndefined();
+  });
+
+  it("parses a valid evidence audit without making it part of answer validity", () => {
+    const parsed = parseAnswerPayload({
+      ...answer,
+      evidence_audit: {
+        status: "review_recommended",
+        question_addressed: true,
+        grounded: false,
+        citation_coverage_ok: false,
+        contradiction_found: false,
+        summary: "One material claim needs review.",
+        metadata: { model: "judge-model", prompt_version: "runtime-v1" },
+      },
+    });
+
+    expect(parsed.evidence_audit).toMatchObject({
+      status: "review_recommended",
+      grounded: false,
+      summary: "One material claim needs review.",
+    });
   });
 
   it("parses the conversational dialog act without requiring citations", () => {

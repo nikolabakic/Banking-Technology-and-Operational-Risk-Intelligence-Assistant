@@ -53,6 +53,19 @@ class FakePipeline:
                         "record_type": "text",
                     }
                 ],
+                "evidence_audit": {
+                    "status": "passed",
+                    "question_addressed": True,
+                    "grounded": True,
+                    "citation_coverage_ok": True,
+                    "contradiction_found": False,
+                    "summary": "The material claims are supported.",
+                    "metadata": {
+                        "model": "judge-model",
+                        "prompt_version": "runtime-evidence-audit-v1",
+                        "schema_version": "runtime-evidence-audit-schema-v1",
+                    },
+                },
                 "diagnostics": {
                     "route": "domain_rag",
                     "agentic_rag_enabled": False,
@@ -123,6 +136,7 @@ def test_thread_answer_persists_messages_and_server_side_session(api) -> None:
     )
     assert response.status_code == 200
     assert response.json()["turn"]["response"]["citations"][0]["citation_id"]
+    assert response.json()["turn"]["response"]["evidence_audit"]["status"] == "passed"
 
     second = client.post(
         f"/api/threads/{thread['id']}/answers", json={"question": "What about the framework?"}

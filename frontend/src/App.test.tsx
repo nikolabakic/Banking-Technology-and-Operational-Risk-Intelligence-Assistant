@@ -139,6 +139,37 @@ describe("persistent chat workspace", () => {
     expect(screen.getByText("✓")).toBeInTheDocument();
   });
 
+  it("shows the advisory evidence audit in answer actions and expands its checks", async () => {
+    mocks.loadThread.mockResolvedValue({
+      thread,
+      turns: [{
+        ...turn,
+        response: {
+          ...response,
+          evidence_audit: {
+            status: "unavailable",
+            question_addressed: false,
+            grounded: false,
+            citation_coverage_ok: false,
+            contradiction_found: false,
+            summary: "The automated evidence review was unavailable.",
+          },
+        },
+      }],
+    });
+
+    renderThread();
+    const trigger = await screen.findByRole("button", { name: "Evidence audit: Unavailable" });
+    expect(trigger.closest(".answer-actions")).not.toBeNull();
+    fireEvent.click(trigger);
+
+    expect(await screen.findByRole("region", { name: "Evidence audit details" })).toBeInTheDocument();
+    expect(screen.getAllByText("Not assessed")).toHaveLength(4);
+    expect(screen.getByText(
+      "Automated review against the cited evidence; not a guarantee of correctness.",
+    )).toBeInTheDocument();
+  });
+
   it("renders legacy error turns with empty diagnostics instead of crashing", async () => {
     mocks.loadThread.mockResolvedValue({
       thread,

@@ -27,6 +27,7 @@ import {
   streamAnswer,
   type AnswerResponse,
   type Diagnostics,
+  type EvidenceAudit,
   type ThreadSummary,
   type Turn,
 } from "./api";
@@ -61,6 +62,7 @@ const statusVariants: Record<AnswerStatus, "success" | "warning" | "danger"> = {
 const stageLabels: Record<string, string> = {
   routing: "Routing the request\u2026",
   assessing_evidence: "Assessing retrieved evidence\u2026",
+  auditing_evidence: "Reviewing the answer against cited evidence\u2026",
   rewriting_search: "Running a refined filing search\u2026",
   expanding_context: "Reading adjacent filing context\u2026",
   resolving_bank: "Identifying the bank…",
@@ -144,6 +146,53 @@ function DiagnosticsPanel({ diagnostics }: { diagnostics?: Diagnostics }) {
           ))}</ul>
         </div>
       </div>}
+    </>
+  );
+}
+
+function EvidenceAuditPanel({ audit }: { audit?: EvidenceAudit }) {
+  const [expanded, setExpanded] = useState(false);
+  const auditId = useId();
+  if (!audit) return null;
+  const label = audit.status === "passed"
+    ? "Passed"
+    : audit.status === "review_recommended"
+    ? "Review recommended"
+    : "Unavailable";
+  const unavailable = audit.status === "unavailable";
+  const checks = [
+    ["Question addressed", audit.question_addressed],
+    ["Material claims grounded", audit.grounded],
+    ["Citation coverage", audit.citation_coverage_ok],
+    ["Contradiction found", audit.contradiction_found],
+  ] as const;
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className={`evidence-audit-trigger evidence-audit-${audit.status}`}
+        aria-expanded={expanded}
+        aria-controls={auditId}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <ChevronRight size={14} className={expanded ? "expanded" : ""} /> Evidence audit: {label}
+      </Button>
+      {expanded && (
+        <div className="evidence-audit-content" id={auditId} role="region" aria-label="Evidence audit details">
+          <ul>
+            {checks.map(([name, value]) => (
+              <li key={name}>
+                <span>{name}</span>
+                <strong>{unavailable ? "Not assessed" : value ? "Yes" : "No"}</strong>
+              </li>
+            ))}
+          </ul>
+          <p>{audit.summary}</p>
+          <small>Automated review against the cited evidence; not a guarantee of correctness.</small>
+        </div>
+      )}
     </>
   );
 }
@@ -545,6 +594,7 @@ function AssistantTurn({ turn, copied, onCopy, onSource, onRetry, retryDisabled 
             {turn.response.citations.length > 0 && (
               <MotionButton variant="ghost" size="sm" onClick={() => onSource(turn.response!, 0)}><FileSearch size={14} /> Sources</MotionButton>
             )}
+            <EvidenceAuditPanel audit={turn.response.evidence_audit} />
             <DiagnosticsPanel diagnostics={turn.response.diagnostics} />
           </motion.div>
         </motion.div>

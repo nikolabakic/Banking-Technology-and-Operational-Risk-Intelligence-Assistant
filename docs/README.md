@@ -9,6 +9,7 @@ contains cross-cutting decisions, current status, and durable evaluation reports
 
 | Document | Purpose |
 |---|---|
+| [evidence_audit_evaluation.md](evidence_audit_evaluation.md) | Advisory runtime evidence audit, separate 10-case final challenge, reproduction, and reporting limits |
 | [roadmap.md](roadmap.md) | Current phase status, scope boundary, and acceptance gates |
 | [generation_hardening.md](generation_hardening.md) | Frozen GPT-5.1 candidate result and citation caveat |
 | [reliability-hardening.md](reliability-hardening.md) | Current failure analysis, GitHub research, controls, and verification contract |

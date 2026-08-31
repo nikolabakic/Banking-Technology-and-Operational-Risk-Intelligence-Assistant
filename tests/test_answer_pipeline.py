@@ -139,6 +139,22 @@ class MockCompletions:
     def create(self, **kwargs):
         self.calls.append(kwargs)
         tool_names = {tool["function"]["name"] for tool in (kwargs.get("tools") or [])}
+        if "submit_evidence_audit" in tool_names:
+            function = SimpleNamespace(
+                name="submit_evidence_audit",
+                arguments=json.dumps(
+                    {
+                        "status": "passed",
+                        "question_addressed": True,
+                        "grounded": True,
+                        "citation_coverage_ok": True,
+                        "contradiction_found": False,
+                        "summary": "The answer is supported by its cited evidence.",
+                    }
+                ),
+            )
+            message = SimpleNamespace(tool_calls=[SimpleNamespace(function=function)])
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
         if "route_conversation" in tool_names:
             payload = json.loads(kwargs["messages"][1]["content"])
             function = SimpleNamespace(
@@ -215,9 +231,34 @@ class ContextualizedCompletions(MockCompletions):
         return super().create(**kwargs)
 
 
+class FailingAuditCompletions(MockCompletions):
+    def create(self, **kwargs):
+        tool_names = {tool["function"]["name"] for tool in (kwargs.get("tools") or [])}
+        if "submit_evidence_audit" in tool_names:
+            raise RuntimeError("judge provider failed")
+        return super().create(**kwargs)
+
+
 class ComparisonCompletions(MockCompletions):
     def create(self, **kwargs):
         self.calls.append(kwargs)
+        tool_names = {tool["function"]["name"] for tool in (kwargs.get("tools") or [])}
+        if "submit_evidence_audit" in tool_names:
+            function = SimpleNamespace(
+                name="submit_evidence_audit",
+                arguments=json.dumps(
+                    {
+                        "status": "passed",
+                        "question_addressed": True,
+                        "grounded": True,
+                        "citation_coverage_ok": True,
+                        "contradiction_found": False,
+                        "summary": "The comparison is supported by its cited evidence.",
+                    }
+                ),
+            )
+            message = SimpleNamespace(tool_calls=[SimpleNamespace(function=function)])
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
         system = kwargs["messages"][0]["content"]
         prompt = kwargs["messages"][1]["content"]
         if "concise comparison" in system:
@@ -543,8 +584,10 @@ def test_pipeline_reuses_encoder_and_retriever_and_preserves_cli_output() -> Non
     assert first.output["status"] == "supported"
     assert first.output["facts"]["entity"] == "JPMorgan Chase & Co."
     assert first.output["answer"] == ("JPMorgan Chase & Co. — ratio — 2025: 14.6 percent [E1]")
-    assert len(completions.calls) == 2
+    assert len(completions.calls) == 4
     assert "Expected bank: JPMorgan Chase & Co." in completions.calls[0]["messages"][1]["content"]
+    assert first.output["evidence_audit"]["status"] == "passed"
+    assert first.output["diagnostics"]["model_request_count"] == 2
     assert second.evidence[0]["target_chunk_id"] == "chunk-1"
 
 
@@ -575,6 +618,24 @@ def test_simple_jpm_operational_framework_question_recovers_via_concept_query() 
     assert run.output["retrieval"]["queries"] == encoder.calls
 
 
+def test_evidence_audit_failure_never_changes_the_validated_answer() -> None:
+    pipeline = SingleBankAnswerPipeline(
+        retriever=MockRetriever(),
+        query_encoder=MockEncoder(),
+        client=SimpleNamespace(chat=SimpleNamespace(completions=FailingAuditCompletions())),
+        generation_model="generation-model",
+        bank_names={"JPM": "JPMorgan Chase & Co."},
+    )
+
+    run = pipeline.answer("What was the ratio?", ticker="JPM")
+
+    assert run.output["status"] == "supported"
+    assert run.output["citations"][0]["target_chunk_id"] == "chunk-1"
+    assert run.output["evidence_audit"]["status"] == "unavailable"
+    assert run.output["evidence_audit"]["metadata"]["error_code"] == "provider_failure"
+    assert run.output["diagnostics"]["quality_gate"]["checks"]["request_budget"] is True
+
+
 def test_pipeline_resolves_question_bank_before_retrieval() -> None:
     encoder = MockEncoder()
     retriever = MockRetriever()
@@ -593,7 +654,7 @@ def test_pipeline_resolves_question_bank_before_retrieval() -> None:
     assert run.output["ticker"] == "JPM"
     assert run.output["bank_resolution"]["source"] == "question"
     assert retriever.calls[0][2]["ticker"] == "JPM"
-    assert len(completions.calls) == 1
+    assert len(completions.calls) == 2
 
 
 def test_missing_or_too_many_banks_returns_ambiguous_without_pipeline_calls() -> None:
@@ -669,7 +730,7 @@ def test_comparison_retrieves_independent_bank_subquestions_before_synthesis() -
     assert [call[2]["ticker"] for call in retriever.calls] == ["JPM", "JPM", "BAC", "BAC"]
     assert all("bank of america" not in call[0].casefold() for call in retriever.calls[:2])
     assert all("jpmorgan" not in call[0].casefold() for call in retriever.calls[2:])
-    assert len(completions.calls) == 3
+    assert len(completions.calls) == 4
     jpm_generation_prompt = completions.calls[0]["messages"][1]["content"].casefold()
     bac_generation_prompt = completions.calls[1]["messages"][1]["content"].casefold()
     assert "bank of america" not in jpm_generation_prompt
@@ -681,6 +742,8 @@ def test_comparison_retrieves_independent_bank_subquestions_before_synthesis() -
     assert run.output["bank_results"][0]["citations"][0]["ticker"] == "JPM"
     assert run.output["bank_results"][1]["citations"][0]["ticker"] == "BAC"
     assert run.output["generation"]["request_count"] == 3
+    assert run.output["evidence_audit"]["status"] == "passed"
+    assert run.output["diagnostics"]["model_request_count"] == 4
     assert [item["query"] for item in run.output["retrieval"]["per_bank"]] == [
         encoder.calls[0],
         encoder.calls[2],
@@ -817,7 +880,7 @@ def test_comparison_returns_partial_or_all_unsupported_without_unvalidated_facts
     assert partial.output["generation"]["request_count"] == 1
     assert partial.output["generation"]["bank_request_count"] == 1
     assert partial.output["generation"]["synthesis_request_count"] == 0
-    assert len(client.chat.completions.calls) == 1
+    assert len(client.chat.completions.calls) == 2
 
     empty_client = SimpleNamespace(chat=SimpleNamespace(completions=MockCompletions()))
     unsupported = SingleBankAnswerPipeline(
@@ -826,7 +889,7 @@ def test_comparison_returns_partial_or_all_unsupported_without_unvalidated_facts
     assert unsupported.output["status"] == "unsupported"
     assert unsupported.output["citations"] == []
     assert unsupported.output["generation"]["request_count"] == 0
-    assert empty_client.chat.completions.calls == []
+    assert len(empty_client.chat.completions.calls) == 1
 
 
 def test_comparison_isolates_invalid_schema_to_one_bank_and_continues() -> None:
@@ -931,7 +994,7 @@ def test_pipeline_contextualizes_follow_up_before_retrieval() -> None:
     assert progress[:2] == ["routing", "contextualizing"]
     assert "Stale question" in completions.calls[0]["messages"][1]["content"]
     assert "14.6" in completions.calls[0]["messages"][1]["content"]
-    generation_prompt = completions.calls[-1]["messages"][1]["content"]
+    generation_prompt = completions.calls[-2]["messages"][1]["content"]
     assert "Current user question:\nWhat about 2024?" in generation_prompt
     assert f"Resolved standalone question:\n{standalone}" in generation_prompt
 
@@ -962,7 +1025,7 @@ def test_pipeline_includes_history_even_for_a_new_standalone_question() -> None:
     assert run.output["ticker"] == "BAC"
     assert run.output["contextualization"]["applied"] is False
     assert run.output["contextualization"]["skip_reason"] == ("current_question_is_standalone")
-    assert len(completions.calls) == 2
+    assert len(completions.calls) == 3
     assert completions.calls[0]["tool_choice"] == "required"
     routing_payload = json.loads(completions.calls[0]["messages"][1]["content"])
     assert routing_payload["conversation_history"] == history

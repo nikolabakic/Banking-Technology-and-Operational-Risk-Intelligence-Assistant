@@ -84,6 +84,8 @@ flag back to `false` and restarting restores baseline routing/retrieval behavior
 - attachments are scoped to a conversation, limited to 10 MB, and shown above its turns
 - bank selection is deliberately absent; the server resolves one bank or an ordered comparison set
 - optional and legacy diagnostics are normalized defensively before rendering
+- optional `evidence_audit` is normalized defensively; old turns and malformed audit payloads remain
+  renderable, and `unavailable` is neutral rather than an answer failure
 - expected threaded model/pipeline failures arrive as answered `retryable_error` turns; red error
   turns are reserved for infrastructure or protocol failures; retryable turns include a guarded
   Retry action that resubmits the original question

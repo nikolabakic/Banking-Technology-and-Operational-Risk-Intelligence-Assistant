@@ -136,4 +136,12 @@ presenting the already validated supported bank answers.
 Changes require generator, pipeline, contextualizer, comparison, evaluator, and frontend contract
 tests plus the relevant frozen live gate before a default changes.
 
+## Post-answer evidence audit
+
+Standard single-bank and multi-bank filing RAG outputs receive one advisory evidence-audit attempt
+after generation/citation validation and before persistence. Only the original question, final
+answer, and cited canonical evidence are sent. Failure is represented as `unavailable` and never
+changes the answer, status, citations, or authoritative deterministic validation. Non-retrieval,
+web, calculator, greeting, and uploaded-document paths are outside this audit.
+
 [Package architecture](../README.md) · [Evaluation](../evaluation/README.md)

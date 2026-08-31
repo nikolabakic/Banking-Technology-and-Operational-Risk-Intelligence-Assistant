@@ -9,6 +9,7 @@ from typing import Any, Literal, Protocol
 
 import numpy as np
 
+from bankscope.evaluation.semantic_judge import audit_evidence_answer
 from bankscope.generation.agentic import (
     MAX_AGENT_MODEL_REQUESTS,
     MAX_AGENT_TOOL_ACTIONS,
@@ -84,6 +85,29 @@ MAX_USER_DOCUMENT_CONTEXT_CHARS = 120_000
 DEFAULT_QDRANT_PATH = PROJECT_ROOT / "data/processed/qdrant"
 DEFAULT_QDRANT_MANIFEST = PROJECT_ROOT / "data/processed/qdrant_manifest.json"
 DEFAULT_BANK_REGISTRY = PROJECT_ROOT / "config/banks.yaml"
+
+
+def _cited_evidence_for_audit(
+    output: Mapping[str, Any], evidence: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    evidence_by_target = {
+        str(item.get("target_chunk_id") or ""): dict(item)
+        for item in evidence
+        if str(item.get("target_chunk_id") or "")
+    }
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_citation in output.get("citations") or []:
+        if not isinstance(raw_citation, Mapping):
+            continue
+        target_id = str(raw_citation.get("target_chunk_id") or "")
+        if not target_id or target_id in seen or target_id not in evidence_by_target:
+            continue
+        seen.add(target_id)
+        item = dict(evidence_by_target[target_id])
+        item["audit_label"] = str(raw_citation.get("label") or "")
+        selected.append(item)
+    return selected
 
 
 def _web_answer_with_citations(
@@ -435,6 +459,8 @@ class BankAnswerPipeline:
         if not self.agentic_rag_enabled:
             selected_bank_count = len((output or {}).get("tickers") or [])
             request_budget = 2 + (2 * max(1, selected_bank_count))
+        if route == "domain_rag":
+            request_budget += 1
         bank_isolation_ok = all(bool(plan.get("bank_isolation_ok", True)) for plan in bank_plans)
         citations_ok = True
         if output is not None and route == "domain_rag":
@@ -495,6 +521,40 @@ class BankAnswerPipeline:
             "bank_plans": [dict(plan) for plan in bank_plans],
             "quality_gate": {"passed": all(checks.values()), "checks": checks},
         }
+
+    def _audit_filing_output(
+        self,
+        question: str,
+        output: dict[str, Any],
+        evidence: Sequence[Mapping[str, Any]],
+        *,
+        stages: list[dict[str, Any]],
+        on_progress: Callable[[str, Mapping[str, Any]], None] | None,
+    ) -> int:
+        if on_progress is not None:
+            on_progress(
+                "auditing_evidence",
+                {"message": "Reviewing the answer against its cited evidence..."},
+            )
+        started = perf_counter()
+        audit = audit_evidence_answer(
+            question=question,
+            generated_answer=str(output.get("answer") or ""),
+            evidence=_cited_evidence_for_audit(output, evidence),
+            client=self.client,
+            model=self.generation_model,
+        )
+        latency_ms = (perf_counter() - started) * 1000
+        output["evidence_audit"] = audit
+        stages.append(
+            {
+                "stage": "auditing_evidence",
+                "status": ("unavailable" if audit.get("status") == "unavailable" else "completed"),
+                "latency_ms": latency_ms,
+            }
+        )
+        metadata = audit.get("metadata")
+        return int(metadata.get("request_count") or 0) if isinstance(metadata, Mapping) else 0
 
     def _run_agentic_loop(
         self,
@@ -1443,13 +1503,22 @@ class BankAnswerPipeline:
             **answer,
         }
         generation_requests = int((answer.get("generation") or {}).get("request_count") or 0)
+        audit_requests = self._audit_filing_output(
+            question,
+            output,
+            evidence,
+            stages=stages,
+            on_progress=on_progress,
+        )
         diagnostics = self._diagnostics(
             route=route,
             outcome=str(answer.get("status") or "unknown"),
             stages=stages,
             initial_evidence_count=initial_evidence_count,
             final_evidence_count=len(evidence),
-            model_request_count=orchestration_request_count + generation_requests,
+            model_request_count=(
+                orchestration_request_count + generation_requests + audit_requests
+            ),
             bank_plans=bank_plans,
             output=output,
         )
@@ -1697,8 +1766,10 @@ class BankAnswerPipeline:
             )
 
         supported_count = sum(result["status"] == "supported" for result in source_results)
-        status = "supported" if supported_count == len(source_results) else (
-            "partial" if supported_count else "unsupported"
+        status = (
+            "supported"
+            if supported_count == len(source_results)
+            else ("partial" if supported_count else "unsupported")
         )
         started = perf_counter()
         synthesis = synthesize_comparison(
@@ -2082,13 +2153,22 @@ class BankAnswerPipeline:
                 "final_status": status,
             },
         }
+        audit_requests = self._audit_filing_output(
+            question,
+            output,
+            all_evidence,
+            stages=stages,
+            on_progress=on_progress,
+        )
         diagnostics = self._diagnostics(
             route="domain_rag",
             outcome=status,
             stages=stages,
             initial_evidence_count=initial_evidence_count,
             final_evidence_count=len(all_evidence),
-            model_request_count=orchestration_request_count + generation_request_count,
+            model_request_count=(
+                orchestration_request_count + generation_request_count + audit_requests
+            ),
             bank_plans=bank_plans,
             output=output,
         )

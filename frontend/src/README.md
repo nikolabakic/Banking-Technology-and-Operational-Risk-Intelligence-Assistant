@@ -39,7 +39,7 @@ sequenceDiagram
 
 ## Public TypeScript contracts
 
-`api.ts` exports `Citation`, `NumericFacts`, `BankResult`, `Diagnostics`, `AnswerResponse`,
+`api.ts` exports `Citation`, `NumericFacts`, `BankResult`, `Diagnostics`, `EvidenceAudit`, `AnswerResponse`,
 `ThreadSummary`, `Turn`, `SourceChunk`, `CitationContext`, and `ApiError`. `AnswerResponse.dialog_act`
 distinguishes grounded answers, clarifications, direct conversation, and safe retryable recovery.
 Its functions list/create/load/rename/delete threads, stream answers, and load citation context.
@@ -49,6 +49,10 @@ ignores comment heartbeats and malformed intermediate events, and runtime-valida
 turn. A stream must yield a valid answer or error turn before completion; otherwise it raises
 `ApiError`. REST responses and legacy diagnostics are also normalized before the UI receives them.
 Keep discriminated status/type unions synchronized with backend response models.
+
+`evidence_audit` is optional for historical compatibility. Defensive parsing drops malformed audit
+objects without dropping the answer, and the answer-actions disclosure presents `unavailable`
+neutrally with the automated-review disclaimer.
 
 `App.tsx` owns routing, selected-thread state, optimistic loading turns, stream cancellation,
 dialogs, comparison rendering, and Markdown answer presentation. The citation viewer is an isolated

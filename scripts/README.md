@@ -135,4 +135,17 @@ production default automatically.
 
 When changing a command, update this table, its `--help`, tests, and every README command example.
 
+## Evidence-audit challenge
+
+`evaluate_evidence_audit_challenge.py` validates and runs the separate 10-case descriptive
+challenge without changing the frozen evaluation baseline:
+
+```powershell
+python scripts/evaluate_evidence_audit_challenge.py --model AZURE_GPT_51_2025_1113
+```
+
+It requires the existing local corpus, Qdrant index, cached embedding model, and configured
+OpenAI-compatible client. Results are written under `data/evaluation/results/`; no result should be
+reported unless the command actually completed.
+
 [Repository guide](../README.md) · [Package architecture](../src/bankscope/README.md)

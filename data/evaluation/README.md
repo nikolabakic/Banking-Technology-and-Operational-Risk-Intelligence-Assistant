@@ -6,6 +6,12 @@
 `scripts/evaluate_agentic_rag.py`. It contains four rewrite cases, three neighbour-expansion cases,
 three multi-bank cases, one sufficient-initial-retrieval case, and one unsupported case.
 
+`evidence_audit_challenge_v1.jsonl` is a separate 10-case descriptive final challenge: two
+unsupported/missing-period, two ambiguous, two exact numeric table, two multi-claim narrative, and
+two citation/evidence-trap cases. It does not extend `queries.jsonl`, alter the frozen 34-query
+denominators, or define a new quality gate. Canonical relevant and trap IDs are validated before a
+live run. See [the evidence-audit guide](../../docs/evidence_audit_evaluation.md).
+
 ```text
 evaluation/
 ├── queries.jsonl                         # retrieval and answer qrels
