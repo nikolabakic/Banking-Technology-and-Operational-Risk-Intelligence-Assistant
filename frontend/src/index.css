@@ -555,7 +555,8 @@
 /* File Upload Dialog Styles */
 .file-upload-dialog {
   max-width: 500px;
-  width: 90vw;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .file-upload-area {
