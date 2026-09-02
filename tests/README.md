@@ -21,8 +21,8 @@ flowchart LR
 | Parsing and tables | `test_corpus`, `test_tables`, `test_glossary_locators` |
 | Retrieval and Qdrant | `test_hybrid_retriever`, `test_mixed_retriever`, `test_qdrant_retriever`, `test_retrieval_metrics` |
 | Generation, planning, agentic orchestration, and comparisons | `test_answer_generator`, `test_query_planner`, `test_answer_pipeline`, `test_agentic_rag`, `test_answer_metrics`, `test_evaluate_comparisons` |
-| Conversation, documents, and API | `test_contextualizer`, `test_chat_store`, `test_chat_sources`, `test_documents`, `test_frontend_api` |
-| Evaluation/client utilities | evaluator, semantic judge, embedding, download, model-access, and benchmark tests |
+| Conversation, tools, documents, and API | `test_conversation`, `test_contextualizer`, `test_chat_store`, `test_chat_sources`, `test_calculator`, `test_web_search`, `test_documents`, `test_frontend_api` |
+| Evaluation/client utilities | answer/conversation/evidence evaluators, semantic judge, embedding, download, model-access, smoke, serving, and benchmark tests |
 
 Most tests use temporary paths, fake clients, and small deterministic fixtures. Tests must not
 depend on the developer's generated corpus, network, secret credentials, or local chat database.

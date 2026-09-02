@@ -123,9 +123,7 @@ def summarize(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         for row in rows
         if row["expected_action"] in {"direct_response", "calculator", "out_of_scope"}
     ]
-    out_of_scope_cases = [
-        row for row in rows if row["expected_action"] == "out_of_scope"
-    ]
+    out_of_scope_cases = [row for row in rows if row["expected_action"] == "out_of_scope"]
     scope_ok = sum(bool(row["scope_preserved"]) for row in rows)
     accuracy = correct / len(rows)
     bank_recall = sum(bool(row["action_correct"]) for row in bank_cases) / len(bank_cases)
@@ -239,9 +237,7 @@ def main() -> None:
         baseline_payload = json.loads(args.baseline.read_text(encoding="utf-8"))
         baseline_summary = baseline_payload.get("summary") or baseline_payload
         baseline_comparison = compare_with_baseline(summary, baseline_summary)
-        summary["gate_passed"] = bool(
-            summary["gate_passed"] and baseline_comparison["passed"]
-        )
+        summary["gate_passed"] = bool(summary["gate_passed"] and baseline_comparison["passed"])
     result = {
         "evaluation": "conversation-routing-v1",
         "created_at": datetime.now(UTC).isoformat(),

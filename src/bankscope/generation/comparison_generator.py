@@ -123,9 +123,7 @@ def _choice_parts(response: Any) -> tuple[str, str, str]:
     name = function.get("name") if isinstance(function, Mapping) else function.name
     if name != "submit_comparison_synthesis":
         return "", finish_reason, refusal
-    arguments = (
-        function.get("arguments") if isinstance(function, Mapping) else function.arguments
-    )
+    arguments = function.get("arguments") if isinstance(function, Mapping) else function.arguments
     return str(arguments or "").strip(), finish_reason, refusal
 
 

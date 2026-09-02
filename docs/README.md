@@ -9,10 +9,14 @@ contains cross-cutting decisions, current status, and durable evaluation reports
 
 | Document | Purpose |
 |---|---|
+| [demo-priprema.md](demo-priprema.md) | Pre-demo checklist, presentation flow, stable questions, failure recovery, and offline fallback |
+| [QA demo captures](final-report-assets/qa-demo-2026-08-31/README.md) | Reproducible screenshots of answers, diagnostics, and canonical evidence from the live application |
 | [evidence_audit_evaluation.md](evidence_audit_evaluation.md) | Advisory runtime evidence audit, separate 10-case final challenge, reproduction, and reporting limits |
 | [roadmap.md](roadmap.md) | Current phase status, scope boundary, and acceptance gates |
 | [generation_hardening.md](generation_hardening.md) | Frozen GPT-5.1 candidate result and citation caveat |
 | [reliability-hardening.md](reliability-hardening.md) | Current failure analysis, GitHub research, controls, and verification contract |
+| [prompt-inventory.md](prompt-inventory.md) | Active prompt versions, bounded inputs, output contracts, and owning gates |
+| [multi-bank-comparison-handoff.md](multi-bank-comparison-handoff.md) | Detailed implementation history and residual comparison-stability notes |
 | [ADR 013](decisions/013-rag-reliability-hardening.md) | Current deterministic RAG and UI reliability boundaries |
 | [ADR 016](decisions/016-finance-technology-conversation-scope.md) | Current conversation scope for direct answers and web search |
 | [ADR 015](decisions/015-general-chat-web-and-calculator.md) | Calculator, web-search, and Ally reliability decision; general-chat scope superseded by ADR 016 |

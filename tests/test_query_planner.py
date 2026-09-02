@@ -195,11 +195,14 @@ def test_focused_recovery_query_and_evidence_signals_are_bounded() -> None:
         "Citigroup Inc. (C) Form 10-K 2025: relevant filing table or section "
         "CET1 common equity tier 1 capital ratio",
     )
-    assert build_focused_recovery_queries(
-        "Citigroup operational expenses for 2025",
-        ticker="C",
-        bank_name="Citigroup Inc.",
-    ) == ()
+    assert (
+        build_focused_recovery_queries(
+            "Citigroup operational expenses for 2025",
+            ticker="C",
+            bank_name="Citigroup Inc.",
+        )
+        == ()
+    )
 
     weak = focused_evidence_signals(question, [])
     strong = focused_evidence_signals(

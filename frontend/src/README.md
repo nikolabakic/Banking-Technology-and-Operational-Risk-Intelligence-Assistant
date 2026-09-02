@@ -12,9 +12,11 @@ src/
 ├── index.css                # primitive and application styling
 ├── styles/                  # tokens, semantic colors, globals, and motion policy
 ├── features/citations/      # lazy canonical evidence viewer
+├── components/FeatureErrorBoundary.tsx # feature-level recovery around non-critical UI
+├── components/kokonutui/    # adapted visual/upload building blocks
+├── components/ui/           # small Radix-based primitives
 ├── App.test.tsx             # user-visible component behavior
 ├── test-setup.ts            # Vitest DOM setup
-├── components/ui/           # small Radix-based primitives
 └── lib/utils.ts             # class-name composition helper
 ```
 
@@ -39,10 +41,11 @@ sequenceDiagram
 
 ## Public TypeScript contracts
 
-`api.ts` exports `Citation`, `NumericFacts`, `BankResult`, `Diagnostics`, `EvidenceAudit`, `AnswerResponse`,
-`ThreadSummary`, `Turn`, `SourceChunk`, `CitationContext`, and `ApiError`. `AnswerResponse.dialog_act`
-distinguishes grounded answers, clarifications, direct conversation, and safe retryable recovery.
-Its functions list/create/load/rename/delete threads, stream answers, and load citation context.
+`api.ts` exports `Citation`, `NumericFacts`, `BankResult`, `Diagnostics`, `EvidenceAudit`,
+`AnswerResponse`, `ThreadSummary`, `Turn`, `SourceChunk`, `CitationContext`, `UserDocument`, and
+`ApiError`. `AnswerResponse.dialog_act` distinguishes grounded answers, clarifications, direct
+conversation, and safe retryable recovery. Its functions list/create/load/rename/delete threads,
+stream answers, load citation context, and upload/list/delete thread documents.
 
 `streamAnswer()` incrementally parses fragmented CRLF/LF SSE blocks from a fetch `ReadableStream`,
 ignores comment heartbeats and malformed intermediate events, and runtime-validates the terminal

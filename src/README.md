@@ -17,7 +17,8 @@ src/
     ├── llm/
     ├── parsing/
     ├── retrieval/
-    └── sec/
+    ├── sec/
+    └── tools/
 ```
 
 ```mermaid

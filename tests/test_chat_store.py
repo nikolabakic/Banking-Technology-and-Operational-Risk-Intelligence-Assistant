@@ -164,9 +164,7 @@ def test_two_failed_natural_retries_keep_the_original_unresolved_request(tmp_pat
     original = "How does Ally Financial define operational risk in its 2025 Form 10-K?"
 
     for question in (original, "Try again.", "Retry it."):
-        store.append_answer_turn(
-            thread["id"], question, retryable_answer(), corpus_hash="hash-1"
-        )
+        store.append_answer_turn(thread["id"], question, retryable_answer(), corpus_hash="hash-1")
 
     assert store.conversation_context(thread["id"])["unresolved_requests"] == [original]
 
@@ -177,9 +175,7 @@ def test_identical_retry_button_requests_are_deduplicated_and_bounded(tmp_path) 
     thread = store.create_thread()
 
     for question in ("request 0", "request 1", "request 2", "request 3", "request 3"):
-        store.append_answer_turn(
-            thread["id"], question, retryable_answer(), corpus_hash="hash-1"
-        )
+        store.append_answer_turn(thread["id"], question, retryable_answer(), corpus_hash="hash-1")
     assert store.conversation_context(thread["id"])["unresolved_requests"] == [
         "request 1",
         "request 2",
@@ -187,9 +183,7 @@ def test_identical_retry_button_requests_are_deduplicated_and_bounded(tmp_path) 
     ]
 
     for question in ("long-a-" + "x" * 10_000, "long-b-" + "x" * 10_000):
-        store.append_answer_turn(
-            thread["id"], question, retryable_answer(), corpus_hash="hash-1"
-        )
+        store.append_answer_turn(thread["id"], question, retryable_answer(), corpus_hash="hash-1")
     requests = store.conversation_context(thread["id"])["unresolved_requests"]
     assert len(requests) <= 3
     assert all(len(request) <= 4_000 for request in requests)
@@ -206,9 +200,7 @@ def test_non_resolving_turn_between_failure_and_retry_preserves_target(
     store.initialize()
     thread = store.create_thread()
     original = "How does Ally Financial define operational risk in its 2025 Form 10-K?"
-    store.append_answer_turn(
-        thread["id"], original, retryable_answer(), corpus_hash="hash-1"
-    )
+    store.append_answer_turn(thread["id"], original, retryable_answer(), corpus_hash="hash-1")
     interlude = answer("")
     interlude.update(
         {
@@ -218,9 +210,7 @@ def test_non_resolving_turn_between_failure_and_retry_preserves_target(
         }
     )
     store.append_answer_turn(thread["id"], "Okay", interlude, corpus_hash="hash-1")
-    store.append_answer_turn(
-        thread["id"], "Try again.", retryable_answer(), corpus_hash="hash-1"
-    )
+    store.append_answer_turn(thread["id"], "Try again.", retryable_answer(), corpus_hash="hash-1")
 
     assert store.conversation_context(thread["id"])["unresolved_requests"] == [original]
 
@@ -307,9 +297,7 @@ def test_conversation_context_compacts_old_pairs_and_keeps_six_raw_turns(tmp_pat
     for index in range(8):
         output = answer()
         output["answer"] = f"Grounded answer {index} [E1]"
-        store.append_answer_turn(
-            thread["id"], f"Question {index}", output, corpus_hash="hash-1"
-        )
+        store.append_answer_turn(thread["id"], f"Question {index}", output, corpus_hash="hash-1")
 
     pending = store.conversation_context(thread["id"], max_tokens=1)
     assert pending["needs_compaction"] is True

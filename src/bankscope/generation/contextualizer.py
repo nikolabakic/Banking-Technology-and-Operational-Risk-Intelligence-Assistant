@@ -108,9 +108,7 @@ def _standalone_arguments(tool_calls: Sequence[Any]) -> str:
     name = function.get("name") if isinstance(function, Mapping) else function.name
     if name != "submit_standalone_question":
         return ""
-    arguments = (
-        function.get("arguments") if isinstance(function, Mapping) else function.arguments
-    )
+    arguments = function.get("arguments") if isinstance(function, Mapping) else function.arguments
     return str(arguments or "").strip()
 
 

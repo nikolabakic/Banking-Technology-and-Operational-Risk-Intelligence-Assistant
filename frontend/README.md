@@ -72,8 +72,9 @@ flag back to `false` and restarting restores baseline routing/retrieval behavior
 - persisted history -> `GET /api/threads/{thread_id}/messages`
 - streamed question -> `POST /api/threads/{thread_id}/stream`
 - source context -> `GET /api/citations/{citation_id}/context`
-- document upload/list/delete -> `POST /api/documents/upload`, `GET /api/documents`, and
-  `DELETE /api/documents/{document_id}`
+- document upload/list/load/download/delete -> `POST /api/documents/upload`,
+  `GET /api/documents`, `GET /api/documents/{document_id}`,
+  `GET /api/documents/{document_id}/content`, and `DELETE /api/documents/{document_id}`
 - compatibility question -> `POST /api/answer`
 - answer status -> `supported | partial | ambiguous | unsupported`
 - dialog act -> `answer | clarification | greeting | acknowledgement | capability |

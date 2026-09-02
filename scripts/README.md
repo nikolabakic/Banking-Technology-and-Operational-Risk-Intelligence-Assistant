@@ -8,6 +8,7 @@ activating `.venv`; use `python scripts/<name>.py --help` for the complete optio
 ```mermaid
 flowchart LR
     Download[download.py] --> Corpus[build_corpus.py]
+    Corpus --> Bundle[build_colab_bundle.py]
     Corpus --> Glossary[build_glossary_locators.py]
     Corpus --> Embed[embed.py]
     Embed --> Qdrant[build_qdrant.py]
@@ -18,6 +19,8 @@ flowchart LR
     Answer --> MemoryEval[evaluate_conversation_memory.py]
     Answer --> ComparisonEval[evaluate_comparisons.py]
     Answer --> AgenticEval[evaluate_agentic_rag.py]
+    Answer --> RoutingEval[evaluate_conversation_routing.py]
+    Answer --> EvidenceAudit[evaluate_evidence_audit_challenge.py]
     Answer --> AppSmoke[smoke_answers.py]
 ```
 
@@ -30,6 +33,7 @@ flowchart LR
 | `build_glossary_locators.py` | Regenerate only lexical glossary locators | chunks + tables → locator JSONL |
 | `embed.py` | Encode ordered retrieval text and validate lengths | chunks → `embeddings.npz` |
 | `build_qdrant.py` | Validate and import dense/sparse records into local Qdrant | corpus + embeddings + banks → Qdrant + manifest |
+| `build_colab_bundle.py` | Package verified corpus/evaluation inputs for the supported Colab GPU workflow | local inputs → ignored upload ZIP + manifest |
 
 Table descriptions are deterministic by default. `build_corpus.py --description-mode openai` is an
 explicit, paid enrichment mode that performs one model request per eligible table. Filtered corpus
@@ -62,6 +66,8 @@ python scripts/serve_api.py --host 127.0.0.1 --port 8000
 | `evaluate_conversation_memory.py` | Follow-up rewrite and retrieval gate with isolation controls |
 | `evaluate_comparisons.py` | Evidence-group, semantic, and citation-ownership checks |
 | `evaluate_agentic_rag.py` | Compare retrieval-only baseline/agentic runs on the 12-question challenge, record nested end-to-end results, and enforce rollout gates |
+| `evaluate_conversation_routing.py` | Evaluate the frozen 55-case English/Serbian six-action routing contract and scope preservation |
+| `evaluate_evidence_audit_challenge.py` | Run the separate 10-case descriptive evidence-audit challenge without changing the frozen baseline |
 | `smoke_answers.py` | Ten-bank supported-answer and citation-ownership smoke |
 | `benchmark_query_embeddings.py` | Warm-up and repeated query-encoder latency measurement |
 | `probe_generation_json.py` | Small gateway JSON-mode compatibility probe |

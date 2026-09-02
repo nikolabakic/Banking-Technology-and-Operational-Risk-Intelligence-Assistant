@@ -14,10 +14,13 @@ live run. See [the evidence-audit guide](../../docs/evidence_audit_evaluation.md
 
 ```text
 evaluation/
-├── queries.jsonl                         # retrieval and answer qrels
+├── queries.jsonl                         # frozen retrieval and answer qrels
 ├── generation_citation_audit_v1.jsonl    # historical manual support audit
 ├── generation_citation_audit_v2.jsonl    # current manual support audit
 ├── conversation_memory.jsonl             # bounded follow-up cases
+├── conversation_routing_v1.jsonl         # English/Serbian routing contract
+├── agentic_rag_challenge_v1.jsonl        # bounded orchestration challenge
+├── evidence_audit_challenge_v1.jsonl     # descriptive final audit challenge
 └── results/                               # ignored generated reports
 ```
 
@@ -27,10 +30,16 @@ flowchart LR
     Contracts --> Answers[evaluate_answers.py]
     Memory[conversation_memory.jsonl] --> Conversation[evaluate_conversation_memory.py]
     Contracts --> Compare[evaluate_comparisons.py]
+    Routing[conversation_routing_v1.jsonl] --> RouteEval[evaluate_conversation_routing.py]
+    Contracts --> EvidenceAudit[evaluate_evidence_audit_challenge.py]
+    Contracts --> Agentic[evaluate_agentic_rag.py]
     Retrieval --> Results[results/]
     Answers --> Results
     Conversation --> Results
     Compare --> Results
+    RouteEval --> Results
+    EvidenceAudit --> Results
+    Agentic --> Results
     Contracts --> Smoke[smoke_answers.py]
     Smoke --> Results
 ```
@@ -63,9 +72,9 @@ Retrieval, generation, conversation-memory, and comparison gates answer differen
 must not be collapsed into one score. See [the evaluation package](../../src/bankscope/evaluation/README.md)
 and [architectural decisions](../../docs/decisions/README.md).
 
-`conversation_routing_v1.jsonl` is the frozen 45-case English/Serbian route contract used by
-`scripts/evaluate_conversation_routing.py`. It covers all five actions, supported-bank aliases and
+`conversation_routing_v1.jsonl` is the frozen 55-case English/Serbian route contract used by
+`scripts/evaluate_conversation_routing.py`. It covers all six actions, supported-bank aliases and
 possessives, cyber/sajber variants, typos, natural follow-ups, unrelated requests, and the
 unavailable-web contract. Its gate requires 100% filing-route recall for supported-bank cases, 100%
-no-retrieval behavior for unrelated requests, at least 95% overall route accuracy, and no
-bank/period/number scope violations.
+out-of-scope recall, 100% expected no-retrieval behavior, at least 95% overall route accuracy, and
+no bank/period/number scope violations.

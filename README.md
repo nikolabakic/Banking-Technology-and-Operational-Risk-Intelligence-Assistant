@@ -12,15 +12,21 @@ change guidance.
 
 ## Product preview
 
-Start a research question from the focused landing page, with example prompts for common
-operational-risk, cybersecurity, and capital-ratio investigations.
+Ask for an exact filing fact and BankScope returns a validated answer with bank-owned citation
+chips, answer status, and an optional evidence audit.
 
-![BankScope landing page with research prompts](assets/screenshots/bankscope-home.png)
+![BankScope answer with a cited Capital One CET1 ratio](docs/final-report-assets/qa-demo-2026-08-31/01-capital-one-cet1-answer.png)
 
-BankScope answers with filing-grounded evidence, inline citations, and clearly separated
-supporting excerpts for each bank in a comparison.
+Multi-bank comparisons retrieve and validate each bank independently before presenting the
+combined result with clearly separated evidence ownership.
 
-![BankScope comparison answer with cited filing evidence](assets/screenshots/bankscope-evidence-answer.png)
+![BankScope comparison of Bank of America and Citigroup CET1 ratios](docs/final-report-assets/qa-demo-2026-08-31/04-bac-citi-cet1-comparison-answer.png)
+
+These are captures from the live React/FastAPI application, not mockups. See the
+[QA capture notes](docs/final-report-assets/qa-demo-2026-08-31/README.md) for the questions,
+diagnostics, canonical source views, and reproduction details. The
+[demo preparation guide](docs/demo-priprema.md) provides the recommended presentation flow and
+offline fallback.
 
 ## What the system does
 
@@ -296,8 +302,8 @@ acceptance gates in [docs/roadmap.md](docs/roadmap.md) and record measured decis
 
 ## Known limitations
 
-- The downloaded USB and WFC primary filings point to separate annual-report attachments, so
-  their current local content is partial.
+- The active registry covers ten banks and one downloaded 2025 Form 10-K per bank. Adding a bank
+  or filing requires acquisition, corpus/embedding/index rebuilds, and renewed evaluation.
 - A table emitted by sec2md as separate continuation elements remains separate; BankScope only
   guarantees that each emitted table is not split further.
 - Retrieval scores are rankings, not answerability probabilities.

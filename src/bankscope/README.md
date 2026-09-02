@@ -52,6 +52,11 @@ flowchart TD
 | `POST /api/threads/{id}/answers` | Non-streaming persistent answer turn |
 | `POST /api/threads/{id}/stream` | SSE status events followed by answer/error and done |
 | `GET /api/citations/{id}/context` | Resolve current canonical source context |
+| `POST /api/documents/upload` | Parse and store a thread-scoped user document |
+| `GET /api/documents` | List user documents, optionally filtered by thread |
+| `GET /api/documents/{id}` | Load document metadata |
+| `GET /api/documents/{id}/content` | Download the original stored document |
+| `DELETE /api/documents/{id}` | Delete a stored user document |
 | `POST /api/answer` | Stateless compatibility endpoint |
 
 `QuestionRequest` trims questions, normalizes an optional ticker, and deduplicates ordered tickers.

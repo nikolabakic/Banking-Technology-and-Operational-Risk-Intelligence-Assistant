@@ -127,12 +127,7 @@ def evaluate_comparison_run(
 
 def main() -> None:
     args = parse_args()
-    if (
-        args.limit <= 0
-        or args.candidate_k < args.limit
-        or args.rrf_k <= 0
-        or args.repetitions <= 0
-    ):
+    if args.limit <= 0 or args.candidate_k < args.limit or args.rrf_k <= 0 or args.repetitions <= 0:
         raise ValueError("Invalid retrieval limits.")
     queries = select_comparison_queries(read_jsonl(args.qrels))
     settings = get_settings()

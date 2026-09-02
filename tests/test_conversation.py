@@ -308,9 +308,7 @@ def test_router_rejects_non_string_unresolved_request_items() -> None:
         bank_names=BANK_NAMES,
         bank_aliases=BANK_ALIASES,
         chat_model=FakeChatModel(
-            route_arguments(
-                "direct_response", response_text="Hello!", category="greeting"
-            )
+            route_arguments("direct_response", response_text="Hello!", category="greeting")
         ),
     )
 
@@ -568,10 +566,7 @@ def test_bank_and_filing_signals_override_unsafe_model_route(proposed_action) ->
     [
         "Compare JPMorgan and Citi operational risk disclosures.",
         "Compare JPMorgan, Citi, and Bank of America business models.",
-        (
-            "Compare JPMorgan, Citi, Bank of America, and Capital One "
-            "cybersecurity frameworks."
-        ),
+        ("Compare JPMorgan, Citi, Bank of America, and Capital One cybersecurity frameworks."),
     ],
 )
 def test_two_to_four_bank_topics_cannot_route_to_direct_response(question) -> None:
@@ -646,10 +641,7 @@ def test_two_to_four_banks_without_topic_require_metric_clarification(question) 
     [
         "Compare JPMorgan and Citi share prices today.",
         "Compare current news about JPMorgan, Citi, and Bank of America.",
-        (
-            "Compare the latest market prices for JPMorgan, Citi, Bank of America, "
-            "and Capital One."
-        ),
+        ("Compare the latest market prices for JPMorgan, Citi, Bank of America, and Capital One."),
     ],
 )
 def test_current_two_to_four_bank_comparisons_route_to_web(question) -> None:
@@ -934,9 +926,7 @@ def test_pipeline_natural_retry_searches_web_with_canonical_unresolved_question(
         generation_model="test-model",
         bank_names=BANK_NAMES,
         bank_aliases=BANK_ALIASES,
-        conversation_model=FakeChatModel(
-            route_arguments("web_research", search_question=original)
-        ),
+        conversation_model=FakeChatModel(route_arguments("web_research", search_question=original)),
         web_search_provider=provider,
     )
 
@@ -978,9 +968,7 @@ def test_pipeline_turns_tavily_ranked_sources_into_citations_and_evidence() -> N
         generation_model="test-model",
         bank_names=BANK_NAMES,
         bank_aliases=BANK_ALIASES,
-        conversation_model=FakeChatModel(
-            route_arguments("web_research", search_question=question)
-        ),
+        conversation_model=FakeChatModel(route_arguments("web_research", search_question=question)),
         web_search_provider=provider,
     )
 
@@ -1024,9 +1012,7 @@ def test_pipeline_web_provider_failure_returns_specific_retryable_state(
         generation_model="test-model",
         bank_names=BANK_NAMES,
         bank_aliases=BANK_ALIASES,
-        conversation_model=FakeChatModel(
-            route_arguments("web_research", search_question=question)
-        ),
+        conversation_model=FakeChatModel(route_arguments("web_research", search_question=question)),
         web_search_provider=provider,
     )
 
@@ -1076,9 +1062,7 @@ def test_pipeline_web_result_without_usable_citations_is_retryable(
         generation_model="test-model",
         bank_names=BANK_NAMES,
         bank_aliases=BANK_ALIASES,
-        conversation_model=FakeChatModel(
-            route_arguments("web_research", search_question=question)
-        ),
+        conversation_model=FakeChatModel(route_arguments("web_research", search_question=question)),
         web_search_provider=provider,
     )
 

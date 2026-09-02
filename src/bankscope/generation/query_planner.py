@@ -289,9 +289,10 @@ def build_bank_subquestion(
     for width in range(min(6, len(topic_tokens) // 2), 0, -1):
         index = 0
         while index + (2 * width) <= len(topic_tokens):
-            if topic_tokens[index : index + width] == topic_tokens[
-                index + width : index + (2 * width)
-            ]:
+            if (
+                topic_tokens[index : index + width]
+                == topic_tokens[index + width : index + (2 * width)]
+            ):
                 del topic_tokens[index + width : index + (2 * width)]
             else:
                 index += 1
@@ -393,14 +394,14 @@ def focused_evidence_signals(
     concept = False
     for pattern, canonical_terms in matched_variants:
         canonical_tokens = {
-            token
-            for token in normalize_bank_text(canonical_terms).split()
-            if len(token) >= 4
+            token for token in normalize_bank_text(canonical_terms).split() if len(token) >= 4
         }
         evidence_tokens = set(normalize_bank_text(evidence_text).split())
-        concept = concept or bool(pattern.search(evidence_text)) or len(
-            canonical_tokens & evidence_tokens
-        ) >= 2
+        concept = (
+            concept
+            or bool(pattern.search(evidence_text))
+            or len(canonical_tokens & evidence_tokens) >= 2
+        )
     return {
         "focused": focused,
         "period": period,
