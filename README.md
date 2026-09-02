@@ -12,6 +12,11 @@ change guidance.
 
 ## Product preview
 
+The BankScope workspace supports natural conversation, filing research, cited web search, and
+deterministic calculation from one interface.
+
+![BankScope home screen](<assets/screenshots/Screenshot 2026-09-02 113024.png>)
+
 Ask for an exact filing fact and BankScope returns a validated answer with bank-owned citation
 chips, answer status, and an optional evidence audit.
 
